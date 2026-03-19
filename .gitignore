@@ -1,0 +1,25 @@
+# Dependencies
+*.gem
+*.rbc
+.bundle/
+vendor/bundle/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test & Coverage
+coverage/
+.rspec
+
+# Environment
+.env
+.env.local
+*.key
+*.pem
