@@ -44,8 +44,8 @@ RSpec.describe DataRedactor do
       redacted?("passport: 123456789 end", "123456789")
     end
 
-    it "does NOT redact 9 digits inside a longer number" do
-      result = DataRedactor.redact("ref 123456789012 ok")
+    it "does NOT redact digits inside a longer number (14+ digits)" do
+      result = DataRedactor.redact("ref 12345678901234 ok")
       expect(result).not_to include("[REDACTED]")
     end
 
@@ -63,7 +63,7 @@ RSpec.describe DataRedactor do
 
     # ---- Pattern 7: Slack Webhook URL ----
     it "redacts Slack Webhook URL" do
-      url = "https://hooks.slack.com/services/T123/B456/789example"
+      url = "https://hooks.slack.com/services/T" + "A" * 8 + "/B" + "A" * 8 + "/" + "a" * 24
       redacted?("webhook=#{url} end", url)
     end
 
@@ -291,6 +291,215 @@ RSpec.describe DataRedactor do
     # ---- Pattern 48: Romanian CNP ----
     it "redacts Romanian CNP (boundary)" do
       redacted?("cnp: 1850101123456 end", "1850101123456")
+    end
+
+    # ---- Pattern 0 upgrade: AWS Access Key ID (all prefixes) ----
+    it "redacts AWS Access Key ID with ABIA prefix" do
+      redacted?("key=ABIAIOSFODNN7EXAMPLE rest", "ABIAIOSFODNN7EXAMPLE")
+    end
+
+    it "redacts AWS Access Key ID with AGPA prefix" do
+      redacted?("key=AGPAIOSFODNN7EXAMPLE rest", "AGPAIOSFODNN7EXAMPLE")
+    end
+
+    # ---- Pattern 9 upgrade: Generic PEM private key header ----
+    it "redacts DSA PEM private key header" do
+      redacted?("data: -----BEGIN DSA PRIVATE KEY----- rest", "-----BEGIN DSA PRIVATE KEY-----")
+    end
+
+    it "redacts ED25519 PEM private key header" do
+      redacted?("data: -----BEGIN PRIVATE KEY----- rest", "-----BEGIN PRIVATE KEY-----")
+    end
+
+    # ---- Pattern 49: JWT ----
+    it "redacts JWT token" do
+      jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456_-xyz"
+      redacted?("token=#{jwt} end", jwt)
+    end
+
+    # ---- Pattern 50: SendGrid API Key ----
+    it "redacts SendGrid API Key" do
+      key = "SG.abc123_def.ghi789-jkl012_mno"
+      redacted?("key=#{key} end", key)
+    end
+
+    # ---- Pattern 51: Grafana API Token ----
+    it "redacts Grafana API Token" do
+      token = "eyJrIjoi" + "A" * 42
+      redacted?("key=#{token} end", token)
+    end
+
+    # ---- Pattern 52: Amazon MWS Auth Token ----
+    it "redacts Amazon MWS Auth Token" do
+      token = "amzn.mws.a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
+      redacted?("token=#{token} end", token)
+    end
+
+    # ---- Pattern 53: Microsoft Teams Webhook ----
+    it "redacts Microsoft Teams Webhook URL" do
+      url = "https://example.webhook.office.com/webhookb2/a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6@a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6/IncomingWebhook/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6/a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6"
+      redacted?("webhook=#{url} end", url)
+    end
+
+    # ---- Pattern 54: MongoDB Connection String ----
+    it "redacts MongoDB connection string with credentials" do
+      uri = "mongodb://admin:secretpass@db.example.com:27017/mydb"
+      redacted?("db=#{uri} end", uri)
+    end
+
+    it "redacts MongoDB+srv connection string" do
+      uri = "mongodb+srv://admin:secretpass@cluster0.example.net/mydb"
+      redacted?("db=#{uri} end", uri)
+    end
+
+    # ---- Pattern 55: URI with Embedded Password ----
+    it "redacts URI with embedded password" do
+      uri = "postgres://user:s3cret@db.host.com"
+      redacted?("conn=#{uri} end", uri)
+    end
+
+    # ---- Pattern 56: GPG Private Key ----
+    it "redacts GPG private key header" do
+      redacted?("data: -----BEGIN PGP PRIVATE KEY BLOCK----- rest", "-----BEGIN PGP PRIVATE KEY BLOCK-----")
+    end
+
+    # ---- Pattern 57: LaunchDarkly API Key ----
+    it "redacts LaunchDarkly API key" do
+      key = "sdk-" + "a" * 8 + "-" + "b" * 4 + "-" + "c" * 4 + "-" + "d" * 4 + "-" + "e" * 12
+      redacted?("key=#{key} end", key)
+    end
+
+    it "redacts LaunchDarkly API key (api- prefix)" do
+      key = "api-" + "a" * 8 + "-" + "b" * 4 + "-" + "c" * 4 + "-" + "d" * 4 + "-" + "e" * 12
+      redacted?("key=#{key} end", key)
+    end
+
+    # ---- Pattern 58: ClickUp API Key ----
+    it "redacts ClickUp API key" do
+      key = "pk_1234567_" + "A" * 32
+      redacted?("key=#{key} end", key)
+    end
+
+    # ---- Pattern 59: AWS S3 Presigned URL ----
+    it "redacts AWS S3 presigned URL" do
+      url = "https://mybucket.s3.amazonaws.com/myfile.txt?AWSAccessKeyId=AKIA1234&Expires=123&X-Amz-Signature=abc123"
+      redacted?("url=#{url} end", url)
+    end
+
+    # ---- Pattern 60: SSH Public Key ----
+    it "redacts SSH RSA public key" do
+      key = "ssh-rsa " + "A" * 40
+      redacted?("key=#{key} end", key)
+    end
+
+    it "redacts SSH ed25519 public key" do
+      key = "ssh-ed25519 " + "A" * 40
+      redacted?("key=#{key} end", key)
+    end
+
+    # ---- Pattern 61: GitHub Classic PAT ----
+    it "redacts GitHub Classic PAT (ghp_ prefix)" do
+      token = "ghp_" + "A" * 36
+      redacted?("token=#{token} end", token)
+    end
+
+    # ---- Pattern 62: GitHub OAuth Token ----
+    it "redacts GitHub OAuth Token (gho_ prefix)" do
+      token = "gho_" + "A" * 36
+      redacted?("token=#{token} end", token)
+    end
+
+    # ---- Pattern 63: US Social Security Number ----
+    it "redacts US SSN" do
+      redacted?("ssn: 123-45-6789 end", "123-45-6789")
+    end
+
+    # ---- Pattern 64: US ITIN ----
+    it "redacts US ITIN" do
+      redacted?("itin: 912-34-5678 end", "912-34-5678")
+    end
+
+    # ---- Pattern 65: UK National Insurance Number ----
+    it "redacts UK NINO (no spaces)" do
+      redacted?("nino: AB123456C end", "AB123456C")
+    end
+
+    it "redacts UK NINO (with spaces)" do
+      redacted?("nino: AB 12 34 56 C end", "AB 12 34 56 C")
+    end
+
+    # ---- Pattern 66: Bearer Token ----
+    it "redacts Bearer token" do
+      token = "Bearer eyJhbGciOiJIUzI1Ni"
+      redacted?("auth: #{token} end", token)
+    end
+
+    # ---- Pattern 67: Email Address ----
+    it "redacts email address" do
+      redacted?("contact: john.doe@example.com end", "john.doe@example.com")
+    end
+
+    # ---- Pattern 68: International Phone Number ----
+    it "redacts international phone number" do
+      redacted?("phone: +1-555-123-4567 end", "+1-555-123-4567")
+    end
+
+    it "redacts phone number with spaces" do
+      redacted?("phone: +44 20 7946 0958 end", "+44 20 7946 0958")
+    end
+
+    # ---- Pattern 69: Canadian SIN ----
+    it "redacts Canadian SIN" do
+      redacted?("sin: 123-456-789 end", "123-456-789")
+    end
+
+    # ---- Pattern 70: Brazilian CPF ----
+    it "redacts Brazilian CPF" do
+      redacted?("cpf: 123.456.789-09 end", "123.456.789-09")
+    end
+
+    # ---- Pattern 71: Brazilian CNPJ ----
+    it "redacts Brazilian CNPJ" do
+      redacted?("cnpj: 12.345.678/0001-95 end", "12.345.678/0001-95")
+    end
+
+    # ---- Pattern 72: South Korean RRN ----
+    it "redacts South Korean RRN" do
+      redacted?("rrn: 850101-1234567 end", "850101-1234567")
+    end
+
+    # ---- Pattern 73: Japanese My Number ----
+    it "redacts Japanese My Number (12 digits)" do
+      redacted?("mynumber: 123456789012 end", "123456789012")
+    end
+
+    # ---- Pattern 74: Australian TFN ----
+    it "redacts Australian TFN (dashes)" do
+      redacted?("tfn: 123-456-789 end", "123-456-789")
+    end
+
+    # ---- Pattern 75: Indian Aadhaar ----
+    it "redacts Indian Aadhaar (spaces)" do
+      redacted?("aadhaar: 1234 5678 9012 end", "1234 5678 9012")
+    end
+
+    it "redacts Indian Aadhaar (dashes)" do
+      redacted?("aadhaar: 1234-5678-9012 end", "1234-5678-9012")
+    end
+
+    # ---- Pattern 76: Indian PAN ----
+    it "redacts Indian PAN" do
+      redacted?("pan: ABCDE1234F end", "ABCDE1234F")
+    end
+
+    # ---- Pattern 77: Mexican CURP ----
+    it "redacts Mexican CURP" do
+      redacted?("curp: GARC850101HDFRRL09 end", "GARC850101HDFRRL09")
+    end
+
+    # ---- Pattern 78: South African ID ----
+    it "redacts South African ID (13 digits)" do
+      redacted?("said: 8501015009087 end", "8501015009087")
     end
 
     # ---- General ----
