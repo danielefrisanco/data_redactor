@@ -119,6 +119,21 @@ What turns "neat gem" into "we put it in production":
 - Shields.io badges in README: gem version, CI status, test coverage
 - Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
 
+## C extension refactor
+
+`ext/data_redactor/data_redactor.c` is a single ~1000-line file. Split it into focused modules before it grows further:
+
+- `patterns.h` / `patterns.c` — `pattern_strings[]`, `boundary_wrapped[]`, `pattern_tags[]`, `pattern_names[]`, `NUM_PATTERNS`. Pure data, no Ruby API.
+- `placeholder.h` / `placeholder.c` — `placeholder_t`, `PLACEHOLDER_MODE_*` constants, `write_placeholder`, `max_placeholder_len`, `djb2`, `tag_name_for_bit`.
+- `custom_patterns.h` / `custom_patterns.c` — `custom_pattern_t` struct, dynamic array (`custom_patterns`, `custom_count`, `custom_cap`), `find_custom_by_name`, `free_custom_at`, and the four Ruby-facing C functions (`rb_add_pattern`, `rb_remove_pattern`, `rb_clear_custom_patterns`, `rb_custom_patterns`).
+- `redact.h` / `redact.c` — `replace_all_matches`, `rb_data_redactor_redact`, `wrap_boundary`.
+- `scan.h` / `scan.c` — `rb_data_redactor_scan` and the replacement-log logic.
+- `data_redactor.c` — kept as the thin entry point: `#include` all headers, `Init_data_redactor` only.
+
+`extconf.rb` will need to list each `.c` file via `$srcs` or use a glob so the Makefile compiles them all.
+
+**Why:** the current file is already hard to navigate; as checksum validation (item 7) and streaming (item 8) land it will get worse. Splitting now while the boundaries are clear is cheaper than splitting a 2000-line file later.
+
 ## Benchmarks
 
 Add a `benchmark/` directory with scripts using `benchmark-ips` and `benchmark/memory`:
