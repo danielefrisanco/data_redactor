@@ -47,6 +47,31 @@ module DataRedactor
     _redact(text, mask, ph_mode, ph_str)
   end
 
+  # Scan text without necessarily redacting it.
+  #
+  # Returns { redacted: String, matches: [{tag:, name:, value:, start:, length:}, ...] }
+  # The :tag value is a Symbol matching one of DataRedactor.tags.
+  # :start and :length are byte offsets into the original string.
+  def scan(text, only: nil, except: nil)
+    raise ArgumentError, "pass only: or except:, not both" if only && except
+
+    mask =
+      if only
+        bits_for(only)
+      elsif except
+        TAG_ALL & ~bits_for(except)
+      else
+        TAG_ALL
+      end
+
+    result = _scan(text, mask)
+    # Normalise: convert tag string from C (uppercase) back to the Symbol used in TAGS
+    result[:matches].each do |m|
+      m[:tag] = m[:tag].to_s.downcase.to_sym
+    end
+    result
+  end
+
   # Add (or replace) a custom redaction pattern.
   #
   # name:     unique identifier string

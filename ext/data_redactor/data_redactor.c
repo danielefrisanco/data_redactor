@@ -246,6 +246,88 @@ static const int pattern_tags[NUM_PATTERNS] = {
     TAG_NATIONAL_ID   /* 78: Polish PESEL duplicate */
 };
 
+static const char *pattern_names[NUM_PATTERNS] = {
+    "aws_s3_presigned_url",          /*  0 */
+    "microsoft_teams_webhook",       /*  1 */
+    "slack_webhook_url",             /*  2 */
+    "mongodb_connection_string",     /*  3 */
+    "uri_with_password",             /*  4 */
+    "github_pat_fine_grained",       /*  5 */
+    "jwt",                           /*  6 */
+    "grafana_api_token",             /*  7 */
+    "ssh_public_key",                /*  8 */
+    "bearer_token",                  /*  9 */
+    "google_api_key",                /* 10 */
+    "aws_access_key_id",             /* 11 */
+    "aws_secret_access_key",         /* 12 */
+    "sendgrid_api_key",              /* 13 */
+    "amazon_mws_auth_token",         /* 14 */
+    "launchdarkly_api_key",          /* 15 */
+    "github_classic_pat",            /* 16 */
+    "github_oauth_token",            /* 17 */
+    "stripe_secret_key",             /* 18 */
+    "clickup_api_key",               /* 19 */
+    "scaleway_access_key",           /* 20 */
+    "pem_private_key",               /* 21 */
+    "gpg_private_key",               /* 22 */
+    "iban_hu",                       /* 23 */
+    "iban_pl",                       /* 24 */
+    "iban_fr",                       /* 25 */
+    "iban_it",                       /* 26 */
+    "iban_pt",                       /* 27 */
+    "iban_es",                       /* 28 */
+    "iban_cz",                       /* 29 */
+    "iban_ro",                       /* 30 */
+    "iban_se",                       /* 31 */
+    "iban_de",                       /* 32 */
+    "iban_ie",                       /* 33 */
+    "iban_ch",                       /* 34 */
+    "iban_at",                       /* 35 */
+    "iban_nl",                       /* 36 */
+    "iban_dk",                       /* 37 */
+    "iban_fi",                       /* 38 */
+    "iban_be",                       /* 39 */
+    "iban_no",                       /* 40 */
+    "email",                         /* 41 */
+    "phone_e164",                    /* 42 */
+    "brazilian_cnpj",                /* 43 */
+    "brazilian_cpf",                 /* 44 */
+    "uuid_v4",                       /* 45 */
+    "ipv4",                          /* 46 */
+    "credit_card",                   /* 47 */
+    "indian_aadhaar",                /* 48 */
+    "mexican_curp",                  /* 49 */
+    "italian_cf_omocodia",           /* 50 */
+    "italian_cf",                    /* 51 */
+    "uk_nin",                        /* 52 */
+    "spanish_nie",                   /* 53 */
+    "passport_letter_prefix",        /* 54 */
+    "korean_rrn",                    /* 55 */
+    "swiss_ahv",                     /* 56 */
+    "finnish_hetu",                  /* 57 */
+    "swedish_personnummer",          /* 58 */
+    "danish_cpr",                    /* 59 */
+    "czech_rodne_cislo",             /* 60 */
+    "us_ssn",                        /* 61 */
+    "us_itin",                       /* 62 */
+    "canadian_sin",                  /* 63 */
+    "australian_tfn",                /* 64 */
+    "indian_pan",                    /* 65 */
+    "spanish_dni",                   /* 66 */
+    "hungarian_tax_id",              /* 67 */
+    "french_nir",                    /* 68 */
+    "south_african_id",              /* 69 */
+    "romanian_cnp",                  /* 70 */
+    "japanese_my_number",            /* 71 */
+    "polish_pesel",                  /* 72 */
+    "belgian_national_number",       /* 73 */
+    "norwegian_fodselsnummer",       /* 74 */
+    "passport_9digits",              /* 75 */
+    "dutch_bsn",                     /* 76 */
+    "austrian_abgabenkontonummer",   /* 77 */
+    "polish_pesel_2"                 /* 78 */
+};
+
 /*
  * Raw patterns. Boundary-wrapped patterns are stored unwrapped here;
  * the wrapper is applied in Init_data_redactor at compile time.
@@ -757,6 +839,147 @@ static VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text, VALUE rb_mask,
 }
 
 /*
+ * DataRedactor._scan(text, mask) -> Hash
+ *
+ * Returns { redacted: String, matches: Array<Hash> } where each match hash is:
+ *   { tag: Symbol, name: String, value: String, start: Integer, length: Integer }
+ *
+ * Matches are reported in the order they are consumed by the sequential redaction
+ * loop (built-ins first, most-specific to most-generic; then custom patterns).
+ * `start` and `length` refer to byte positions in the *original* input string.
+ * Because patterns run sequentially on a shrinking/expanding working buffer,
+ * positions are tracked relative to the original by maintaining a running offset.
+ */
+static VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_mask) {
+    Check_Type(rb_text, T_STRING);
+    int mask = NUM2INT(rb_mask);
+
+    const char *input     = StringValueCStr(rb_text);
+    size_t      input_len = strlen(input);
+
+    /* Working buffer — we redact with the default plain placeholder so the
+     * scan result also contains the redacted string.                        */
+    static const placeholder_t ph_default = { PLACEHOLDER_MODE_PLAIN, "[REDACTED]" };
+
+    char *working = strdup(input);
+    if (!working) rb_raise(rb_eNoMemError, "strdup failed");
+
+    VALUE matches_arr = rb_ary_new();
+
+    /*
+     * To map working-buffer positions back to original-string positions we
+     * maintain a log of every replacement already applied.  Each entry records
+     * where in the *working* buffer the replacement started (after all prior
+     * replacements) and how many bytes were removed (orig_len) vs. inserted
+     * (always 10, the length of "[REDACTED]").
+     *
+     * For a new match at working position W:
+     *   cumulative_shift_before_W = sum of (10 - orig_len) for all prior
+     *                               replacements whose working_pos <= W
+     *   original_pos = W - cumulative_shift_before_W
+     *
+     * Replacements are appended in order so the log is already sorted by
+     * working_pos; we just walk it linearly per match.
+     */
+    typedef struct { long wpos; long orig_len; } repl_t;
+    repl_t *repl_log = NULL;
+    int     repl_count = 0;
+    int     repl_cap   = 0;
+
+    #define REPL_LOG_PUSH(_wpos, _olen) do {                                  \
+        if (repl_count >= repl_cap) {                                         \
+            int _nc = repl_cap == 0 ? 16 : repl_cap * 2;                     \
+            repl_t *_t = (repl_t *)realloc(repl_log, sizeof(repl_t) * _nc);  \
+            if (!_t) { free(repl_log); free(working); rb_raise(rb_eNoMemError, "repl_log"); } \
+            repl_log = _t; repl_cap = _nc;                                    \
+        }                                                                     \
+        repl_log[repl_count].wpos     = (_wpos);                              \
+        repl_log[repl_count].orig_len = (_olen);                              \
+        repl_count++;                                                         \
+    } while (0)
+
+    /* Map a position in the current working buffer to original-string position. */
+    #define WORKING_TO_ORIG(_wpos) ({                                         \
+        long _shift = 0;                                                      \
+        for (int _ri = 0; _ri < repl_count; _ri++) {                         \
+            if (repl_log[_ri].wpos <= (_wpos))                                \
+                _shift += 10 - repl_log[_ri].orig_len;                       \
+        }                                                                     \
+        (_wpos) - _shift;                                                     \
+    })
+
+    /* Collect matches for one pattern on the current working buffer, translate
+     * positions to original coordinates, then do the replacement.            */
+    #define COLLECT_AND_REPLACE(pat, use_bnd, tag_bit, pat_name) do {        \
+        const char *_cur = working;                                           \
+        regmatch_t _m[4];                                                     \
+        while (regexec((pat), _cur, 4, _m, 0) == 0) {                        \
+            regoff_t _fso = _m[0].rm_so, _feo = _m[0].rm_eo;                 \
+            if (_fso < 0 || _feo < _fso) break;                               \
+            regoff_t _cso = _fso, _ceo = _feo;                                \
+            if (use_bnd) {                                                    \
+                if (_m[1].rm_so >= 0 && _m[1].rm_eo > _m[1].rm_so)          \
+                    _cso = _m[1].rm_eo;                                       \
+                if (_m[3].rm_so >= 0 && _m[3].rm_eo > _m[3].rm_so)          \
+                    _ceo = _m[3].rm_so;                                       \
+            }                                                                 \
+            size_t _vlen = (size_t)(_ceo - _cso);                             \
+            long _wpos   = (long)(_cur - working) + (long)_cso;              \
+            long _orig   = WORKING_TO_ORIG(_wpos);                            \
+            VALUE _match = rb_hash_new();                                     \
+            rb_hash_aset(_match, ID2SYM(rb_intern("tag")),                    \
+                         ID2SYM(rb_intern(tag_name_for_bit(tag_bit))));       \
+            rb_hash_aset(_match, ID2SYM(rb_intern("name")),                  \
+                         rb_str_new_cstr(pat_name));                          \
+            rb_hash_aset(_match, ID2SYM(rb_intern("value")),                 \
+                         rb_str_new(_cur + _cso, _vlen));                     \
+            rb_hash_aset(_match, ID2SYM(rb_intern("start")),                 \
+                         LONG2NUM(_orig));                                    \
+            rb_hash_aset(_match, ID2SYM(rb_intern("length")),                \
+                         LONG2NUM((long)_vlen));                              \
+            rb_ary_push(matches_arr, _match);                                 \
+            /* Log this replacement; wpos advances by 10 for subsequent entries */ \
+            REPL_LOG_PUSH(_wpos, (long)_vlen);                                \
+            /* Re-anchor cursor: skip past the full match in working buf */   \
+            if (_feo == _fso) { if (*_cur) _cur++; else break; }             \
+            else _cur += _feo;                                                \
+        }                                                                     \
+        char *_next = replace_all_matches((pat), working, (use_bnd), &ph_default); \
+        free(working);                                                        \
+        if (!_next) { free(repl_log); rb_raise(rb_eNoMemError, "replace_all_matches failed in scan"); } \
+        working = _next;                                                      \
+    } while (0)
+
+    for (int i = 0; i < NUM_PATTERNS; i++) {
+        if ((pattern_tags[i] & mask) == 0) continue;
+        COLLECT_AND_REPLACE(&compiled_patterns[i], boundary_wrapped[i],
+                            pattern_tags[i], pattern_names[i]);
+    }
+
+    for (int i = 0; i < custom_count; i++) {
+        if ((custom_patterns[i].tag & mask) == 0) continue;
+        COLLECT_AND_REPLACE(&custom_patterns[i].compiled,
+                            custom_patterns[i].boundary,
+                            custom_patterns[i].tag, custom_patterns[i].name);
+    }
+
+    #undef COLLECT_AND_REPLACE
+    #undef WORKING_TO_ORIG
+    #undef REPL_LOG_PUSH
+
+    free(repl_log);
+
+    VALUE result = rb_hash_new();
+    VALUE rb_redacted = rb_str_new_cstr(working);
+    free(working);
+    rb_hash_aset(result, ID2SYM(rb_intern("redacted")), rb_redacted);
+    rb_hash_aset(result, ID2SYM(rb_intern("matches")),  matches_arr);
+    return result;
+
+    (void)input_len; /* suppress unused-variable warning */
+}
+
+/*
  * Build a boundary-wrapped version of a pattern:
  *   (^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)
  * Caller must free the returned string.
@@ -799,6 +1022,7 @@ void Init_data_redactor(void) {
 
     VALUE mDataRedactor = rb_define_module("DataRedactor");
     rb_define_module_function(mDataRedactor, "_redact",               rb_data_redactor_redact,    4);
+    rb_define_module_function(mDataRedactor, "_scan",                 rb_data_redactor_scan,      2);
     rb_define_module_function(mDataRedactor, "_add_pattern",          rb_add_pattern,             4);
     rb_define_module_function(mDataRedactor, "_remove_pattern",       rb_remove_pattern,          1);
     rb_define_module_function(mDataRedactor, "_clear_custom_patterns",rb_clear_custom_patterns,   0);

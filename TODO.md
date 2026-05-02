@@ -60,13 +60,15 @@ Rules:
 ### 3. Configurable placeholder ✅ DONE in 0.4.0
 `placeholder: "***"` (plain), `placeholder: :tagged` (`[REDACTED:CONTACT]`), `placeholder: :hash` (`[CONTACT_a3f9]` deterministic djb2).
 
-### 4. Report / dry-run mode
-Return matches alongside (or instead of) the redacted string — required for audit/compliance and for tuning false positives.
+**Future: length-aware placeholder** — embed the byte-length of the redacted value so readers can gauge what was there without seeing it. Proposed modes:
 
-```ruby
-DataRedactor.scan(text)
-# => { redacted: "...", matches: [{tag: :credentials, name: "aws_access_key", span: [42, 62]}, ...] }
-```
+- `placeholder: :length` → `[REDACTED:16]` (just the length)
+- `placeholder: :tagged_length` → `[REDACTED:CONTACT:16]` (tag + length)
+
+Implementation note: `write_placeholder` already receives `match` and `match_len`; adding these two modes is a small C change (one `sprintf` each) plus the corresponding Ruby symbol dispatch in `resolve_placeholder`. The `:hash` mode could also optionally append the length (`[CONTACT_a3f9:16]`) if that turns out to be useful for log pipelines.
+
+### 4. Report / dry-run mode ✅ DONE in 0.5.0
+`DataRedactor.scan(text, only:, except:)` returns `{ redacted:, matches: [{tag:, name:, value:, start:, length:}, ...] }`. Positions are byte offsets into the original string.
 
 ### 5. Hash / JSON / object traversal
 Pure-Ruby walker on top of the C `redact`:
@@ -108,7 +110,7 @@ What turns "neat gem" into "we put it in production":
 - Rack middleware that scrubs request/response bodies
 
 ### 10. Distribution / quality of life
-- Publish to RubyGems (currently 0.3.0, unpublished)
+- Publish to RubyGems (currently 0.5.0, unpublished)
 - CI matrix: Ruby 2.7, 3.0, 3.1, 3.2, 3.3 on Linux + macOS
 - Precompiled binaries via `rake-compiler-dock` so `gem install` doesn't need a C toolchain — biggest reason people skip C-extension gems
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0

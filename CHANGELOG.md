@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-02
+
+### Added
+- `DataRedactor.scan(text, only:, except:)` — returns `{ redacted: String, matches: Array<Hash> }` where each match contains `:tag` (Symbol), `:name` (pattern name String), `:value` (matched text), `:start` (byte offset into original), `:length` (byte length). Accepts the same `only:`/`except:` tag filters as `redact`. Includes both built-in and custom pattern matches.
+- `pattern_names[]` array in the C extension mapping each built-in pattern index to a stable snake_case name string (e.g. `"aws_access_key_id"`, `"email"`, `"iban_de"`).
+
 ## [0.4.0] - 2026-05-02
 
 ### Added

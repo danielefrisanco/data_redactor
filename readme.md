@@ -66,6 +66,29 @@ All three modes compose with `only:` and `except:`:
 DataRedactor.redact(text, only: :contact, placeholder: :tagged)
 ```
 
+### Scan / dry-run mode
+
+`DataRedactor.scan` returns every match alongside the redacted string — useful for auditing, tuning false positives, and compliance pipelines:
+
+```ruby
+result = DataRedactor.scan("User AKIAIOSFODNN7EXAMPLE logged in from 192.168.1.1")
+# => {
+#   redacted: "User [REDACTED] logged in from [REDACTED]",
+#   matches: [
+#     { tag: :credentials, name: "aws_access_key_id", value: "AKIAIOSFODNN7EXAMPLE", start: 5,  length: 20 },
+#     { tag: :network,     name: "ipv4",              value: "192.168.1.1",          start: 35, length: 11 }
+#   ]
+# }
+
+# :start and :length are byte offsets into the original string
+m = result[:matches].first
+original_text.byteslice(m[:start], m[:length])  # => "AKIAIOSFODNN7EXAMPLE"
+
+# Accepts the same tag filters as redact
+DataRedactor.scan(text, only: :credentials)
+DataRedactor.scan(text, except: :network)
+```
+
 ### Custom patterns
 
 Teams often have internal IDs that the gem can't ship. Register them at boot:
