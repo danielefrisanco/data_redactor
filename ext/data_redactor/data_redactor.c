@@ -7,6 +7,24 @@
 #define PLACEHOLDER_LEN 10
 #define NUM_PATTERNS 79
 
+/*
+ * Tag bits. Each pattern belongs to exactly one tag. Callers can pass a
+ * bitmask to restrict which patterns run (only / except). The default mask
+ * (TAG_ALL) runs every pattern and matches the historical behaviour of
+ * `redact(text)` with no second argument.
+ */
+#define TAG_CREDENTIALS  (1 << 0)
+#define TAG_FINANCIAL    (1 << 1)
+#define TAG_TAX_ID       (1 << 2)
+#define TAG_NATIONAL_ID  (1 << 3)
+#define TAG_CONTACT      (1 << 4)
+#define TAG_NETWORK      (1 << 5)
+#define TAG_TRAVEL       (1 << 6)
+#define TAG_OTHER        (1 << 7)
+#define TAG_ALL          (TAG_CREDENTIALS | TAG_FINANCIAL | TAG_TAX_ID | \
+                          TAG_NATIONAL_ID | TAG_CONTACT | TAG_NETWORK | \
+                          TAG_TRAVEL | TAG_OTHER)
+
 static regex_t compiled_patterns[NUM_PATTERNS];
 
 /*
@@ -117,6 +135,62 @@ static const int boundary_wrapped[NUM_PATTERNS] = {
     1, /* 76: Dutch BSN (8-9 digits) */
     1, /* 77: Austrian Abgabenkontonummer (9 digits) */
     1  /* 78: Polish PESEL duplicate */
+};
+
+/*
+ * Tag for each pattern. Exactly one tag per pattern. Used to filter which
+ * patterns run when the caller passes a mask (only/except).
+ */
+static const int pattern_tags[NUM_PATTERNS] = {
+    /* 0-22: secrets, API keys, tokens, private keys, webhooks */
+    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
+    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
+    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
+    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
+    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
+    /* 23-40: IBANs */
+    TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
+    TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
+    TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
+    TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
+    TAG_CONTACT,      /* 41: email */
+    TAG_CONTACT,      /* 42: phone */
+    TAG_TAX_ID,       /* 43: Brazilian CNPJ */
+    TAG_TAX_ID,       /* 44: Brazilian CPF */
+    TAG_OTHER,        /* 45: UUID v4 */
+    TAG_NETWORK,      /* 46: IPv4 */
+    TAG_FINANCIAL,    /* 47: credit card */
+    TAG_NATIONAL_ID,  /* 48: Indian Aadhaar */
+    TAG_NATIONAL_ID,  /* 49: Mexican CURP */
+    TAG_TAX_ID,       /* 50: Italian CF (omocodia) */
+    TAG_TAX_ID,       /* 51: Italian CF (basic) */
+    TAG_NATIONAL_ID,  /* 52: UK NIN */
+    TAG_NATIONAL_ID,  /* 53: Spanish NIE */
+    TAG_TRAVEL,       /* 54: passport letter prefix */
+    TAG_NATIONAL_ID,  /* 55: Korean RRN */
+    TAG_NATIONAL_ID,  /* 56: Swiss AHV */
+    TAG_NATIONAL_ID,  /* 57: Finnish HETU */
+    TAG_NATIONAL_ID,  /* 58: Swedish Personnummer */
+    TAG_NATIONAL_ID,  /* 59: Danish CPR */
+    TAG_NATIONAL_ID,  /* 60: Czech Rodné číslo */
+    TAG_NATIONAL_ID,  /* 61: US SSN */
+    TAG_TAX_ID,       /* 62: US ITIN */
+    TAG_NATIONAL_ID,  /* 63: Canadian SIN */
+    TAG_TAX_ID,       /* 64: Australian TFN */
+    TAG_TAX_ID,       /* 65: Indian PAN */
+    TAG_NATIONAL_ID,  /* 66: Spanish DNI */
+    TAG_TAX_ID,       /* 67: Hungarian Tax ID */
+    TAG_NATIONAL_ID,  /* 68: French NIR */
+    TAG_NATIONAL_ID,  /* 69: South African ID */
+    TAG_NATIONAL_ID,  /* 70: Romanian CNP */
+    TAG_TAX_ID,       /* 71: Japanese My Number */
+    TAG_NATIONAL_ID,  /* 72: Polish PESEL */
+    TAG_NATIONAL_ID,  /* 73: Belgian National Number */
+    TAG_NATIONAL_ID,  /* 74: Norwegian Fødselsnummer */
+    TAG_TRAVEL,       /* 75: passport 9 digits */
+    TAG_NATIONAL_ID,  /* 76: Dutch BSN */
+    TAG_TAX_ID,       /* 77: Austrian Abgabenkontonummer */
+    TAG_NATIONAL_ID   /* 78: Polish PESEL duplicate */
 };
 
 /*
@@ -391,13 +465,17 @@ static char *replace_all_matches(regex_t *pattern, const char *input, int use_bo
 }
 
 /*
- * DataRedactor.redact(text) -> String
+ * DataRedactor._redact(text, mask) -> String
  *
  * Scans the input text for sensitive patterns and replaces matches
- * with [REDACTED].
+ * with [REDACTED]. `mask` is an integer bitmask of TAG_* values; only
+ * patterns whose tag bit is set will be applied. The Ruby-side wrapper
+ * `DataRedactor.redact` builds the mask from `only:`/`except:` keyword
+ * arguments and passes TAG_ALL when no filter is given.
  */
-static VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text) {
+static VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text, VALUE rb_mask) {
     Check_Type(rb_text, T_STRING);
+    int mask = NUM2INT(rb_mask);
 
     const char *input = StringValueCStr(rb_text);
     char *working = strdup(input);
@@ -406,6 +484,7 @@ static VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text) {
     }
 
     for (int i = 0; i < NUM_PATTERNS; i++) {
+        if ((pattern_tags[i] & mask) == 0) continue;
         char *result = replace_all_matches(&compiled_patterns[i], working, boundary_wrapped[i]);
         free(working);
         if (!result) {
@@ -462,5 +541,16 @@ void Init_data_redactor(void) {
     }
 
     VALUE mDataRedactor = rb_define_module("DataRedactor");
-    rb_define_module_function(mDataRedactor, "redact", rb_data_redactor_redact, 1);
+    rb_define_module_function(mDataRedactor, "_redact", rb_data_redactor_redact, 2);
+
+    /* Expose tag bitmask values so the Ruby wrapper can build the mask. */
+    rb_define_const(mDataRedactor, "TAG_CREDENTIALS", INT2NUM(TAG_CREDENTIALS));
+    rb_define_const(mDataRedactor, "TAG_FINANCIAL",   INT2NUM(TAG_FINANCIAL));
+    rb_define_const(mDataRedactor, "TAG_TAX_ID",      INT2NUM(TAG_TAX_ID));
+    rb_define_const(mDataRedactor, "TAG_NATIONAL_ID", INT2NUM(TAG_NATIONAL_ID));
+    rb_define_const(mDataRedactor, "TAG_CONTACT",     INT2NUM(TAG_CONTACT));
+    rb_define_const(mDataRedactor, "TAG_NETWORK",     INT2NUM(TAG_NETWORK));
+    rb_define_const(mDataRedactor, "TAG_TRAVEL",      INT2NUM(TAG_TRAVEL));
+    rb_define_const(mDataRedactor, "TAG_OTHER",       INT2NUM(TAG_OTHER));
+    rb_define_const(mDataRedactor, "TAG_ALL",         INT2NUM(TAG_ALL));
 }

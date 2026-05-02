@@ -16,6 +16,26 @@ DataRedactor.redact(text)
 # => "User CF is [REDACTED] and key is [REDACTED]"
 ```
 
+### Filtering by tag
+
+Every pattern belongs to one tag. Use `only:` to redact a subset, or `except:` to skip one.
+
+```ruby
+DataRedactor.tags
+# => [:credentials, :financial, :tax_id, :national_id, :contact, :network, :travel, :other]
+
+# Only redact API keys / tokens / private keys
+DataRedactor.redact(text, only: [:credentials])
+
+# Redact everything except contact info (emails, phone numbers)
+DataRedactor.redact(text, except: [:contact])
+
+# Single symbol works too
+DataRedactor.redact(text, only: :financial)
+```
+
+Passing an unknown tag raises `DataRedactor::UnknownTagError`. Passing both `only:` and `except:` raises `ArgumentError`.
+
 ## Detected patterns (49 total)
 
 ### Cloud & API secrets
