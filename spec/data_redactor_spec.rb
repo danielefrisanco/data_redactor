@@ -534,7 +534,7 @@ RSpec.describe DataRedactor do
       it "returns the list of supported tags" do
         expect(DataRedactor.tags).to contain_exactly(
           :credentials, :financial, :tax_id, :national_id,
-          :contact, :network, :travel, :other
+          :contact, :network, :travel, :other, :custom
         )
       end
     end
@@ -590,6 +590,139 @@ RSpec.describe DataRedactor do
 
     it "with no filter behaves identically to the legacy single-arg call" do
       expect(DataRedactor.redact(input)).to eq(DataRedactor._redact(input, DataRedactor::TAG_ALL))
+    end
+  end
+
+  describe "custom patterns" do
+    before(:each) { DataRedactor.clear_custom_patterns! }
+    after(:each)  { DataRedactor.clear_custom_patterns! }
+
+    describe ".add_pattern / .redact" do
+      it "redacts text matching a simple custom pattern" do
+        DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{6}")
+        result = DataRedactor.redact("id EMP-123456 ok")
+        expect(result).to include("[REDACTED]")
+        expect(result).not_to include("EMP-123456")
+      end
+
+      it "accepts a Regexp and uses its source" do
+        DataRedactor.add_pattern(name: "emp_id", regex: /EMP-[0-9]{6}/)
+        expect(DataRedactor.redact("id EMP-999999 ok")).to include("[REDACTED]")
+      end
+
+      it "replaces an existing pattern with the same name" do
+        DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{6}")
+        DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{4}")
+        expect(DataRedactor.custom_patterns.count { |p| p[:name] == "emp_id" }).to eq(1)
+        expect(DataRedactor.redact("id EMP-1234 ok")).to include("[REDACTED]")
+      end
+
+      it "runs custom pattern only when :custom tag is included" do
+        DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{6}")
+        expect(DataRedactor.redact("EMP-123456", only: [:custom])).to include("[REDACTED]")
+        expect(DataRedactor.redact("EMP-123456", except: [:custom])).to include("EMP-123456")
+      end
+
+      it "supports boundary: true to avoid matching inside longer alphanumeric tokens" do
+        DataRedactor.add_pattern(name: "emp_code", regex: "EMP[0-9]{4}", boundary: true)
+        # standalone token → redacted
+        expect(DataRedactor.redact("code EMP1234 ok", only: [:custom])).to include("[REDACTED]")
+        # embedded inside a longer alphanumeric token → NOT redacted
+        expect(DataRedactor.redact("XEMP1234Y", only: [:custom])).to include("XEMP1234Y")
+      end
+
+      it "supports a built-in tag other than :custom" do
+        DataRedactor.add_pattern(name: "internal_key", regex: "INT-[A-Z]{3}", tag: :credentials)
+        pattern = DataRedactor.custom_patterns.find { |p| p[:name] == "internal_key" }
+        expect(pattern[:tag]).to eq(:credentials)
+        expect(DataRedactor.redact("INT-ABC", only: [:credentials])).to include("[REDACTED]")
+        expect(DataRedactor.redact("INT-ABC", only: [:custom])).to include("INT-ABC")
+      end
+    end
+
+    describe ".remove_pattern" do
+      it "removes a named pattern and returns true" do
+        DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{6}")
+        expect(DataRedactor.remove_pattern("emp_id")).to be true
+        expect(DataRedactor.redact("EMP-123456")).to include("EMP-123456")
+      end
+
+      it "returns false when name is not found" do
+        expect(DataRedactor.remove_pattern("nonexistent")).to be false
+      end
+    end
+
+    describe ".custom_patterns" do
+      it "returns an array of hashes with name, source, tag, boundary" do
+        DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{6}", boundary: true)
+        patterns = DataRedactor.custom_patterns
+        expect(patterns.length).to eq(1)
+        p = patterns.first
+        expect(p[:name]).to eq("emp_id")
+        expect(p[:source]).to eq("EMP-[0-9]{6}")
+        expect(p[:tag]).to eq(:custom)
+        expect(p[:boundary]).to be true
+      end
+
+      it "returns empty array when no custom patterns" do
+        expect(DataRedactor.custom_patterns).to eq([])
+      end
+    end
+
+    describe ".clear_custom_patterns!" do
+      it "removes all custom patterns" do
+        DataRedactor.add_pattern(name: "a", regex: "AAA-[0-9]+")
+        DataRedactor.add_pattern(name: "b", regex: "BBB-[0-9]+")
+        DataRedactor.clear_custom_patterns!
+        expect(DataRedactor.custom_patterns).to be_empty
+      end
+    end
+
+    describe "validation" do
+      it "raises ArgumentError for an empty name" do
+        expect { DataRedactor.add_pattern(name: "", regex: "EMP-[0-9]+") }
+          .to raise_error(ArgumentError, /non-empty/)
+      end
+
+      it "raises ArgumentError for a non-String/Regexp regex" do
+        expect { DataRedactor.add_pattern(name: "x", regex: 42) }
+          .to raise_error(ArgumentError, /String or Regexp/)
+      end
+
+      it "raises InvalidPatternError for \\d (Ruby shorthand)" do
+        expect { DataRedactor.add_pattern(name: "x", regex: "EMP-\\d{6}") }
+          .to raise_error(DataRedactor::InvalidPatternError, /POSIX ERE/)
+      end
+
+      it "raises InvalidPatternError for \\b (word boundary)" do
+        expect { DataRedactor.add_pattern(name: "x", regex: "\\bEMP\\b") }
+          .to raise_error(DataRedactor::InvalidPatternError, /POSIX ERE/)
+      end
+
+      it "raises InvalidPatternError for lookahead" do
+        expect { DataRedactor.add_pattern(name: "x", regex: "EMP(?=[0-9])") }
+          .to raise_error(DataRedactor::InvalidPatternError, /POSIX ERE/)
+      end
+
+      it "raises InvalidPatternError for non-greedy quantifier" do
+        expect { DataRedactor.add_pattern(name: "x", regex: "EMP-[0-9]+?") }
+          .to raise_error(DataRedactor::InvalidPatternError, /POSIX ERE/)
+      end
+
+      it "raises InvalidPatternError for invalid POSIX ERE (regcomp rejects it)" do
+        expect { DataRedactor.add_pattern(name: "x", regex: "[invalid") }
+          .to raise_error(DataRedactor::InvalidPatternError)
+      end
+
+      it "raises InvalidPatternError for capture groups with boundary: true" do
+        expect { DataRedactor.add_pattern(name: "x", regex: "(EMP)-[0-9]{6}", boundary: true) }
+          .to raise_error(DataRedactor::InvalidPatternError, /capture groups/)
+      end
+
+      it "raises UnknownTagError for an invalid tag" do
+        expect { DataRedactor.add_pattern(name: "x", regex: "EMP-[0-9]+", tag: :bogus) }
+          .to raise_error(DataRedactor::UnknownTagError)
+      end
     end
   end
 end

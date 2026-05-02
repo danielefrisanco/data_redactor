@@ -10,10 +10,18 @@ module DataRedactor
     contact:     TAG_CONTACT,
     network:     TAG_NETWORK,
     travel:      TAG_TRAVEL,
-    other:       TAG_OTHER
+    other:       TAG_OTHER,
+    custom:      TAG_CUSTOM
   }.freeze
 
-  class UnknownTagError < ArgumentError; end
+  class UnknownTagError     < ArgumentError; end
+  class InvalidPatternError < ArgumentError; end
+
+  # Capture groups break boundary-wrapper group index assumptions ([1],[2],[3] shift).
+  CAPTURE_GROUP_RE = /(?<!\\)\((?!\?:)/.freeze
+
+  # Ruby regex syntax that has no POSIX ERE equivalent.
+  RUBY_ONLY_SYNTAX_RE = /\\[dDwWsShHbB]|\(\?[<!=]|\(\?<[a-zA-Z]|\(\?[imx]|[*+?]\?/.freeze
 
   module_function
 
@@ -22,9 +30,7 @@ module DataRedactor
   end
 
   def redact(text, only: nil, except: nil)
-    if only && except
-      raise ArgumentError, "pass only: or except:, not both"
-    end
+    raise ArgumentError, "pass only: or except:, not both" if only && except
 
     mask =
       if only
@@ -38,9 +44,58 @@ module DataRedactor
     _redact(text, mask)
   end
 
+  # Add (or replace) a custom redaction pattern.
+  #
+  # name:     unique identifier string
+  # regex:    String (POSIX ERE) or Regexp; Ruby-only syntax raises InvalidPatternError
+  # tag:      one of the TAGS keys (default :custom), or any built-in tag
+  # boundary: wrap with word-boundary guards; incompatible with capture groups
+  def add_pattern(name:, regex:, tag: :custom, boundary: false)
+    raise ArgumentError, "name must be a non-empty String" \
+      unless name.is_a?(String) && !name.empty?
+
+    source = case regex
+             when String then regex
+             when Regexp then regex.source
+             else raise ArgumentError, "regex must be a String or Regexp, got #{regex.class}"
+             end
+
+    if source =~ RUBY_ONLY_SYNTAX_RE
+      raise InvalidPatternError,
+        "pattern #{name.inspect} uses Ruby-only syntax (#{$&.inspect}); " \
+        "use POSIX ERE — no \\d, \\s, \\w, \\b, lookaround, non-greedy, or named groups"
+    end
+
+    if boundary && source =~ CAPTURE_GROUP_RE
+      raise InvalidPatternError,
+        "pattern #{name.inspect} has capture groups and cannot use boundary: true"
+    end
+
+    tag_bit = TAGS[tag] or raise UnknownTagError,
+      "unknown tag #{tag.inspect}; valid tags: #{TAGS.keys.inspect}"
+
+    _add_pattern(name, source, tag_bit, boundary ? 1 : 0)
+  end
+
+  def remove_pattern(name)
+    _remove_pattern(name.to_s)
+  end
+
+  def custom_patterns
+    _custom_patterns.map do |h|
+      { name: h[:name], source: h[:source], tag: TAGS.key(h[:tag_bit]) || :custom,
+        boundary: h[:boundary] }
+    end
+  end
+
+  def clear_custom_patterns!
+    _clear_custom_patterns
+  end
+
   def bits_for(tag_list)
     Array(tag_list).inject(0) do |acc, tag|
-      bit = TAGS[tag] or raise UnknownTagError, "unknown tag #{tag.inspect}; valid tags: #{TAGS.keys.inspect}"
+      bit = TAGS[tag] or raise UnknownTagError,
+        "unknown tag #{tag.inspect}; valid tags: #{TAGS.keys.inspect}"
       acc | bit
     end
   end

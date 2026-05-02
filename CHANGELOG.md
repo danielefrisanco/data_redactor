@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+### Added
+- User-supplied custom patterns via `DataRedactor.add_pattern(name:, regex:, tag: :custom, boundary: false)`.
+- `DataRedactor.remove_pattern(name)` — remove a named custom pattern (returns `true`/`false`).
+- `DataRedactor.custom_patterns` — list all registered custom patterns as an array of hashes.
+- `DataRedactor.clear_custom_patterns!` — remove all custom patterns (useful in test suites).
+- New `:custom` tag and `TAG_CUSTOM` bitmask constant for custom patterns. Works with `only:`/`except:`.
+- `DataRedactor::InvalidPatternError` raised when a pattern fails `regcomp` or uses unsupported Ruby-only syntax (`\d`, `\s`, `\w`, `\b`, lookaround, non-greedy quantifiers, named groups).
+- Capture groups rejected at registration when `boundary: true` (group indices would shift).
+- Name collisions replace the existing pattern (the old compiled `regex_t` is freed).
+
 ## [0.2.0] - 2026-05-02
 
 ### Added

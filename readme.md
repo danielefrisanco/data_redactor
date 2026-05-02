@@ -36,6 +36,31 @@ DataRedactor.redact(text, only: :financial)
 
 Passing an unknown tag raises `DataRedactor::UnknownTagError`. Passing both `only:` and `except:` raises `ArgumentError`.
 
+### Custom patterns
+
+Teams often have internal IDs that the gem can't ship. Register them at boot:
+
+```ruby
+# String (POSIX ERE) or Regexp — both accepted
+DataRedactor.add_pattern(name: "employee_id", regex: "EMP-[0-9]{6}")
+DataRedactor.add_pattern(name: "ticket_ref",  regex: /TICKET-[A-Z]{2}[0-9]{4}/, boundary: true)
+
+# Custom patterns are tagged :custom by default; pass any built-in tag to group differently
+DataRedactor.add_pattern(name: "internal_key", regex: "INT-[A-Z]{3}", tag: :credentials)
+
+DataRedactor.redact(text)                         # runs all patterns including custom
+DataRedactor.redact(text, only: [:custom])         # only user patterns
+DataRedactor.redact(text, only: [:custom, :credentials]) # mix
+
+DataRedactor.custom_patterns   # => [{name:, source:, tag:, boundary:}, ...]
+DataRedactor.remove_pattern("employee_id")
+DataRedactor.clear_custom_patterns!               # mostly for test suites
+```
+
+**Regex rules** — patterns must be POSIX ERE (the same engine used for built-ins). Not supported: `\d`, `\s`, `\w`, `\b`, lookahead/lookbehind, non-greedy quantifiers, named groups. Violations raise `DataRedactor::InvalidPatternError` at registration time, never at redaction time. Use `[0-9]` instead of `\d`, `[[:space:]]` instead of `\s`, etc.
+
+**`boundary: true`** — wraps the pattern with `(^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)` so it only fires when the token is not embedded in a longer alphanumeric string. Incompatible with patterns that contain capture groups.
+
 ## Detected patterns (49 total)
 
 ### Cloud & API secrets

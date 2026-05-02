@@ -26,7 +26,7 @@ Distinctive-prefix API keys with low false-positive risk — easy wins once the 
 ### 1. Tagged categories (highest impact) ✅ DONE in 0.2.0
 Shipped: 8 tags (`:credentials`, `:financial`, `:tax_id`, `:national_id`, `:contact`, `:network`, `:travel`, `:other`), `redact(text, only:/except:)`, `DataRedactor.tags`, `DataRedactor::TAGS`, `UnknownTagError`. C-level filtering via bitmask in `pattern_tags[]`.
 
-### 2. User-supplied custom patterns
+### 2. User-supplied custom patterns ✅ DONE in 0.3.0
 
 Every team has internal IDs (employee numbers, customer codes, internal URLs) the gem can't ship.
 
