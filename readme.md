@@ -156,6 +156,14 @@ bundle exec rake
 
 All C-side buffers are heap-allocated with `malloc`/`strdup` and freed before the function returns. The only Ruby-managed allocation is the final return value from `rb_str_new_cstr`. No Ruby objects are created mid-processing, so GC cannot collect anything out from under the C code.
 
+## Versioning
+
+This project follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Until `1.0.0`, minor versions may introduce breaking changes; from `1.0.0` onward, breaking changes will only land in major versions. See [CHANGELOG.md](CHANGELOG.md) for the release history.
+
+## License
+
+Released under the [MIT License](LICENSE).
+
 ## Known limitations
 
 - **Pattern ordering matters** — patterns run sequentially. An early broad pattern (e.g. the 9-digit passport) may consume digits that a later pattern (e.g. credit card) depends on. Boundary wrapping mitigates this for pure-digit patterns.

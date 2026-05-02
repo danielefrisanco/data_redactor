@@ -1,13 +1,27 @@
+require_relative "lib/data_redactor/version"
+
 Gem::Specification.new do |spec|
   spec.name          = "data_redactor"
-  spec.version       = "0.1.0"
+  spec.version       = DataRedactor::VERSION
   spec.authors       = ["Daniele Frisanco"]
   spec.email         = ["daniele.frisanco@gmail.com"]
   spec.summary       = "Redact PII and secrets from strings before sending to AI or external services"
   spec.description   = "A Ruby gem with a C extension for high-performance scanning and redaction of 79 sensitive patterns — API keys, tokens, credentials, IBANs, national IDs, emails, phone numbers, and PII from 15+ countries. Designed to sanitize text before sending to LLMs, logging systems, or any public/third-party API."
   spec.license       = "MIT"
+  spec.homepage      = "https://github.com/danielefrisanco/data_redactor"
 
-  spec.files         = Dir["lib/**/*.rb", "ext/**/*.{c,h,rb}"]
+  spec.required_ruby_version = ">= 2.7"
+
+  spec.metadata = {
+    "homepage_uri"      => spec.homepage,
+    "source_code_uri"   => spec.homepage,
+    "changelog_uri"     => "#{spec.homepage}/blob/main/CHANGELOG.md",
+    "bug_tracker_uri"   => "#{spec.homepage}/issues",
+    "rubygems_mfa_required" => "true"
+  }
+
+  spec.files = Dir["lib/**/*.rb", "ext/**/*.{c,h,rb}"] +
+               %w[LICENSE CHANGELOG.md readme.md]
   spec.extensions    = ["ext/data_redactor/extconf.rb"]
   spec.require_paths = ["lib"]
 
