@@ -111,11 +111,14 @@ What turns "neat gem" into "we put it in production":
 - Rack middleware that scrubs request/response bodies
 
 ### 10. Distribution / quality of life
-- Publish to RubyGems (currently 0.2.0, unpublished)
+- Publish to RubyGems (currently 0.3.0, unpublished)
 - CI matrix: Ruby 2.7, 3.0, 3.1, 3.2, 3.3 on Linux + macOS
 - Precompiled binaries via `rake-compiler-dock` so `gem install` doesn't need a C toolchain — biggest reason people skip C-extension gems
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
 - Thread-safety note in README (compiled `regex_t` array is read-only after init)
+- YARD inline documentation (`# @param`, `# @return`, `# @raise`) for all public methods
+- Shields.io badges in README: gem version, CI status, test coverage
+- Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
 
 ## Benchmarks
 
@@ -128,6 +131,33 @@ Add a `benchmark/` directory with scripts using `benchmark-ips` and `benchmark/m
 - `benchmark/scaling.rb` — runtime vs. input size (1KB → 100MB) to confirm linear scaling
 
 Publish numbers in the README — the C extension is the differentiator and the current README does not show it off.
+
+---
+
+## Promotion checklist
+
+Things to do **once the gem is published** to build visibility and trust.
+
+### One-time setup
+- [ ] `gem push` to RubyGems.org
+- [ ] Add GitHub repo topics: `ruby`, `gem`, `pii`, `redaction`, `security`, `rails`
+- [ ] Submit to [The Ruby Toolbox](https://www.ruby-toolbox.com) (community-curated catalog; lets developers compare gems in the same category)
+- [ ] Add Shields.io badges to README: gem version, CI build, coverage
+- [ ] Write YARD docs for all public methods (`@param`, `@return`, `@raise`)
+- [ ] Add a thread-safety note to README (built-in `regex_t` array is read-only after init; custom pattern registration is not thread-safe — document this)
+- [ ] Create a minimal demo app or `examples/` directory showing real-world usage (Rails logger wrapper, Rack middleware, etc.)
+
+### Announcement
+- [ ] Post to r/ruby and r/rails — ask for feedback, don't just "sell" it
+- [ ] Write a short article on DEV Community or Medium: "Why I built a C-extension PII redactor for Ruby" — the C vs. pure-Ruby angle is the hook
+- [ ] Announce on X / Mastodon with `#ruby` and `#rails` hashtags
+- [ ] Submit to [Ruby Weekly](https://rubyweekly.com) and [Short Ruby Newsletter](https://newsletter.shortruby.com) for potential feature
+- [ ] If there is a local / virtual Ruby meetup, offer a 5-minute lightning talk
+
+### Ongoing
+- [ ] Keep CHANGELOG up to date (already doing this ✅)
+- [ ] Respond to issues and PRs promptly — responsiveness is the biggest trust signal
+- [ ] Track download stats on RubyGems.org; high growth can get the gem onto trending lists
 
 ---
 
