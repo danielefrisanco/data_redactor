@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    name: Test (Ruby ${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ['3.1', '3.2', '3.3']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Compile C extension and run specs
+        run: bundle exec rake
+
+      - name: Build gem
+        if: matrix.ruby == '3.3'
+        run: bundle exec rake build
+
+      - name: Upload gem artifact
+        if: matrix.ruby == '3.3'
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-redactor-gem
+          path: pkg/
+
+  publish:
+    name: Publish to RubyGems (OIDC)
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'release' && github.event.action == 'published'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Build gem
+        run: bundle exec rake build
+
+      - name: Publish to RubyGems.org via OIDC
+        uses: rubygems/release-gem@v1
