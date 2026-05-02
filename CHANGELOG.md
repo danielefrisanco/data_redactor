@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-02
+
+### Added
+- `placeholder:` keyword argument on `DataRedactor.redact`.
+  - Plain string (default `"[REDACTED]"`): `placeholder: "***"`
+  - Tagged: `placeholder: :tagged` → `[REDACTED:CONTACT]`, `[REDACTED:CREDENTIALS]`, etc.
+  - Deterministic hash: `placeholder: :hash` → `[CONTACT_a3f9]` (4-hex djb2 suffix, same value always produces the same token — useful for correlating redactions across log lines).
+- `PH_MODE_PLAIN`, `PH_MODE_TAGGED`, `PH_MODE_HASH` integer constants exposed from C.
+- `DataRedactor::PLACEHOLDER_DEFAULT` constant (`"[REDACTED]"`).
+
+### Changed
+- `DataRedactor._redact` now takes 4 arguments: `(text, mask, ph_mode, ph_str)`. The public `DataRedactor.redact` API is fully backward compatible.
+
 ## [0.3.0] - 2026-05-02
 
 ### Added

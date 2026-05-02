@@ -3,9 +3,60 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define PLACEHOLDER "[REDACTED]"
-#define PLACEHOLDER_LEN 10
 #define NUM_PATTERNS 79
+
+#define PLACEHOLDER_MODE_PLAIN  0  /* use ph.str verbatim                  */
+#define PLACEHOLDER_MODE_TAGGED 1  /* "[REDACTED:TAGNAME]"                 */
+#define PLACEHOLDER_MODE_HASH   2  /* "[TAGNAME_xxxx]" (4-hex djb2 suffix) */
+
+typedef struct {
+    int         mode;
+    const char *str;      /* plain string (mode 0); tag name (modes 1/2) */
+} placeholder_t;
+
+/* djb2 — fast, dependency-free, good enough for 4-hex log correlation */
+static unsigned int djb2(const char *s, size_t len) {
+    unsigned int h = 5381;
+    for (size_t i = 0; i < len; i++)
+        h = h * 33 ^ (unsigned char)s[i];
+    return h;
+}
+
+/*
+ * Write the placeholder for one match into `buf` (which must be large enough).
+ * Returns the number of bytes written.
+ *
+ * mode 0 (plain):  writes ph->str verbatim
+ * mode 1 (tagged): writes "[REDACTED:TAGNAME]"
+ * mode 2 (hash):   writes "[TAGNAME_xxxx]" where xxxx = low 16 bits of djb2(match)
+ */
+static size_t write_placeholder(char *buf, const placeholder_t *ph,
+                                const char *match, size_t match_len) {
+    switch (ph->mode) {
+        case PLACEHOLDER_MODE_TAGGED:
+            return (size_t)sprintf(buf, "[REDACTED:%s]", ph->str);
+        case PLACEHOLDER_MODE_HASH: {
+            unsigned int h = djb2(match, match_len) & 0xFFFF;
+            return (size_t)sprintf(buf, "[%s_%04x]", ph->str, h);
+        }
+        default: /* PLACEHOLDER_MODE_PLAIN */
+            {
+                size_t len = strlen(ph->str);
+                memcpy(buf, ph->str, len);
+                return len;
+            }
+    }
+}
+
+/* Upper bound on placeholder length for a given ph (for buffer sizing). */
+static size_t max_placeholder_len(const placeholder_t *ph) {
+    size_t tag_len = strlen(ph->str);
+    switch (ph->mode) {
+        case PLACEHOLDER_MODE_TAGGED: return 2 + 9 + tag_len + 1; /* "[REDACTED:" + tag + "]" */
+        case PLACEHOLDER_MODE_HASH:   return 1 + tag_len + 1 + 4 + 1; /* "[" + tag + "_" + 4hex + "]" */
+        default:                      return tag_len;
+    }
+}
 
 /*
  * Tag bits. Each pattern belongs to exactly one tag. Callers can pass a
@@ -548,10 +599,16 @@ static VALUE rb_custom_patterns(VALUE self) {
  *
  * Returns a newly malloc'd string (caller must free), or NULL on failure.
  */
-static char *replace_all_matches(regex_t *pattern, const char *input, int use_boundary) {
-    size_t out_cap = strlen(input) * 2 + 512;
+static char *replace_all_matches(regex_t *pattern, const char *input,
+                                  int use_boundary, const placeholder_t *ph) {
+    size_t ph_max   = max_placeholder_len(ph);
+    size_t out_cap  = strlen(input) * 2 + 512;
     char *output = (char *)malloc(out_cap);
     if (!output) return NULL;
+
+    /* Scratch buffer for the rendered placeholder (worst-case size). */
+    char *ph_buf = (char *)malloc(ph_max + 1);
+    if (!ph_buf) { free(output); return NULL; }
 
     size_t out_len = 0;
     const char *cursor = input;
@@ -575,15 +632,18 @@ static char *replace_all_matches(regex_t *pattern, const char *input, int use_bo
                 core_eo = matches[3].rm_so;
         }
 
-        size_t prefix_len  = (size_t)core_so;
-        size_t suffix_len  = (size_t)(full_eo - core_eo);
-        size_t match_len   = (size_t)(full_eo - full_so);
+        size_t prefix_len = (size_t)core_so;
+        size_t suffix_len = (size_t)(full_eo - core_eo);
+        size_t match_len  = (size_t)(full_eo - full_so);
+        size_t core_len   = (size_t)(core_eo - core_so);
 
-        size_t needed = out_len + prefix_len + PLACEHOLDER_LEN + suffix_len + strlen(cursor + full_eo) + 1;
+        size_t ph_len = write_placeholder(ph_buf, ph, cursor + core_so, core_len);
+
+        size_t needed = out_len + prefix_len + ph_len + suffix_len + strlen(cursor + full_eo) + 1;
         if (needed > out_cap) {
             out_cap = needed * 2;
             char *tmp = (char *)realloc(output, out_cap);
-            if (!tmp) { free(output); return NULL; }
+            if (!tmp) { free(output); free(ph_buf); return NULL; }
             output = tmp;
         }
 
@@ -591,9 +651,9 @@ static char *replace_all_matches(regex_t *pattern, const char *input, int use_bo
         memcpy(output + out_len, cursor, prefix_len);
         out_len += prefix_len;
 
-        /* Replace the core token */
-        memcpy(output + out_len, PLACEHOLDER, PLACEHOLDER_LEN);
-        out_len += PLACEHOLDER_LEN;
+        /* Insert rendered placeholder */
+        memcpy(output + out_len, ph_buf, ph_len);
+        out_len += ph_len;
 
         /* Restore right boundary char */
         if (suffix_len > 0) {
@@ -608,6 +668,7 @@ static char *replace_all_matches(regex_t *pattern, const char *input, int use_bo
             else break;
         }
     }
+    free(ph_buf);
 
     /* Copy the remaining unmatched tail */
     size_t tail_len = strlen(cursor);
@@ -625,49 +686,73 @@ static char *replace_all_matches(regex_t *pattern, const char *input, int use_bo
     return output;
 }
 
+/* Map a TAG_* bit to a short lowercase name used in tagged/hash placeholders. */
+static const char *tag_name_for_bit(int tag_bit) {
+    switch (tag_bit) {
+        case TAG_CREDENTIALS: return "CREDENTIALS";
+        case TAG_FINANCIAL:   return "FINANCIAL";
+        case TAG_TAX_ID:      return "TAX_ID";
+        case TAG_NATIONAL_ID: return "NATIONAL_ID";
+        case TAG_CONTACT:     return "CONTACT";
+        case TAG_NETWORK:     return "NETWORK";
+        case TAG_TRAVEL:      return "TRAVEL";
+        case TAG_OTHER:       return "OTHER";
+        case TAG_CUSTOM:      return "CUSTOM";
+        default:              return "REDACTED";
+    }
+}
+
 /*
- * DataRedactor._redact(text, mask) -> String
+ * DataRedactor._redact(text, mask, ph_mode, ph_str) -> String
  *
- * Scans the input text for sensitive patterns and replaces matches
- * with [REDACTED]. `mask` is an integer bitmask of TAG_* values; only
- * patterns whose tag bit is set will be applied. The Ruby-side wrapper
- * `DataRedactor.redact` builds the mask from `only:`/`except:` keyword
- * arguments and passes TAG_ALL when no filter is given.
+ * `mask`    — integer bitmask of TAG_* values (only / except filtering).
+ * `ph_mode` — 0 = plain string, 1 = tagged "[REDACTED:TAG]", 2 = hash "[TAG_xxxx]".
+ * `ph_str`  — the plain string for mode 0; ignored for modes 1 and 2.
+ *
+ * The Ruby wrapper builds all four arguments and is the public API.
  */
-static VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text, VALUE rb_mask) {
-    Check_Type(rb_text, T_STRING);
-    int mask = NUM2INT(rb_mask);
+static VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text, VALUE rb_mask,
+                                     VALUE rb_ph_mode, VALUE rb_ph_str) {
+    Check_Type(rb_text,   T_STRING);
+    Check_Type(rb_ph_str, T_STRING);
+
+    int mask    = NUM2INT(rb_mask);
+    int ph_mode = NUM2INT(rb_ph_mode);
+    const char *ph_str_plain = StringValueCStr(rb_ph_str);
 
     const char *input = StringValueCStr(rb_text);
     char *working = strdup(input);
-    if (!working) {
-        rb_raise(rb_eNoMemError, "strdup failed");
-    }
+    if (!working) rb_raise(rb_eNoMemError, "strdup failed");
+
+    placeholder_t ph;
+    ph.mode = ph_mode;
 
     for (int i = 0; i < NUM_PATTERNS; i++) {
         if ((pattern_tags[i] & mask) == 0) continue;
-        char *result = replace_all_matches(&compiled_patterns[i], working, boundary_wrapped[i]);
+        ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
+                     ? ph_str_plain
+                     : tag_name_for_bit(pattern_tags[i]);
+        char *result = replace_all_matches(&compiled_patterns[i], working,
+                                           boundary_wrapped[i], &ph);
         free(working);
-        if (!result) {
-            rb_raise(rb_eNoMemError, "replace_all_matches allocation failed");
-        }
+        if (!result) rb_raise(rb_eNoMemError, "replace_all_matches allocation failed");
         working = result;
     }
 
     for (int i = 0; i < custom_count; i++) {
         if ((custom_patterns[i].tag & mask) == 0) continue;
+        ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
+                     ? ph_str_plain
+                     : tag_name_for_bit(custom_patterns[i].tag);
         char *result = replace_all_matches(&custom_patterns[i].compiled, working,
-                                           custom_patterns[i].boundary);
+                                           custom_patterns[i].boundary, &ph);
         free(working);
-        if (!result) {
-            rb_raise(rb_eNoMemError, "replace_all_matches allocation failed (custom)");
-        }
+        if (!result) rb_raise(rb_eNoMemError, "replace_all_matches allocation failed (custom)");
         working = result;
     }
 
     VALUE rb_result = rb_str_new_cstr(working);
     free(working);
-
     return rb_result;
 }
 
@@ -713,11 +798,16 @@ void Init_data_redactor(void) {
     }
 
     VALUE mDataRedactor = rb_define_module("DataRedactor");
-    rb_define_module_function(mDataRedactor, "_redact",               rb_data_redactor_redact,    2);
+    rb_define_module_function(mDataRedactor, "_redact",               rb_data_redactor_redact,    4);
     rb_define_module_function(mDataRedactor, "_add_pattern",          rb_add_pattern,             4);
     rb_define_module_function(mDataRedactor, "_remove_pattern",       rb_remove_pattern,          1);
     rb_define_module_function(mDataRedactor, "_clear_custom_patterns",rb_clear_custom_patterns,   0);
     rb_define_module_function(mDataRedactor, "_custom_patterns",      rb_custom_patterns,         0);
+
+    /* Placeholder mode constants. */
+    rb_define_const(mDataRedactor, "PH_MODE_PLAIN",  INT2NUM(PLACEHOLDER_MODE_PLAIN));
+    rb_define_const(mDataRedactor, "PH_MODE_TAGGED", INT2NUM(PLACEHOLDER_MODE_TAGGED));
+    rb_define_const(mDataRedactor, "PH_MODE_HASH",   INT2NUM(PLACEHOLDER_MODE_HASH));
 
     /* Expose tag bitmask values so the Ruby wrapper can build the mask. */
     rb_define_const(mDataRedactor, "TAG_CREDENTIALS", INT2NUM(TAG_CREDENTIALS));

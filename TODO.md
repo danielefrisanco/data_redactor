@@ -57,11 +57,8 @@ Rules:
 - Persistence: load patterns from a YAML/JSON config file at boot.
 - Per-pattern placeholder override (ties into roadmap item #3).
 
-### 3. Configurable placeholder
-Default stays `[REDACTED]`. Allow:
-- Plain string: `placeholder: "***"`
-- Tagged: `[REDACTED:EMAIL]` (which pattern fired)
-- Deterministic hash: `[EMAIL_a3f9]` so log pipelines can correlate redactions without leaking the value
+### 3. Configurable placeholder ✅ DONE in 0.4.0
+`placeholder: "***"` (plain), `placeholder: :tagged` (`[REDACTED:CONTACT]`), `placeholder: :hash` (`[CONTACT_a3f9]` deterministic djb2).
 
 ### 4. Report / dry-run mode
 Return matches alongside (or instead of) the redacted string — required for audit/compliance and for tuning false positives.

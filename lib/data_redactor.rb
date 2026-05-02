@@ -23,13 +23,15 @@ module DataRedactor
   # Ruby regex syntax that has no POSIX ERE equivalent.
   RUBY_ONLY_SYNTAX_RE = /\\[dDwWsShHbB]|\(\?[<!=]|\(\?<[a-zA-Z]|\(\?[imx]|[*+?]\?/.freeze
 
+  PLACEHOLDER_DEFAULT = "[REDACTED]"
+
   module_function
 
   def tags
     TAGS.keys
   end
 
-  def redact(text, only: nil, except: nil)
+  def redact(text, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
     raise ArgumentError, "pass only: or except:, not both" if only && except
 
     mask =
@@ -41,7 +43,8 @@ module DataRedactor
         TAG_ALL
       end
 
-    _redact(text, mask)
+    ph_mode, ph_str = resolve_placeholder(placeholder)
+    _redact(text, mask, ph_mode, ph_str)
   end
 
   # Add (or replace) a custom redaction pattern.
@@ -97,6 +100,21 @@ module DataRedactor
       bit = TAGS[tag] or raise UnknownTagError,
         "unknown tag #{tag.inspect}; valid tags: #{TAGS.keys.inspect}"
       acc | bit
+    end
+  end
+
+  # Returns [ph_mode_int, ph_str] for the C layer.
+  #   placeholder: "***"      -> plain string
+  #   placeholder: :tagged    -> "[REDACTED:TAGNAME]"
+  #   placeholder: :hash      -> "[TAGNAME_xxxx]"
+  def resolve_placeholder(placeholder)
+    case placeholder
+    when :tagged then [PH_MODE_TAGGED, ""]
+    when :hash   then [PH_MODE_HASH,   ""]
+    when String  then [PH_MODE_PLAIN,  placeholder]
+    else
+      raise ArgumentError,
+        "placeholder must be a String, :tagged, or :hash — got #{placeholder.inspect}"
     end
   end
 end

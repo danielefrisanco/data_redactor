@@ -36,6 +36,36 @@ DataRedactor.redact(text, only: :financial)
 
 Passing an unknown tag raises `DataRedactor::UnknownTagError`. Passing both `only:` and `except:` raises `ArgumentError`.
 
+### Configurable placeholder
+
+By default every match is replaced with `[REDACTED]`. Use the `placeholder:` keyword to change this:
+
+```ruby
+# Plain string — any replacement text
+DataRedactor.redact(text, placeholder: "***")
+DataRedactor.redact(text, placeholder: "")
+
+# Tagged — embeds the pattern's tag name so you know what was redacted
+DataRedactor.redact(text, placeholder: :tagged)
+# "user@example.com"  → "[REDACTED:CONTACT]"
+# "AKIAIOSFODNN7EXAMPLE" → "[REDACTED:CREDENTIALS]"
+# "DE89370400440532013000" → "[REDACTED:FINANCIAL]"
+
+# Hash — deterministic 4-hex suffix of the matched value
+# Same value always produces the same token — useful for correlating
+# redactions across log lines without leaking the original.
+DataRedactor.redact(text, placeholder: :hash)
+# "user@example.com"  → "[CONTACT_3d7a]"
+# "user@example.com"  → "[CONTACT_3d7a]"  (same every time)
+# "other@example.com" → "[CONTACT_91fc]"  (different value, different hash)
+```
+
+All three modes compose with `only:` and `except:`:
+
+```ruby
+DataRedactor.redact(text, only: :contact, placeholder: :tagged)
+```
+
 ### Custom patterns
 
 Teams often have internal IDs that the gem can't ship. Register them at boot:
