@@ -23,24 +23,39 @@ Distinctive-prefix API keys with low false-positive risk — easy wins once the 
 
 ## Roadmap to a usable gem
 
-### 1. Tagged categories (highest impact)
-Group every pattern by a tag (`:credentials`, `:tax_id`, `:national_id`, `:financial`, `:contact`, `:network`, `:travel`, `:other`) and let callers opt in/out:
-
-```ruby
-DataRedactor.redact(text, only:   [:credentials, :financial])
-DataRedactor.redact(text, except: [:contact])
-```
-
-Implementation note: the tier comments in `ext/data_redactor/data_redactor.c` already group patterns — add a parallel `pattern_tags[]` array and an active-mask the Ruby side passes down to `rb_data_redactor_redact`. Per the existing TODO note: an active/inactive array the user toggles.
+### 1. Tagged categories (highest impact) ✅ DONE in 0.2.0
+Shipped: 8 tags (`:credentials`, `:financial`, `:tax_id`, `:national_id`, `:contact`, `:network`, `:travel`, `:other`), `redact(text, only:/except:)`, `DataRedactor.tags`, `DataRedactor::TAGS`, `UnknownTagError`. C-level filtering via bitmask in `pattern_tags[]`.
 
 ### 2. User-supplied custom patterns
+
 Every team has internal IDs (employee numbers, customer codes, internal URLs) the gem can't ship.
 
+**Chosen approach (strict + reserved `:custom` tag):**
+
 ```ruby
-DataRedactor.add_pattern(name: "employee_id", regex: /EMP-\d{6}/, tag: :other)
+DataRedactor.add_pattern(name: "employee_id", regex: /EMP-[0-9]{6}/, tag: :custom, boundary: false)
+DataRedactor.remove_pattern("employee_id")
+DataRedactor.custom_patterns         # => [{name:, source:, tag:, boundary:}, ...]
+DataRedactor.clear_custom_patterns!  # mostly for test suites
+
+DataRedactor.redact(text, only: [:custom])              # only user patterns
+DataRedactor.redact(text, only: [:custom, :credentials]) # mix
 ```
 
-Compile on add, store in a separate dynamic array alongside the static ones.
+Rules:
+- `tag:` defaults to `:custom` (new reserved tag bit). May also be any built-in tag. Anything else raises `UnknownTagError`.
+- `regex:` accepts a `String` (POSIX ERE) or a `Regexp`, but only the subset POSIX `regex.h` understands — no `\d`, `\s`, `\w`, `\b`, `(?:...)`, lookaround, non-greedy, named groups. Reject at registration with a clear `InvalidPatternError`.
+- Compile-test with `regcomp` at `add_pattern` time; raise `InvalidPatternError` carrying the `regerror` message. Fail fast at registration, never at redaction.
+- Patterns with capture groups are rejected when `boundary: true` (same constraint that exists for built-ins, see [data_redactor.c:310-313](ext/data_redactor/data_redactor.c#L310-L313)).
+- Storage: process-local dynamic array (matches how built-ins work — lives until the Ruby VM exits).
+- Execution order: after all built-in patterns, in registration order. Built-ins are ordered specific→generic for a reason; appending custom keeps that invariant.
+- Name collisions: replace the existing pattern (and free its compiled `regex_t`).
+
+**Future improvements (deferred, document but do not implement now):**
+- Translate Ruby-only regex syntax (`\d`→`[0-9]`, `\s`→`[[:space:]]`, `\w`→`[0-9A-Za-z_]`, etc.) so users can pass familiar patterns. Reject lookaround/non-greedy/named groups even after translation.
+- Free-form user tag symbols (e.g. `tag: :anything_you_want`) with dynamic bit allocation, up to 24 user tags (8 reserved built-ins + `:custom` + room to grow within a 32-bit mask). Requires a tag registry. Only ship if users ask.
+- Persistence: load patterns from a YAML/JSON config file at boot.
+- Per-pattern placeholder override (ties into roadmap item #3).
 
 ### 3. Configurable placeholder
 Default stays `[REDACTED]`. Allow:
@@ -96,10 +111,10 @@ What turns "neat gem" into "we put it in production":
 - Rack middleware that scrubs request/response bodies
 
 ### 10. Distribution / quality of life
-- Publish to RubyGems (we are still 0.1.0, unpublished)
+- Publish to RubyGems (currently 0.2.0, unpublished)
 - CI matrix: Ruby 2.7, 3.0, 3.1, 3.2, 3.3 on Linux + macOS
 - Precompiled binaries via `rake-compiler-dock` so `gem install` doesn't need a C toolchain — biggest reason people skip C-extension gems
-- CHANGELOG.md + semver commitment
+- ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
 - Thread-safety note in README (compiled `regex_t` array is read-only after init)
 
 ## Benchmarks
@@ -113,3 +128,51 @@ Add a `benchmark/` directory with scripts using `benchmark-ips` and `benchmark/m
 - `benchmark/scaling.rb` — runtime vs. input size (1KB → 100MB) to confirm linear scaling
 
 Publish numbers in the README — the C extension is the differentiator and the current README does not show it off.
+
+---
+
+## Design decisions
+
+Permanent record of choices made and why, so future contributors don't have to re-litigate them. Add to this list when a non-obvious decision is made; remove an entry only when the decision is reversed (and note the reversal in CHANGELOG).
+
+### Regex engine: POSIX `regex.h`, not Onigmo / PCRE
+
+- **Why**: ships with libc on Linux/macOS, zero extra dependency, fast enough for the use case, keeps the C code small.
+- **Cost**: no `\d`, `\s`, `\w`, `\b`, `(?:...)`, lookaround, non-greedy, named groups. Patterns must be POSIX ERE. We use a manual boundary wrapper (`(^|[^0-9A-Za-z])(...)([^0-9A-Za-z]|$)`) where word boundaries are needed.
+- **Reversible?** Yes — could swap to Onigmo (Ruby's own engine) later if user-supplied patterns need richer syntax. Would mean linking against Ruby's regex internals or pulling in PCRE.
+
+### Pattern ordering: most-specific first, generic last
+
+- **Why**: patterns run sequentially on a working buffer. An early broad pattern (e.g. 9-digit passport) can consume digits a later pattern (credit card) depends on. Ordering specific→generic + boundary-wrapping the generic ones prevents this.
+- **Cost**: adding a new pattern requires choosing the right tier (see comment block at the top of `pattern_tags[]`).
+- **Reversible?** Difficult. Would require a fundamentally different match-collection algorithm (find all matches first, resolve overlaps, then replace).
+
+### Tag system: 8 fixed bits + 1 reserved (`:custom`)
+
+- **Why** (over free-form tags): no registry, no dynamic bit allocation, simple `int` mask, covers the obvious use cases. We can add free-form tags later without breaking the existing API.
+- **Cost**: users can't add arbitrary tags like `:internal_pii`. They get `:custom` for everything user-defined.
+- **Reversible?** Yes — additive. Free-form tags would slot in alongside the fixed bits using bits 9-31 of the mask.
+
+### Custom patterns: strict validation, no Ruby-syntax translation
+
+- **Why**: predictable behaviour. A user who writes `\d` in a custom pattern gets a clear `InvalidPatternError` at registration, not a silent mismatch at redaction time. Translation is a meaningful chunk of code (and a maintenance burden) that we should only pay for if users actually ask.
+- **Cost**: ergonomic friction. Users must know POSIX ERE syntax.
+- **Reversible?** Yes — translation can be added later without breaking existing strict patterns (translated patterns just produce equivalent POSIX ERE before `regcomp`).
+
+### `[REDACTED]` as the placeholder, hardcoded for now
+
+- **Why**: one allocation strategy, one length constant (`PLACEHOLDER_LEN`), simpler C code.
+- **Cost**: no per-tag placeholders, no deterministic-hash mode (yet).
+- **Reversible?** Yes — roadmap item #3 plans to make this configurable.
+
+### Process-local state for custom patterns (no persistence)
+
+- **Why**: matches built-in pattern behaviour (compiled at module init, lives until VM exit). Predictable, no I/O at redaction time, no config-file parser to maintain.
+- **Cost**: every process re-registers patterns at boot. App-level concern, not the gem's.
+- **Reversible?** Yes — a YAML/JSON loader is on the deferred list.
+
+### Public API is the Ruby wrapper, not the C function
+
+- **Why**: keyword arguments (`only:`, `except:`) are awkward in C-defined methods. The Ruby wrapper (`DataRedactor.redact`) handles validation, builds the bitmask, then calls `_redact(text, mask)`. Underscore-prefixed C function signals "internal".
+- **Cost**: one extra Ruby method call per redaction. Negligible vs. the C work.
+- **Reversible?** Yes, but no reason to.
