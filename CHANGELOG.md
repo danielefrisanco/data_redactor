@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-08
+
+### Added
+- Six new distinctive-prefix API key patterns under the `:credentials` tag, exposed via `DataRedactor.pattern_names`:
+  - `anthropic_api_key` — `sk-ant-apiNN-...`
+  - `openai_project_api_key` — `sk-proj-...`
+  - `gitlab_pat` — `glpat-...`
+  - `digitalocean_pat` — `dop_v1_...`
+  - `databricks_api_token` — `dapi...`
+  - `sentry_dsn` — `https://KEY@oNNN.ingest.sentry.io/PID` (also matches the legacy `KEY:SECRET@` form)
+
+### Changed
+- `NUM_PATTERNS` is now 85 (was 79). Built-in pattern indices in C have shifted accordingly; the public Ruby API and pattern names are stable.
+
 ## [0.6.0] - 2026-05-08
 
 ### Added
@@ -80,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.5.0...v0.6.0
 [0.2.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/danielefrisanco/data_redactor/releases/tag/v0.1.0

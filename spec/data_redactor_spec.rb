@@ -409,6 +409,47 @@ RSpec.describe DataRedactor do
       redacted?("token=#{token} end", token)
     end
 
+    # ---- 0.6.1: Anthropic API Key ----
+    it "redacts Anthropic API key (sk-ant-api03 prefix)" do
+      key = "sk-ant-api03-" + "A" * 95
+      redacted?("key=#{key} end", key)
+    end
+
+    # ---- 0.6.1: OpenAI Project API Key ----
+    it "redacts OpenAI project API key (sk-proj prefix)" do
+      key = "sk-proj-" + "A" * 80
+      redacted?("key=#{key} end", key)
+    end
+
+    # ---- 0.6.1: GitLab Personal Access Token ----
+    it "redacts GitLab Personal Access Token (glpat- prefix)" do
+      token = "glpat-" + "abcdefghijklmnopqrst"
+      redacted?("token=#{token} end", token)
+    end
+
+    # ---- 0.6.1: DigitalOcean PAT ----
+    it "redacts DigitalOcean PAT (dop_v1_ prefix)" do
+      token = "dop_v1_" + "0123456789abcdef" * 4
+      redacted?("token=#{token} end", token)
+    end
+
+    # ---- 0.6.1: Databricks API Token ----
+    it "redacts Databricks API token (dapi prefix)" do
+      token = "dapi" + "0123456789abcdef0123456789abcdef"
+      redacted?("token=#{token} end", token)
+    end
+
+    # ---- 0.6.1: Sentry DSN ----
+    it "redacts Sentry DSN" do
+      dsn = "https://" + "0" * 32 + "@o123456.ingest.sentry.io/7654321"
+      redacted?("dsn=#{dsn} end", dsn)
+    end
+
+    it "redacts legacy Sentry DSN with secret" do
+      dsn = "https://" + "0" * 32 + ":" + "f" * 32 + "@o123456.ingest.sentry.io/7654321"
+      redacted?("dsn=#{dsn} end", dsn)
+    end
+
     # ---- Pattern 63: US Social Security Number ----
     it "redacts US SSN" do
       redacted?("ssn: 123-45-6789 end", "123-45-6789")

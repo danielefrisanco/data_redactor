@@ -128,7 +128,7 @@ DataRedactor.clear_custom_patterns!               # mostly for test suites
 
 **`boundary: true`** — wraps the pattern with `(^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)` so it only fires when the token is not embedded in a longer alphanumeric string. Incompatible with patterns that contain capture groups.
 
-## Detected patterns (79 total)
+## Detected patterns (85 total)
 
 The table below is a representative sample. Use `DataRedactor.pattern_names` for the canonical, machine-readable list — it stays in sync with the C extension automatically.
 
@@ -136,15 +136,22 @@ The table below is a representative sample. Use `DataRedactor.pattern_names` for
 
 | # | Pattern | Example |
 |---|---|---|
-| 0 | AWS Access Key ID | `AKIAIOSFODNN7EXAMPLE` |
-| 1 | AWS Secret Access Key | 40-character base64 string |
-| 5 | Google API Key | `AIzaSyXXXX...` |
-| 6 | GitHub Personal Access Token | `github_pat_XXXX...` |
-| 7 | Slack Webhook URL | `https://hooks.slack.com/services/T.../B.../...` |
-| 8 | Stripe Secret Key | `sk_live_XXXX...` |
-| 9 | PEM Private Key header | `-----BEGIN RSA PRIVATE KEY-----` |
-| 13 | Scaleway Access Key | `SCW12345ABCDE6789FGHIJ` |
-| 14 | UUID v4 / Scaleway Secret Key | `550e8400-e29b-41d4-a716-446655440000` |
+| — | AWS Access Key ID | `AKIAIOSFODNN7EXAMPLE` |
+| — | AWS Secret Access Key | 40-character base64 string |
+| — | Google API Key | `AIzaSyXXXX...` |
+| — | GitHub Personal Access Token | `github_pat_XXXX...` |
+| — | GitHub Classic PAT / OAuth | `ghp_XXXX...` / `gho_XXXX...` |
+| — | Slack Webhook URL | `https://hooks.slack.com/services/T.../B.../...` |
+| — | Stripe Secret Key | `sk_live_XXXX...` |
+| — | Anthropic API Key | `sk-ant-api03-XXXX...` |
+| — | OpenAI Project API Key | `sk-proj-XXXX...` |
+| — | GitLab Personal Access Token | `glpat-XXXX...` |
+| — | DigitalOcean PAT | `dop_v1_XXXX...` |
+| — | Databricks API Token | `dapiXXXX...` |
+| — | Sentry DSN | `https://KEY@oNNN.ingest.sentry.io/PID` |
+| — | PEM Private Key header | `-----BEGIN RSA PRIVATE KEY-----` |
+| — | Scaleway Access Key | `SCW12345ABCDE6789FGHIJ` |
+| — | UUID v4 / Scaleway Secret Key | `550e8400-e29b-41d4-a716-446655440000` |
 
 ### Travel documents
 
@@ -267,7 +274,7 @@ bundle exec rake
 
 ## How it works
 
-1. At load time, `Init_data_redactor` compiles all 79 regex patterns once using `regcomp` (POSIX ERE) and stores them as static `regex_t` structs. Patterns marked as boundary-wrapped are expanded with `wrap_boundary()` before compilation.
+1. At load time, `Init_data_redactor` compiles all 85 regex patterns once using `regcomp` (POSIX ERE) and stores them as static `regex_t` structs. Patterns marked as boundary-wrapped are expanded with `wrap_boundary()` before compilation.
 2. `DataRedactor.redact(text)` receives a Ruby `String`, converts it to a C `char*` via `StringValueCStr`, and runs each compiled pattern in sequence on a working buffer.
 3. For each pattern, `replace_all_matches` iterates using `regexec`, copies non-matching segments to a fresh output buffer, and inserts `[REDACTED]` in place of each match. For boundary-wrapped patterns, `regexec` is called with `nmatch=4` and sub-match groups `[1]`/`[3]` identify the boundary characters so they are preserved verbatim.
 4. The output buffer is grown with `realloc` as needed. After all patterns are applied the result is returned as a Ruby `String` via `rb_str_new_cstr`. All intermediate `malloc`/`strdup` allocations are explicitly `free`d.

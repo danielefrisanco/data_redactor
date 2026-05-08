@@ -7,19 +7,19 @@
 
 ## Additional patterns to add (from former plan.md)
 
-Distinctive-prefix API keys with low false-positive risk — easy wins once the tag system (item 1 below) lands so they can be grouped under `:credentials`:
+Distinctive-prefix API keys with low false-positive risk, grouped under `:credentials`:
 
-- Anthropic API Key (`sk-ant-api03-...`)
-- OpenAI API Key (`sk-proj-...`)
-- GitLab PAT (`glpat-...`)
-- DigitalOcean PAT (`dop_v1_...`)
-- Heroku API Key
-- Databricks API Token (`dapi...`)
-- Okta API Token
-- Azure SQL hostname
-- DataDog API Key (needs context prefix to avoid FPs)
-- Sentry DSN
-- PagerDuty API Key
+- [x] Anthropic API Key (`sk-ant-api03-...`) — added in 0.6.1
+- [x] OpenAI API Key (`sk-proj-...`) — added in 0.6.1
+- [x] GitLab PAT (`glpat-...`) — added in 0.6.1
+- [x] DigitalOcean PAT (`dop_v1_...`) — added in 0.6.1
+- [x] Databricks API Token (`dapi...`) — added in 0.6.1
+- [x] Sentry DSN — added in 0.6.1 (matches both modern and legacy `KEY:SECRET@` form)
+- Heroku API Key — **skipped**: format is a plain UUID v4, already covered by the `uuid_v4` pattern
+- Okta API Token — **skipped**: 42-char alphanum with no distinctive prefix → high FP risk
+- Azure SQL hostname — **skipped**: hostname, not a secret
+- DataDog API Key — **deferred**: 32 hex chars with no prefix; needs a context-aware prefix (e.g. `dd[-_]?api[-_]?key=`) to avoid false positives
+- PagerDuty API Key — **skipped**: REST tokens are 20-char alphanum without a stable distinctive prefix; v2 routing keys are 32 hex chars → both FP-prone
 
 ## Roadmap to a usable gem
 
@@ -124,6 +124,43 @@ What turns "neat gem" into "we put it in production":
 - Precompiled binaries via `rake-compiler-dock` so `gem install` doesn't need a C toolchain — biggest reason people skip C-extension gems
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
 - Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
+
+### 11. Name-pattern helper (planned for 0.7.0)
+
+Helper to generate a custom pattern from a person's name covering common variations. Names can't ship as built-ins (every team has different ones), but the pattern-construction logic is the same boilerplate everyone re-derives.
+
+**Proposed API:**
+
+```ruby
+DataRedactor.name_pattern("Mario", "Rossi")
+# => returns a String regex (POSIX ERE) ready to pass to add_pattern
+
+DataRedactor.add_pattern(
+  name: "person_mario_rossi",
+  regex: DataRedactor.name_pattern("Mario", "Rossi"),
+  tag:   :contact
+)
+```
+
+**Variations to cover** (all confirmed in scope by user):
+
+1. **Order swap** — `Mario Rossi`, `Rossi Mario`, `Rossi, Mario`, `Rossi,Mario`
+2. **Initials** — `M. Rossi`, `M Rossi`, `Mario R.`, `Mario R`, `M.R.`, `MR`, `M. R.`
+3. **Case-insensitive matching** — POSIX ERE has no `/i` flag, so build per-letter alternations: `[Mm][Aa][Rr][Ii][Oo]` (or `[mM][aA]...` — same thing). Apply uniformly to first AND last name. Increases pattern length but is the only way without engine support.
+4. **Diacritics tolerance** — when input contains accented characters (`é`, `ñ`, `ü`, `ç`, `ø`...), also match the unaccented form. Implement by mapping each accented char to a `[éeÉE]`-style class. ASCII-only inputs skip this step.
+
+**Open design questions:**
+
+- Multi-part last names (`Van der Berg`, `García Marquez`)? Treat space as `[ ]?` between parts, or require canonical spacing?
+- Middle names (`Mario Luigi Rossi`)? Probably accept optional `(Luigi )?` between first and last — or take an explicit `middle:` kwarg.
+- Hyphens vs spaces (`Anne-Marie` vs `Anne Marie`)? Make hyphens match `[ -]?`.
+- Word boundaries: wrap with the existing boundary-wrap mechanism (`boundary: true`)? Probably yes by default — otherwise `Mario` matches inside `Mariolino`. But boundary-wrapped patterns reject capture groups, so the alternation would have to use `(?:...)` — which POSIX ERE doesn't support either. May need to expose a non-capturing alternation builder, or relax the no-capture-groups rule for this helper specifically.
+- Output as `String` (POSIX ERE) or `Regexp`? `String` is simpler and matches what `add_pattern` already accepts.
+- Where to put the implementation: pure Ruby in `lib/data_redactor/name_pattern.rb` — no need for C since this runs at registration time, not on the hot path.
+
+**Test plan:**
+
+Roundtrip via `add_pattern` and assert that each canonical variant gets redacted and that obvious non-matches (`marioland`, `Maria Rossi`, `Mariolino Rossini`) do not.
 
 ## C extension refactor ✅ DONE
 

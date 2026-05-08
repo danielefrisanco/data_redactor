@@ -30,87 +30,93 @@ const int boundary_wrapped[NUM_PATTERNS] = {
     0, /*  1: Microsoft Teams Webhook */
     0, /*  2: Slack Webhook URL */
     0, /*  3: MongoDB Connection String */
-    0, /*  4: URI with Embedded Password */
+    0, /*  4: Sentry DSN */
+    0, /*  5: URI with Embedded Password */
     /* ---- Tier 2: Long prefixed tokens ---- */
-    0, /*  5: GitHub PAT (fine-grained, 93 chars) */
-    0, /*  6: JWT */
-    0, /*  7: Grafana API Token */
-    0, /*  8: SSH Public Key */
-    0, /*  9: Bearer Token */
-    0, /* 10: Google API Key (39 chars) */
-    0, /* 11: AWS Access Key ID (20 chars) */
-    0, /* 12: AWS Secret Access Key (40 base64) */
-    0, /* 13: SendGrid API Key */
-    0, /* 14: Amazon MWS Auth Token */
-    0, /* 15: LaunchDarkly API Key */
-    0, /* 16: GitHub Classic PAT (ghp_) */
-    0, /* 17: GitHub OAuth Token (gho_) */
-    0, /* 18: Stripe Secret Key */
-    0, /* 19: ClickUp API Key */
-    0, /* 20: Scaleway Access Key */
-    0, /* 21: PEM private key header (generic) */
-    0, /* 22: GPG Private Key Block */
+    0, /*  6: GitHub PAT (fine-grained, 93 chars) */
+    0, /*  7: JWT */
+    0, /*  8: Grafana API Token */
+    0, /*  9: SSH Public Key */
+    0, /* 10: Bearer Token */
+    0, /* 11: Anthropic API Key (sk-ant-api...) */
+    0, /* 12: OpenAI Project API Key (sk-proj-...) */
+    0, /* 13: Google API Key (39 chars) */
+    0, /* 14: AWS Access Key ID (20 chars) */
+    0, /* 15: AWS Secret Access Key (40 base64) */
+    0, /* 16: SendGrid API Key */
+    0, /* 17: Amazon MWS Auth Token */
+    0, /* 18: LaunchDarkly API Key */
+    0, /* 19: GitHub Classic PAT (ghp_) */
+    0, /* 20: GitHub OAuth Token (gho_) */
+    0, /* 21: Stripe Secret Key */
+    0, /* 22: ClickUp API Key */
+    0, /* 23: GitLab Personal Access Token (glpat-) */
+    0, /* 24: DigitalOcean PAT (dop_v1_) */
+    0, /* 25: Databricks API Token (dapi) */
+    0, /* 26: Scaleway Access Key */
+    0, /* 27: PEM private key header (generic) */
+    0, /* 28: GPG Private Key Block */
     /* ---- Tier 3: IBANs (longest → shortest) ---- */
-    0, /* 23: Hungary IBAN (28 chars) */
-    0, /* 24: Poland IBAN (28 chars) */
-    0, /* 25: France IBAN (27 chars) */
-    0, /* 26: Italy IBAN (27 chars) */
-    0, /* 27: Portugal IBAN (25 chars) */
-    0, /* 28: Spain IBAN (24 chars) */
-    0, /* 29: Czechia IBAN (24 chars) */
-    0, /* 30: Romania IBAN (24 chars) */
-    0, /* 31: Sweden IBAN (24 chars) */
-    0, /* 32: Germany IBAN (22 chars) */
-    0, /* 33: Ireland IBAN (22 chars) */
-    0, /* 34: Switzerland IBAN (21 chars) */
-    0, /* 35: Austria IBAN (20 chars) */
-    0, /* 36: Netherlands IBAN (18 chars) */
-    0, /* 37: Denmark IBAN (18 chars) */
-    0, /* 38: Finland IBAN (18 chars) */
-    0, /* 39: Belgium IBAN (16 chars) */
-    0, /* 40: Norway IBAN (15 chars) */
+    0, /* 29: Hungary IBAN (28 chars) */
+    0, /* 30: Poland IBAN (28 chars) */
+    0, /* 31: France IBAN (27 chars) */
+    0, /* 32: Italy IBAN (27 chars) */
+    0, /* 33: Portugal IBAN (25 chars) */
+    0, /* 34: Spain IBAN (24 chars) */
+    0, /* 35: Czechia IBAN (24 chars) */
+    0, /* 36: Romania IBAN (24 chars) */
+    0, /* 37: Sweden IBAN (24 chars) */
+    0, /* 38: Germany IBAN (22 chars) */
+    0, /* 39: Ireland IBAN (22 chars) */
+    0, /* 40: Switzerland IBAN (21 chars) */
+    0, /* 41: Austria IBAN (20 chars) */
+    0, /* 42: Netherlands IBAN (18 chars) */
+    0, /* 43: Denmark IBAN (18 chars) */
+    0, /* 44: Finland IBAN (18 chars) */
+    0, /* 45: Belgium IBAN (16 chars) */
+    0, /* 46: Norway IBAN (15 chars) */
     /* ---- Tier 4: Structured formats (dots, dashes, slashes, @) ---- */
-    0, /* 41: Email Address */
-    0, /* 42: International Phone Number */
-    0, /* 43: Brazilian CNPJ (XX.XXX.XXX/XXXX-XX) */
-    0, /* 44: Brazilian CPF (XXX.XXX.XXX-XX) */
-    0, /* 45: UUID v4 */
-    0, /* 46: IPv4 address */
-    0, /* 47: Credit card numbers */
-    0, /* 48: Indian Aadhaar (XXXX XXXX XXXX) */
+    0, /* 47: Email Address */
+    0, /* 48: International Phone Number */
+    0, /* 49: Brazilian CNPJ (XX.XXX.XXX/XXXX-XX) */
+    0, /* 50: Brazilian CPF (XXX.XXX.XXX-XX) */
+    0, /* 51: UUID v4 */
+    0, /* 52: IPv4 address */
+    0, /* 53: Credit card numbers */
+    0, /* 54: Indian Aadhaar (XXXX XXXX XXXX) */
     /* ---- Tier 5: Letter-anchored patterns ---- */
-    0, /* 49: Mexican CURP (18 alphanum, distinctive structure) */
-    0, /* 50: Italian CF with omocodia (16 chars) */
-    0, /* 51: Italian CF basic (16 chars) */
-    0, /* 52: UK National Insurance Number */
-    0, /* 53: Spanish NIE (X/Y/Z prefix) */
-    0, /* 54: Passport letter prefix + digits */
+    0, /* 55: Mexican CURP (18 alphanum, distinctive structure) */
+    0, /* 56: Italian CF with omocodia (16 chars) */
+    0, /* 57: Italian CF basic (16 chars) */
+    0, /* 58: UK National Insurance Number */
+    0, /* 59: Spanish NIE (X/Y/Z prefix) */
+    0, /* 60: Passport letter prefix + digits */
     /* ---- Tier 6: Boundary-wrapped structured (dash/dot/slash separated) ---- */
-    1, /* 55: South Korean RRN (YYMMDD-XXXXXXX, 14 chars) */
-    1, /* 56: Swiss AHV Number (756.XXXX.XXXX.XX) */
-    1, /* 57: Finnish HETU (DDMMYY[+-A]XXXC) */
-    1, /* 58: Swedish Personnummer (YYMMDD[-+]XXXX) */
-    1, /* 59: Danish CPR Number (DDMMYY-XXXX) */
-    1, /* 60: Czech Rodné číslo (YYMMDD/XXXX) */
-    1, /* 61: US Social Security Number (XXX-XX-XXXX) */
-    1, /* 62: US ITIN (9XX-XX-XXXX) */
-    1, /* 63: Canadian SIN (XXX-XXX-XXX) */
-    1, /* 64: Australian TFN (XXX-XXX-XXX) */
-    1, /* 65: Indian PAN (AAAAA0000A) */
-    1, /* 66: Spanish DNI (8 digits + letter) */
-    1, /* 67: Hungarian Tax ID (8XXXXXXXXX, 10 digits) */
+    1, /* 61: South Korean RRN (YYMMDD-XXXXXXX, 14 chars) */
+    1, /* 62: Swiss AHV Number (756.XXXX.XXXX.XX) */
+    1, /* 63: Finnish HETU (DDMMYY[+-A]XXXC) */
+    1, /* 64: Swedish Personnummer (YYMMDD[-+]XXXX) */
+    1, /* 65: Danish CPR Number (DDMMYY-XXXX) */
+    1, /* 66: Czech Rodné číslo (YYMMDD/XXXX) */
+    1, /* 67: US Social Security Number (XXX-XX-XXXX) */
+    1, /* 68: US ITIN (9XX-XX-XXXX) */
+    1, /* 69: Canadian SIN (XXX-XXX-XXX) */
+    1, /* 70: Australian TFN (XXX-XXX-XXX) */
+    1, /* 71: Indian PAN (AAAAA0000A) */
+    1, /* 72: Spanish DNI (8 digits + letter) */
+    1, /* 73: Hungarian Tax ID (8XXXXXXXXX, 10 digits) */
     /* ---- Tier 7: Boundary-wrapped pure digits (longest → shortest) ---- */
-    1, /* 68: French NIR (15 digits) */
-    1, /* 69: South African ID (13 digits) */
-    1, /* 70: Romanian CNP (13 digits) */
-    1, /* 71: Japanese My Number (12 digits) */
-    1, /* 72: Polish PESEL (11 digits) */
-    1, /* 73: Belgian National Number (11 digits) */
-    1, /* 74: Norwegian Fødselsnummer (11 digits) */
-    1, /* 75: Passport 9 digits */
-    1, /* 76: Dutch BSN (8-9 digits) */
-    1, /* 77: Austrian Abgabenkontonummer (9 digits) */
-    1  /* 78: Polish PESEL duplicate */
+    1, /* 74: French NIR (15 digits) */
+    1, /* 75: South African ID (13 digits) */
+    1, /* 76: Romanian CNP (13 digits) */
+    1, /* 77: Japanese My Number (12 digits) */
+    1, /* 78: Polish PESEL (11 digits) */
+    1, /* 79: Belgian National Number (11 digits) */
+    1, /* 80: Norwegian Fødselsnummer (11 digits) */
+    1, /* 81: Passport 9 digits */
+    1, /* 82: Dutch BSN (8-9 digits) */
+    1, /* 83: Austrian Abgabenkontonummer (9 digits) */
+    1  /* 84: Polish PESEL duplicate */
 };
 
 /*
@@ -118,55 +124,56 @@ const int boundary_wrapped[NUM_PATTERNS] = {
  * patterns run when the caller passes a mask (only/except).
  */
 const int pattern_tags[NUM_PATTERNS] = {
-    /* 0-22: secrets, API keys, tokens, private keys, webhooks */
+    /* 0-28: secrets, API keys, tokens, private keys, webhooks */
     TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
     TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
     TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
     TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
-    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
-    /* 23-40: IBANs */
+    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
+    TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS, TAG_CREDENTIALS,
+    /* 29-46: IBANs */
     TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
     TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
     TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
     TAG_FINANCIAL, TAG_FINANCIAL, TAG_FINANCIAL,
-    TAG_CONTACT,      /* 41: email */
-    TAG_CONTACT,      /* 42: phone */
-    TAG_TAX_ID,       /* 43: Brazilian CNPJ */
-    TAG_TAX_ID,       /* 44: Brazilian CPF */
-    TAG_OTHER,        /* 45: UUID v4 */
-    TAG_NETWORK,      /* 46: IPv4 */
-    TAG_FINANCIAL,    /* 47: credit card */
-    TAG_NATIONAL_ID,  /* 48: Indian Aadhaar */
-    TAG_NATIONAL_ID,  /* 49: Mexican CURP */
-    TAG_TAX_ID,       /* 50: Italian CF (omocodia) */
-    TAG_TAX_ID,       /* 51: Italian CF (basic) */
-    TAG_NATIONAL_ID,  /* 52: UK NIN */
-    TAG_NATIONAL_ID,  /* 53: Spanish NIE */
-    TAG_TRAVEL,       /* 54: passport letter prefix */
-    TAG_NATIONAL_ID,  /* 55: Korean RRN */
-    TAG_NATIONAL_ID,  /* 56: Swiss AHV */
-    TAG_NATIONAL_ID,  /* 57: Finnish HETU */
-    TAG_NATIONAL_ID,  /* 58: Swedish Personnummer */
-    TAG_NATIONAL_ID,  /* 59: Danish CPR */
-    TAG_NATIONAL_ID,  /* 60: Czech Rodné číslo */
-    TAG_NATIONAL_ID,  /* 61: US SSN */
-    TAG_TAX_ID,       /* 62: US ITIN */
-    TAG_NATIONAL_ID,  /* 63: Canadian SIN */
-    TAG_TAX_ID,       /* 64: Australian TFN */
-    TAG_TAX_ID,       /* 65: Indian PAN */
-    TAG_NATIONAL_ID,  /* 66: Spanish DNI */
-    TAG_TAX_ID,       /* 67: Hungarian Tax ID */
-    TAG_NATIONAL_ID,  /* 68: French NIR */
-    TAG_NATIONAL_ID,  /* 69: South African ID */
-    TAG_NATIONAL_ID,  /* 70: Romanian CNP */
-    TAG_TAX_ID,       /* 71: Japanese My Number */
-    TAG_NATIONAL_ID,  /* 72: Polish PESEL */
-    TAG_NATIONAL_ID,  /* 73: Belgian National Number */
-    TAG_NATIONAL_ID,  /* 74: Norwegian Fødselsnummer */
-    TAG_TRAVEL,       /* 75: passport 9 digits */
-    TAG_NATIONAL_ID,  /* 76: Dutch BSN */
-    TAG_TAX_ID,       /* 77: Austrian Abgabenkontonummer */
-    TAG_NATIONAL_ID   /* 78: Polish PESEL duplicate */
+    TAG_CONTACT,      /* 47: email */
+    TAG_CONTACT,      /* 48: phone */
+    TAG_TAX_ID,       /* 49: Brazilian CNPJ */
+    TAG_TAX_ID,       /* 50: Brazilian CPF */
+    TAG_OTHER,        /* 51: UUID v4 */
+    TAG_NETWORK,      /* 52: IPv4 */
+    TAG_FINANCIAL,    /* 53: credit card */
+    TAG_NATIONAL_ID,  /* 54: Indian Aadhaar */
+    TAG_NATIONAL_ID,  /* 55: Mexican CURP */
+    TAG_TAX_ID,       /* 56: Italian CF (omocodia) */
+    TAG_TAX_ID,       /* 57: Italian CF (basic) */
+    TAG_NATIONAL_ID,  /* 58: UK NIN */
+    TAG_NATIONAL_ID,  /* 59: Spanish NIE */
+    TAG_TRAVEL,       /* 60: passport letter prefix */
+    TAG_NATIONAL_ID,  /* 61: Korean RRN */
+    TAG_NATIONAL_ID,  /* 62: Swiss AHV */
+    TAG_NATIONAL_ID,  /* 63: Finnish HETU */
+    TAG_NATIONAL_ID,  /* 64: Swedish Personnummer */
+    TAG_NATIONAL_ID,  /* 65: Danish CPR */
+    TAG_NATIONAL_ID,  /* 66: Czech Rodné číslo */
+    TAG_NATIONAL_ID,  /* 67: US SSN */
+    TAG_TAX_ID,       /* 68: US ITIN */
+    TAG_NATIONAL_ID,  /* 69: Canadian SIN */
+    TAG_TAX_ID,       /* 70: Australian TFN */
+    TAG_TAX_ID,       /* 71: Indian PAN */
+    TAG_NATIONAL_ID,  /* 72: Spanish DNI */
+    TAG_TAX_ID,       /* 73: Hungarian Tax ID */
+    TAG_NATIONAL_ID,  /* 74: French NIR */
+    TAG_NATIONAL_ID,  /* 75: South African ID */
+    TAG_NATIONAL_ID,  /* 76: Romanian CNP */
+    TAG_TAX_ID,       /* 77: Japanese My Number */
+    TAG_NATIONAL_ID,  /* 78: Polish PESEL */
+    TAG_NATIONAL_ID,  /* 79: Belgian National Number */
+    TAG_NATIONAL_ID,  /* 80: Norwegian Fødselsnummer */
+    TAG_TRAVEL,       /* 81: passport 9 digits */
+    TAG_NATIONAL_ID,  /* 82: Dutch BSN */
+    TAG_TAX_ID,       /* 83: Austrian Abgabenkontonummer */
+    TAG_NATIONAL_ID   /* 84: Polish PESEL duplicate */
 };
 
 const char *pattern_names[NUM_PATTERNS] = {
@@ -174,81 +181,87 @@ const char *pattern_names[NUM_PATTERNS] = {
     "microsoft_teams_webhook",       /*  1 */
     "slack_webhook_url",             /*  2 */
     "mongodb_connection_string",     /*  3 */
-    "uri_with_password",             /*  4 */
-    "github_pat_fine_grained",       /*  5 */
-    "jwt",                           /*  6 */
-    "grafana_api_token",             /*  7 */
-    "ssh_public_key",                /*  8 */
-    "bearer_token",                  /*  9 */
-    "google_api_key",                /* 10 */
-    "aws_access_key_id",             /* 11 */
-    "aws_secret_access_key",         /* 12 */
-    "sendgrid_api_key",              /* 13 */
-    "amazon_mws_auth_token",         /* 14 */
-    "launchdarkly_api_key",          /* 15 */
-    "github_classic_pat",            /* 16 */
-    "github_oauth_token",            /* 17 */
-    "stripe_secret_key",             /* 18 */
-    "clickup_api_key",               /* 19 */
-    "scaleway_access_key",           /* 20 */
-    "pem_private_key",               /* 21 */
-    "gpg_private_key",               /* 22 */
-    "iban_hu",                       /* 23 */
-    "iban_pl",                       /* 24 */
-    "iban_fr",                       /* 25 */
-    "iban_it",                       /* 26 */
-    "iban_pt",                       /* 27 */
-    "iban_es",                       /* 28 */
-    "iban_cz",                       /* 29 */
-    "iban_ro",                       /* 30 */
-    "iban_se",                       /* 31 */
-    "iban_de",                       /* 32 */
-    "iban_ie",                       /* 33 */
-    "iban_ch",                       /* 34 */
-    "iban_at",                       /* 35 */
-    "iban_nl",                       /* 36 */
-    "iban_dk",                       /* 37 */
-    "iban_fi",                       /* 38 */
-    "iban_be",                       /* 39 */
-    "iban_no",                       /* 40 */
-    "email",                         /* 41 */
-    "phone_e164",                    /* 42 */
-    "brazilian_cnpj",                /* 43 */
-    "brazilian_cpf",                 /* 44 */
-    "uuid_v4",                       /* 45 */
-    "ipv4",                          /* 46 */
-    "credit_card",                   /* 47 */
-    "indian_aadhaar",                /* 48 */
-    "mexican_curp",                  /* 49 */
-    "italian_cf_omocodia",           /* 50 */
-    "italian_cf",                    /* 51 */
-    "uk_nin",                        /* 52 */
-    "spanish_nie",                   /* 53 */
-    "passport_letter_prefix",        /* 54 */
-    "korean_rrn",                    /* 55 */
-    "swiss_ahv",                     /* 56 */
-    "finnish_hetu",                  /* 57 */
-    "swedish_personnummer",          /* 58 */
-    "danish_cpr",                    /* 59 */
-    "czech_rodne_cislo",             /* 60 */
-    "us_ssn",                        /* 61 */
-    "us_itin",                       /* 62 */
-    "canadian_sin",                  /* 63 */
-    "australian_tfn",                /* 64 */
-    "indian_pan",                    /* 65 */
-    "spanish_dni",                   /* 66 */
-    "hungarian_tax_id",              /* 67 */
-    "french_nir",                    /* 68 */
-    "south_african_id",              /* 69 */
-    "romanian_cnp",                  /* 70 */
-    "japanese_my_number",            /* 71 */
-    "polish_pesel",                  /* 72 */
-    "belgian_national_number",       /* 73 */
-    "norwegian_fodselsnummer",       /* 74 */
-    "passport_9digits",              /* 75 */
-    "dutch_bsn",                     /* 76 */
-    "austrian_abgabenkontonummer",   /* 77 */
-    "polish_pesel_2"                 /* 78 */
+    "sentry_dsn",                    /*  4 */
+    "uri_with_password",             /*  5 */
+    "github_pat_fine_grained",       /*  6 */
+    "jwt",                           /*  7 */
+    "grafana_api_token",             /*  8 */
+    "ssh_public_key",                /*  9 */
+    "bearer_token",                  /* 10 */
+    "anthropic_api_key",             /* 11 */
+    "openai_project_api_key",        /* 12 */
+    "google_api_key",                /* 13 */
+    "aws_access_key_id",             /* 14 */
+    "aws_secret_access_key",         /* 15 */
+    "sendgrid_api_key",              /* 16 */
+    "amazon_mws_auth_token",         /* 17 */
+    "launchdarkly_api_key",          /* 18 */
+    "github_classic_pat",            /* 19 */
+    "github_oauth_token",            /* 20 */
+    "stripe_secret_key",             /* 21 */
+    "clickup_api_key",               /* 22 */
+    "gitlab_pat",                    /* 23 */
+    "digitalocean_pat",              /* 24 */
+    "databricks_api_token",          /* 25 */
+    "scaleway_access_key",           /* 26 */
+    "pem_private_key",               /* 27 */
+    "gpg_private_key",               /* 28 */
+    "iban_hu",                       /* 29 */
+    "iban_pl",                       /* 30 */
+    "iban_fr",                       /* 31 */
+    "iban_it",                       /* 32 */
+    "iban_pt",                       /* 33 */
+    "iban_es",                       /* 34 */
+    "iban_cz",                       /* 35 */
+    "iban_ro",                       /* 36 */
+    "iban_se",                       /* 37 */
+    "iban_de",                       /* 38 */
+    "iban_ie",                       /* 39 */
+    "iban_ch",                       /* 40 */
+    "iban_at",                       /* 41 */
+    "iban_nl",                       /* 42 */
+    "iban_dk",                       /* 43 */
+    "iban_fi",                       /* 44 */
+    "iban_be",                       /* 45 */
+    "iban_no",                       /* 46 */
+    "email",                         /* 47 */
+    "phone_e164",                    /* 48 */
+    "brazilian_cnpj",                /* 49 */
+    "brazilian_cpf",                 /* 50 */
+    "uuid_v4",                       /* 51 */
+    "ipv4",                          /* 52 */
+    "credit_card",                   /* 53 */
+    "indian_aadhaar",                /* 54 */
+    "mexican_curp",                  /* 55 */
+    "italian_cf_omocodia",           /* 56 */
+    "italian_cf",                    /* 57 */
+    "uk_nin",                        /* 58 */
+    "spanish_nie",                   /* 59 */
+    "passport_letter_prefix",        /* 60 */
+    "korean_rrn",                    /* 61 */
+    "swiss_ahv",                     /* 62 */
+    "finnish_hetu",                  /* 63 */
+    "swedish_personnummer",          /* 64 */
+    "danish_cpr",                    /* 65 */
+    "czech_rodne_cislo",             /* 66 */
+    "us_ssn",                        /* 67 */
+    "us_itin",                       /* 68 */
+    "canadian_sin",                  /* 69 */
+    "australian_tfn",                /* 70 */
+    "indian_pan",                    /* 71 */
+    "spanish_dni",                   /* 72 */
+    "hungarian_tax_id",              /* 73 */
+    "french_nir",                    /* 74 */
+    "south_african_id",              /* 75 */
+    "romanian_cnp",                  /* 76 */
+    "japanese_my_number",            /* 77 */
+    "polish_pesel",                  /* 78 */
+    "belgian_national_number",       /* 79 */
+    "norwegian_fodselsnummer",       /* 80 */
+    "passport_9digits",              /* 81 */
+    "dutch_bsn",                     /* 82 */
+    "austrian_abgabenkontonummer",   /* 83 */
+    "polish_pesel_2"                 /* 84 */
 };
 
 /*
@@ -265,166 +278,178 @@ const char *pattern_strings[NUM_PATTERNS] = {
     "https://hooks\\.slack\\.com/services/T[A-Z0-9]{8}/B[A-Z0-9]{8}/[A-Za-z0-9]{24}",
     /*  3: MongoDB Connection String (with credentials) */
     "mongodb(\\+srv)?://[^[:space:]'\"<>/:@]+:[^[:space:]'\"<>/@]+@[^[:space:]?'\"]+",
-    /*  4: URI with Embedded Password (scheme://user:pass@host) */
+    /*  4: Sentry DSN (https://KEY@host.ingest.sentry.io/PROJECT_ID) */
+    "https://[a-f0-9]{32}(:[a-f0-9]{32})?@[a-zA-Z0-9.-]+\\.ingest\\.sentry\\.io/[0-9]+",
+    /*  5: URI with Embedded Password (scheme://user:pass@host) */
     "[A-Za-z][A-Za-z0-9+_-]*://[^[:space:]/?#:@]+:[^[:space:]/?#@]+@[A-Za-z0-9.-]+",
 
     /* ---- Tier 2: Long prefixed tokens ---- */
-    /*  5: GitHub PAT fine-grained (github_pat_ + 82 chars) */
+    /*  6: GitHub PAT fine-grained (github_pat_ + 82 chars) */
     "github_pat_[0-9a-zA-Z_]{82}",
-    /*  6: JWT (three base64url segments) */
+    /*  7: JWT (three base64url segments) */
     "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+",
-    /*  7: Grafana API Token (base64 of {\"k\":\") */
+    /*  8: Grafana API Token (base64 of {\"k\":\") */
     "eyJrIjoi[A-Za-z0-9_=-]{42,}",
-    /*  8: SSH Public Key */
+    /*  9: SSH Public Key */
     "ssh-(rsa|ed25519|ecdsa) [a-zA-Z0-9/+=]{20,}",
-    /*  9: Bearer Token */
+    /* 10: Bearer Token */
     "[Bb]earer [a-zA-Z0-9_.=/+:-]{12,}",
-    /* 10: Google API Key (AIza + 35 chars) */
+    /* 11: Anthropic API Key (sk-ant-apiNN-... ~ 95+ chars) */
+    "sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{90,}",
+    /* 12: OpenAI Project API Key (sk-proj-...) */
+    "sk-proj-[A-Za-z0-9_-]{20,}",
+    /* 13: Google API Key (AIza + 35 chars) */
     "AIza[0-9A-Za-z_-]{35}",
-    /* 11: AWS Access Key ID (all prefixes + 16 chars) */
+    /* 14: AWS Access Key ID (all prefixes + 16 chars) */
     "(A3T[A-Z0-9]|AKIA|ABIA|ACCA|AGPA|AIDA|ANPA|ANVA|APKA|AROA|ASCA|ASIA)[A-Z2-7]{16}",
-    /* 12: AWS Secret Access Key (40 base64 chars) */
+    /* 15: AWS Secret Access Key (40 base64 chars) */
     "[A-Za-z0-9/+=]{40}",
-    /* 13: SendGrid API Key */
+    /* 16: SendGrid API Key */
     "SG\\.[a-zA-Z0-9_-]{5,}\\.[a-zA-Z0-9_-]{5,}",
-    /* 14: Amazon MWS Auth Token */
+    /* 17: Amazon MWS Auth Token */
     "amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-    /* 15: LaunchDarkly API Key (api-UUID or sdk-UUID) */
+    /* 18: LaunchDarkly API Key (api-UUID or sdk-UUID) */
     "(api|sdk)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}",
-    /* 16: GitHub Classic PAT (ghp_ + 36 chars) */
+    /* 19: GitHub Classic PAT (ghp_ + 36 chars) */
     "ghp_[0-9a-zA-Z]{36}",
-    /* 17: GitHub OAuth Token (gho_ + 36 chars) */
+    /* 20: GitHub OAuth Token (gho_ + 36 chars) */
     "gho_[0-9a-zA-Z]{36}",
-    /* 18: Stripe Secret Key (sk_live_ + 24 chars) */
+    /* 21: Stripe Secret Key (sk_live_ + 24 chars) */
     "sk_live_[0-9a-zA-Z]{24}",
-    /* 19: ClickUp API Key */
+    /* 22: ClickUp API Key */
     "pk_[0-9]{6,8}_[A-Z0-9]{32}",
-    /* 20: Scaleway Access Key (SCW + 17 chars) */
+    /* 23: GitLab Personal Access Token (glpat- + 20 chars) */
+    "glpat-[0-9a-zA-Z_-]{20}",
+    /* 24: DigitalOcean PAT (dop_v1_ + 64 hex chars) */
+    "dop_v1_[a-f0-9]{64}",
+    /* 25: Databricks API Token (dapi + 32 hex chars) */
+    "dapi[a-f0-9]{32}",
+    /* 26: Scaleway Access Key (SCW + 17 chars) */
     "SCW[A-Z0-9]{17}",
-    /* 21: PEM private key header (generic) */
+    /* 27: PEM private key header (generic) */
     "-----BEGIN [A-Z ]*PRIVATE KEY-----",
-    /* 22: GPG Private Key Block */
+    /* 28: GPG Private Key Block */
     "-----BEGIN PGP PRIVATE KEY BLOCK-----",
 
     /* ---- Tier 3: IBANs (longest → shortest) ---- */
-    /* 23: Hungary IBAN (HU, 28 chars) */
+    /* 29: Hungary IBAN (HU, 28 chars) */
     "HU[0-9]{2}[0-9]{24}",
-    /* 24: Poland IBAN (PL, 28 chars) */
+    /* 30: Poland IBAN (PL, 28 chars) */
     "PL[0-9]{2}[0-9]{24}",
-    /* 25: France IBAN (FR, 27 chars) */
+    /* 31: France IBAN (FR, 27 chars) */
     "FR[0-9]{2}[0-9]{10}[A-Z0-9]{11}[0-9]{2}",
-    /* 26: Italy IBAN (IT, 27 chars) */
+    /* 32: Italy IBAN (IT, 27 chars) */
     "IT[0-9]{2}[A-Z][0-9]{10}[A-Z0-9]{12}",
-    /* 27: Portugal IBAN (PT, 25 chars) */
+    /* 33: Portugal IBAN (PT, 25 chars) */
     "PT[0-9]{2}[0-9]{21}",
-    /* 28: Spain IBAN (ES, 24 chars) */
+    /* 34: Spain IBAN (ES, 24 chars) */
     "ES[0-9]{2}[0-9]{20}",
-    /* 29: Czechia IBAN (CZ, 24 chars) */
+    /* 35: Czechia IBAN (CZ, 24 chars) */
     "CZ[0-9]{2}[0-9]{20}",
-    /* 30: Romania IBAN (RO, 24 chars) */
+    /* 36: Romania IBAN (RO, 24 chars) */
     "RO[0-9]{2}[A-Z]{4}[A-Z0-9]{16}",
-    /* 31: Sweden IBAN (SE, 24 chars) */
+    /* 37: Sweden IBAN (SE, 24 chars) */
     "SE[0-9]{2}[0-9]{20}",
-    /* 32: Germany IBAN (DE, 22 chars) */
+    /* 38: Germany IBAN (DE, 22 chars) */
     "DE[0-9]{2}[0-9]{18}",
-    /* 33: Ireland IBAN (IE, 22 chars) */
+    /* 39: Ireland IBAN (IE, 22 chars) */
     "IE[0-9]{2}[A-Z]{4}[0-9]{14}",
-    /* 34: Switzerland IBAN (CH, 21 chars) */
+    /* 40: Switzerland IBAN (CH, 21 chars) */
     "CH[0-9]{2}[0-9]{5}[A-Z0-9]{12}",
-    /* 35: Austria IBAN (AT, 20 chars) */
+    /* 41: Austria IBAN (AT, 20 chars) */
     "AT[0-9]{2}[0-9]{16}",
-    /* 36: Netherlands IBAN (NL, 18 chars) */
+    /* 42: Netherlands IBAN (NL, 18 chars) */
     "NL[0-9]{2}[A-Z]{4}[0-9]{10}",
-    /* 37: Denmark IBAN (DK, 18 chars) */
+    /* 43: Denmark IBAN (DK, 18 chars) */
     "DK[0-9]{2}[0-9]{14}",
-    /* 38: Finland IBAN (FI, 18 chars) */
+    /* 44: Finland IBAN (FI, 18 chars) */
     "FI[0-9]{2}[0-9]{14}",
-    /* 39: Belgium IBAN (BE, 16 chars) */
+    /* 45: Belgium IBAN (BE, 16 chars) */
     "BE[0-9]{2}[0-9]{12}",
-    /* 40: Norway IBAN (NO, 15 chars) */
+    /* 46: Norway IBAN (NO, 15 chars) */
     "NO[0-9]{2}[0-9]{11}",
 
     /* ---- Tier 4: Structured formats (dots, dashes, slashes, @) ---- */
-    /* 41: Email Address */
+    /* 47: Email Address */
     "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
-    /* 42: International Phone Number (E.164) */
+    /* 48: International Phone Number (E.164) */
     "\\+[0-9]{1,3}[- ]?[0-9][0-9 -]{6,13}[0-9]",
-    /* 43: Brazilian CNPJ (XX.XXX.XXX/XXXX-XX) */
+    /* 49: Brazilian CNPJ (XX.XXX.XXX/XXXX-XX) */
     "[0-9]{2}\\.[0-9]{3}\\.[0-9]{3}/[0-9]{4}-[0-9]{2}",
-    /* 44: Brazilian CPF (XXX.XXX.XXX-XX) */
+    /* 50: Brazilian CPF (XXX.XXX.XXX-XX) */
     "[0-9]{3}\\.[0-9]{3}\\.[0-9]{3}-[0-9]{2}",
-    /* 45: UUID v4 / Scaleway Secret Key */
+    /* 51: UUID v4 / Scaleway Secret Key */
     "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
-    /* 46: IPv4 address */
+    /* 52: IPv4 address */
     "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)",
-    /* 47: Credit card numbers (Visa, Mastercard, Amex, Discover, JCB) */
+    /* 53: Credit card numbers (Visa, Mastercard, Amex, Discover, JCB) */
     "(4[0-9]{15}|4[0-9]{12}|5[1-5][0-9]{14}|6011[0-9]{12}|65[0-9]{14}|3[47][0-9]{13}|3[068][0-9]{11}|35[0-9]{14})",
-    /* 48: Indian Aadhaar (XXXX XXXX XXXX or XXXX-XXXX-XXXX) */
+    /* 54: Indian Aadhaar (XXXX XXXX XXXX or XXXX-XXXX-XXXX) */
     "[0-9]{4}[- ][0-9]{4}[- ][0-9]{4}",
 
     /* ---- Tier 5: Letter-anchored patterns ---- */
-    /* 49: Mexican CURP (18 alphanum, distinctive structure) */
+    /* 55: Mexican CURP (18 alphanum, distinctive structure) */
     "[A-Z]{4}[0-9]{6}[HM][A-Z]{5}[A-Z0-9][0-9]",
-    /* 50: Italian CF with omocodia (16 chars) */
+    /* 56: Italian CF with omocodia (16 chars) */
     "[A-Z]{6}[0-9LMNPQRSTUV]{2}[ABCDEHLMPRST][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]",
-    /* 51: Italian CF basic (16 chars) */
+    /* 57: Italian CF basic (16 chars) */
     "[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]",
-    /* 52: UK National Insurance Number (AA 99 99 99 A-D) */
+    /* 58: UK National Insurance Number (AA 99 99 99 A-D) */
     "[A-Z]{2} ?[0-9]{2} ?[0-9]{2} ?[0-9]{2} ?[A-D]",
-    /* 53: Spanish NIE (X/Y/Z + 7 digits + letter) */
+    /* 59: Spanish NIE (X/Y/Z + 7 digits + letter) */
     "[XYZ][0-9]{7}[A-Z]",
-    /* 54: Passport - letter prefix + digits (e.g. AB1234567) */
+    /* 60: Passport - letter prefix + digits (e.g. AB1234567) */
     "[A-Z]{1,2}[0-9]{6,7}",
 
     /* ---- Tier 6: Boundary-wrapped structured (dash/dot/slash separated) ---- */
-    /* 55: South Korean RRN (YYMMDD-XXXXXXX, 14 chars with dash) */
+    /* 61: South Korean RRN (YYMMDD-XXXXXXX, 14 chars with dash) */
     "[0-9]{6}-[0-9]{7}",
-    /* 56: Swiss AHV Number (756.XXXX.XXXX.XX) */
+    /* 62: Swiss AHV Number (756.XXXX.XXXX.XX) */
     "756\\.[0-9]{4}\\.[0-9]{4}\\.[0-9]{2}",
-    /* 57: Finnish HETU (DDMMYY[+-A]XXXC) */
+    /* 63: Finnish HETU (DDMMYY[+-A]XXXC) */
     "[0-9]{6}[-+A][0-9]{3}[0-9A-Y]",
-    /* 58: Swedish Personnummer (YYMMDD[-+]XXXX) */
+    /* 64: Swedish Personnummer (YYMMDD[-+]XXXX) */
     "[0-9]{6}[-+][0-9]{4}",
-    /* 59: Danish CPR Number (DDMMYY-XXXX) */
+    /* 65: Danish CPR Number (DDMMYY-XXXX) */
     "[0-9]{6}-[0-9]{4}",
-    /* 60: Czech Rodné číslo (YYMMDD/XXXX or YYMMDDXXXX) */
+    /* 66: Czech Rodné číslo (YYMMDD/XXXX or YYMMDDXXXX) */
     "[0-9]{6}/?[0-9]{3,4}",
-    /* 61: US Social Security Number (XXX-XX-XXXX) */
+    /* 67: US Social Security Number (XXX-XX-XXXX) */
     "[0-9]{3}-[0-9]{2}-[0-9]{4}",
-    /* 62: US ITIN (9XX-XX-XXXX) */
+    /* 68: US ITIN (9XX-XX-XXXX) */
     "9[0-9]{2}-[0-9]{2}-[0-9]{4}",
-    /* 63: Canadian SIN (XXX-XXX-XXX) */
+    /* 69: Canadian SIN (XXX-XXX-XXX) */
     "[0-9]{3}-[0-9]{3}-[0-9]{3}",
-    /* 64: Australian TFN (XXX-XXX-XXX or XXX XXX XXX) */
+    /* 70: Australian TFN (XXX-XXX-XXX or XXX XXX XXX) */
     "[0-9]{3}[- ][0-9]{3}[- ][0-9]{3}",
-    /* 65: Indian PAN (5 letters + 4 digits + 1 letter) */
+    /* 71: Indian PAN (5 letters + 4 digits + 1 letter) */
     "[A-Z]{5}[0-9]{4}[A-Z]",
-    /* 66: Spanish DNI (8 digits + 1 letter) */
+    /* 72: Spanish DNI (8 digits + 1 letter) */
     "[0-9]{8}[A-Z]",
-    /* 67: Hungarian Tax ID (starts with 8, 10 digits) */
+    /* 73: Hungarian Tax ID (starts with 8, 10 digits) */
     "8[0-9]{9}",
 
     /* ---- Tier 7: Boundary-wrapped pure digits (longest → shortest) ---- */
-    /* 68: French NIR / Social Security (15 digits) */
+    /* 74: French NIR / Social Security (15 digits) */
     "[12][0-9]{2}[01][0-9][0-9]{2}[0-9]{3}[0-9]{3}[0-9]{2}",
-    /* 69: South African ID (13 digits) */
+    /* 75: South African ID (13 digits) */
     "[0-9]{13}",
-    /* 70: Romanian CNP (13 digits, first digit 1-8) */
+    /* 76: Romanian CNP (13 digits, first digit 1-8) */
     "[1-8][0-9]{12}",
-    /* 71: Japanese My Number (12 digits) */
+    /* 77: Japanese My Number (12 digits) */
     "[0-9]{12}",
-    /* 72: Polish PESEL (11 digits) */
+    /* 78: Polish PESEL (11 digits) */
     "[0-9]{11}",
-    /* 73: Belgian National Number (11 digits) */
+    /* 79: Belgian National Number (11 digits) */
     "[0-9]{11}",
-    /* 74: Norwegian Fødselsnummer (11 digits) */
+    /* 80: Norwegian Fødselsnummer (11 digits) */
     "[0-9]{11}",
-    /* 75: Passport - 9 consecutive digits */
+    /* 81: Passport - 9 consecutive digits */
     "[0-9]{9}",
-    /* 76: Dutch BSN (8-9 digits) */
+    /* 82: Dutch BSN (8-9 digits) */
     "[0-9]{8,9}",
-    /* 77: Austrian Abgabenkontonummer (9 digits) */
+    /* 83: Austrian Abgabenkontonummer (9 digits) */
     "[0-9]{9}",
-    /* 78: Polish PESEL duplicate */
+    /* 84: Polish PESEL duplicate */
     "[0-9]{11}"
 };

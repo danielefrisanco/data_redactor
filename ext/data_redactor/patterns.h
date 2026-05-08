@@ -3,7 +3,7 @@
 
 #include <regex.h>
 
-#define NUM_PATTERNS 79
+#define NUM_PATTERNS 85
 
 extern const char *pattern_strings[NUM_PATTERNS];
 extern const int   boundary_wrapped[NUM_PATTERNS];
