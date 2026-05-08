@@ -110,15 +110,16 @@ What turns "neat gem" into "we put it in production":
 - Rack middleware that scrubs request/response bodies
 
 ### 10. Distribution / quality of life
-- Publish to RubyGems (currently 0.5.0, unpublished)
+- ~~Publish to RubyGems~~ ✅ DONE — 0.5.0 published 2026-05-08
 - ~~CI matrix: Ruby 2.7, 3.0, 3.1, 3.2, 3.3 on Linux + macOS~~ ✅ DONE — `.github/workflows/ci.yml` tests Ruby 3.1/3.2/3.3, builds gem, publishes via OIDC on release
-- **RubyGems OIDC trusted publisher setup** — on RubyGems.org, add a trusted publisher for `danielefrisanco/data_redactor`, workflow `ci.yml`. Required before the publish job can push.
-- **YARD inline documentation** — write `# @param`, `# @return`, `# @raise` comments for all public methods (`redact`, `scan`, `add_pattern`, `remove_pattern`, `custom_patterns`, `clear_custom_patterns!`, `tags`). Once done, re-enable the YARD deploy job in `ci.yml`.
+- ~~RubyGems OIDC trusted publisher setup~~ ✅ DONE
+- ~~YARD inline documentation~~ ✅ DONE — `@param`/`@return`/`@raise` for all public methods; `bundle exec yard doc` is 100% documented. Deferred: GitHub Pages deploy job in `ci.yml`.
+- ~~Thread-safety note in README~~ ✅ DONE
+- ~~Shields.io badges in README~~ ✅ DONE — gem version, CI build, license
 - Precompiled binaries via `rake-compiler-dock` so `gem install` doesn't need a C toolchain — biggest reason people skip C-extension gems
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
-- Thread-safety note in README (compiled `regex_t` array is read-only after init)
-- Shields.io badges in README: gem version, CI status, test coverage
 - Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
+- GitHub Pages deploy job for YARD docs (currently disabled; would need a separate job after YARD docs are stable)
 
 ## C extension refactor
 

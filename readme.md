@@ -1,5 +1,9 @@
 # DataRedactor
 
+[![Gem Version](https://badge.fury.io/rb/data_redactor.svg)](https://rubygems.org/gems/data_redactor)
+[![CI](https://github.com/danielefrisanco/data_redactor/actions/workflows/ci.yml/badge.svg)](https://github.com/danielefrisanco/data_redactor/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A Ruby gem with a C extension for high-performance regex-based redaction of sensitive data from strings.
 
 ## What it does
@@ -253,6 +257,12 @@ bundle exec rake
 ## Memory management
 
 All C-side buffers are heap-allocated with `malloc`/`strdup` and freed before the function returns. The only Ruby-managed allocation is the final return value from `rb_str_new_cstr`. No Ruby objects are created mid-processing, so GC cannot collect anything out from under the C code.
+
+## Thread safety
+
+`DataRedactor.redact` and `DataRedactor.scan` are safe to call concurrently from multiple threads. Built-in patterns are compiled into a static `regex_t` array at load time and never mutated afterward, and each call allocates its own working buffers. POSIX `regexec` is documented as thread-safe.
+
+`DataRedactor.add_pattern`, `remove_pattern`, and `clear_custom_patterns!` mutate a shared dynamic array and are **not** thread-safe. Register custom patterns once at boot — before spawning worker threads or forking — and they will be visible (read-only) to every subsequent `redact`/`scan` call.
 
 ## Versioning
 

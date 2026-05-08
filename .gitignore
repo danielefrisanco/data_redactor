@@ -18,6 +18,11 @@ Thumbs.db
 tmp/
 lib/data_redactor/*.so
 lib/data_redactor/*.bundle
+pkg/
+
+# Generated documentation
+doc/
+.yardoc/
 
 # Test & Coverage
 coverage/

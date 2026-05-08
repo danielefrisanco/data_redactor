@@ -27,4 +27,5 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "rake-compiler", "~> 1.2"
   spec.add_development_dependency "rspec", "~> 3.12"
+  spec.add_development_dependency "yard", "~> 0.9"
 end
