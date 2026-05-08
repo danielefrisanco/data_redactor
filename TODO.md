@@ -107,13 +107,46 @@ Defer until 1+2 land. Chunk boundaries can split a match — needs an overlap/lo
 DataRedactor.redact_stream(input_io, output_io)
 ```
 
-### 9. Rails / Rack integration
-What turns "neat gem" into "we put it in production":
-- `Logger` formatter that wraps messages
-- `Rails.application.config.filter_parameters` adapter
-- Rack middleware that scrubs request/response bodies
+### 9. Rails / Rack integration ✅ DONE in 0.7.0
+Shipped under `lib/data_redactor/integrations/` as soft-required adapters (zero runtime dependencies added):
+- ✅ `DataRedactor::Integrations::Logger` — `Logger::Formatter` wrapper, preserves exception cause chains
+- ✅ `DataRedactor::Integrations::Rails.filter` — `filter_parameters` adapter
+- ✅ `DataRedactor::Integrations::Rack` — middleware with `scrub: [:body, :headers]` opt-in surfaces
 
-### 10. Distribution / quality of life
+Future work for this area: a `Rack` `:env_logs` surface that scrubs `PATH_INFO` / `QUERY_STRING` for downstream access loggers (deferred — needs to wrap the upstream logger rather than mutate env, which has been blocking the design).
+
+### 10. Claude / OpenAI API integration (planned for 0.8.0)
+
+Helpers that sanitize LLM payloads before they leave the process and optionally scrub responses before they're logged or stored.
+
+**Proposed API:**
+
+```ruby
+require "data_redactor/integrations/claude"
+# or
+require "data_redactor/integrations/openai"
+
+# Redact a messages array in place before sending to Claude / OpenAI
+safe_messages = DataRedactor::Integrations::Claude.redact_messages(messages)
+safe_messages = DataRedactor::Integrations::OpenAI.redact_messages(messages)
+
+# Redact a response (assistant message / completion) before logging
+safe_response = DataRedactor::Integrations::Claude.redact_response(response)
+safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
+```
+
+**Variants to cover:**
+- `messages` array: walk each `{ role:, content: }` entry; `content` may be a String or an array of content blocks (text/image). Redact all text parts.
+- System prompt: include in the walk if present at the top level (Claude) or as a `{"role": "system"}` message (OpenAI).
+- Response: Claude returns a `content` array of blocks; OpenAI returns `choices[].message.content`. Extract, redact, return a patched copy.
+- All helpers forward `only:`, `except:`, `placeholder:` to `DataRedactor.redact`.
+- No runtime dependency on the `anthropic` or `openai` gems — operate on plain Ruby Hashes/Arrays so they work with any HTTP client or SDK version.
+
+**Open questions:**
+- Redact in place (mutate) or return a copy? Prefer a copy — callers shouldn't have to worry about their original payload being changed.
+- Should the response helper return the full response object (patched) or just the text? Full object is more composable.
+
+### 11. Distribution / quality of life (formerly #10)
 - ~~Publish to RubyGems~~ ✅ DONE — 0.5.0 published 2026-05-08
 - ~~CI matrix: Ruby 2.7, 3.0, 3.1, 3.2, 3.3 on Linux + macOS~~ ✅ DONE — `.github/workflows/ci.yml` tests Ruby 3.1/3.2/3.3, builds gem, publishes via OIDC on release
 - ~~RubyGems OIDC trusted publisher setup~~ ✅ DONE
@@ -125,7 +158,7 @@ What turns "neat gem" into "we put it in production":
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
 - Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
 
-### 11. Name-pattern helper (planned for 0.7.0)
+### 12. Name-pattern helper (planned for 0.8.0)
 
 Helper to generate a custom pattern from a person's name covering common variations. Names can't ship as built-ins (every team has different ones), but the pattern-construction logic is the same boilerplate everyone re-derives.
 

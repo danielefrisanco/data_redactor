@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-08
+
+### Added
+- **Rails / Rack / Logger integrations** under `lib/data_redactor/integrations/`. Soft-required — none are loaded by default; the gem still has zero runtime dependencies in the gemspec.
+  - `DataRedactor::Integrations::Logger` — drop-in `Logger::Formatter` that scrubs every emitted line, wraps an inner formatter (default `Logger::Formatter`), and preserves exception cause chains.
+  - `DataRedactor::Integrations::Rails.filter(...)` — returns a `(key, value)` proc for `Rails.application.config.filter_parameters`. Mutates String values in place via `String#replace`.
+  - `DataRedactor::Integrations::Rack` — middleware with selectable surfaces. `scrub:` accepts any subset of `[:body, :headers]` (default both). `:body` buffers the response and drops `Content-Length`; `:headers` scrubs sensitive response headers (`Set-Cookie`, `Authorization`, `X-Api-Key`, ...) and request headers in the env hash. Unknown surfaces raise `ArgumentError`.
+- All three integrations forward `only:`, `except:`, `placeholder:` to `DataRedactor.redact`.
+
+### Changed
+- Gemspec: added `rack` as a development dependency. No new runtime dependencies.
+
 ## [0.6.1] - 2026-05-08
 
 ### Added
@@ -94,7 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.5.0...v0.6.0
 [0.2.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.1.0...v0.2.0

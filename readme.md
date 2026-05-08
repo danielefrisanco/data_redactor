@@ -128,6 +128,57 @@ DataRedactor.clear_custom_patterns!               # mostly for test suites
 
 **`boundary: true`** — wraps the pattern with `(^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)` so it only fires when the token is not embedded in a longer alphanumeric string. Incompatible with patterns that contain capture groups.
 
+## Integrations
+
+Optional adapters for Logger, Rails, and Rack. None are loaded automatically — `require` only what you use, and the gem adds zero runtime dependencies in the gemspec.
+
+### Logger formatter
+
+Drop-in `Logger::Formatter` replacement that scrubs every emitted line:
+
+```ruby
+require "data_redactor/integrations/logger"
+
+logger = Logger.new($stdout)
+logger.formatter = DataRedactor::Integrations::Logger.new
+logger.info("Auth failed for alice@example.com")
+# => I, [...] -- : Auth failed for [REDACTED]
+```
+
+Wraps an inner formatter (defaults to `Logger::Formatter`), so it composes with structured loggers. Forwards `only:`, `except:`, `placeholder:` to `DataRedactor.redact`. Exception messages and arbitrary objects are scrubbed too — the wrapped object is passed unchanged to the inner formatter so the exception cause chain is preserved; only the rendered string is redacted.
+
+### Rails `filter_parameters` adapter
+
+```ruby
+# config/initializers/filter_parameter_logging.rb
+require "data_redactor/integrations/rails"
+
+Rails.application.config.filter_parameters += [
+  DataRedactor::Integrations::Rails.filter
+]
+```
+
+Returns a `(key, value)` proc compatible with Rails' parameter filter. String values are mutated in place via `String#replace` so Rails sees the redacted value. Non-strings are left alone. Accepts the same `only:`/`except:`/`placeholder:` kwargs.
+
+### Rack middleware
+
+```ruby
+# config.ru
+require "data_redactor/integrations/rack"
+
+use DataRedactor::Integrations::Rack, scrub: [:body, :headers]
+run MyApp
+```
+
+`scrub:` selects which surfaces to redact (default `[:body, :headers]`):
+
+- **`:body`** — buffers the response body, runs `DataRedactor.redact` over it, returns it as a single chunk. Drops the `Content-Length` header so the server recomputes (the redacted body may differ in byte length).
+- **`:headers`** — scrubs sensitive **response** headers (`Set-Cookie`, `Authorization`, `X-Api-Key`, `X-Auth-Token`, `X-Access-Token`) in place, and sensitive **request** headers (`HTTP_AUTHORIZATION`, `HTTP_PROXY_AUTHORIZATION`, `HTTP_COOKIE`, `HTTP_X_API_KEY`, `HTTP_X_AUTH_TOKEN`, `HTTP_X_ACCESS_TOKEN`) in the env hash so any downstream middleware that logs them sees redacted values.
+
+Pass an empty subset (e.g. `scrub: [:headers]`) to opt out of body wrapping. Forwards `only:`/`except:`/`placeholder:` to `DataRedactor.redact`. Unknown surfaces raise `ArgumentError` at boot.
+
+> **Body wrapping is buffering.** The middleware reads the entire response body into memory before scanning. For streaming endpoints (SSE, large file downloads, Rack::Hijack) use `scrub: [:headers]` and rely on the Logger formatter for application logs instead.
+
 ## Detected patterns (85 total)
 
 The table below is a representative sample. Use `DataRedactor.pattern_names` for the canonical, machine-readable list — it stays in sync with the C extension automatically.
