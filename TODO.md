@@ -136,6 +136,33 @@ What turns "neat gem" into "we put it in production":
 
 **Why:** the current file is already hard to navigate; as checksum validation (item 7) and streaming (item 8) land it will get worse. Splitting now while the boundaries are clear is cheaper than splitting a 2000-line file later.
 
+## Performance: optimize and minimize allocations
+
+Current `redact` runs each pattern over a fresh working buffer, copying non-matching segments and `realloc`ing as needed. That's correct but allocation-heavy. Things to try, roughly in order of expected payoff:
+
+- **Single-pass, two-buffer ping-pong** — keep two buffers alive across patterns and swap pointers instead of `malloc`/`free`-ing per pattern. Saves `NUM_PATTERNS - 1` allocation pairs per call.
+- **Initial buffer sizing from input length** (currently grows from a small starting size) — `malloc(input_len + slack)` upfront avoids early `realloc`s for typical payloads.
+- **Skip patterns with no possible match** — quick `memchr` for a required literal (e.g. `sk_live_` for Stripe, `AKIA` for AWS, `BEGIN ` for PEM) before invoking `regexec`. For most inputs most patterns won't match — bailing without `regexec` is a big win.
+- **`REG_NOSUB` where we don't need capture groups** — non-boundary patterns currently request unused match info.
+- **Replace `strdup`/`strncpy` chains with direct `memcpy` into a known-size output buffer** — fewer C-library calls, simpler escape analysis for the compiler.
+- **Reuse the same allocation across `redact` *calls*** — process-local thread-local buffer (after [Full thread safety](#full-thread-safety) lands) reset to length 0 between calls. Eliminates allocation entirely on the hot path.
+- **Branch-free `write_placeholder` for the plain mode** — the common case is one `memcpy` of a fixed-size string; specialize it.
+- **Profile first** — wire up `benchmark/throughput.rb` (see [Benchmarks](#benchmarks)) and `perf` / `Instruments` before changing code. Optimize the actual hot spot, not the assumed one.
+
+**Why:** the C extension is the gem's selling point. Beating pure-Ruby `gsub` by 2× isn't impressive; beating it by 20× is. Allocation is almost certainly the bottleneck — `regcomp` is a one-time cost, `regexec` is fast, `malloc` per pattern per call is not.
+
+## Full thread safety
+
+Today `redact` and `scan` are thread-safe but `add_pattern` / `remove_pattern` / `clear_custom_patterns!` are not (documented in README as "register at boot"). Goal: make every public method safe to call from any thread at any time.
+
+- **Reader-writer lock around the custom-pattern array** — `redact`/`scan` take a read lock for the duration of the call (they already iterate the array), `add_pattern`/`remove_pattern`/`clear_custom_patterns!` take a write lock. Use `pthread_rwlock_t` (POSIX) — or, simpler and good enough, a plain `pthread_mutex_t` since contention is low in practice.
+- **Release the GVL during long redactions** — `rb_thread_call_without_gvl` so other Ruby threads can run while a big payload is being scanned. The lock above must be acquired *before* releasing the GVL and held until reacquiring it, so the array can't change mid-scan.
+- **Atomic snapshot alternative** — copy-on-write the custom-pattern array on every mutation; readers grab a pointer to the current snapshot under a brief lock and use it lock-free. More allocation per write, zero contention per read. Probably overkill until someone reports it as a real problem.
+- **Tests** — Ruby thread-stress test that registers/removes patterns from one thread while N readers `redact` concurrently. Run under TSan in CI on Linux if affordable.
+- **Update README** — once shipped, replace the "not thread-safe" caveat in the Thread safety section with a plain "fully thread-safe" statement, and note the `rb_thread_call_without_gvl` behavior.
+
+**Why:** "register at boot" is a real ergonomic limitation — anyone building a multi-tenant app that loads tenant-specific patterns at request time can't use the gem safely today. Removing that caveat is a real differentiator.
+
 ## Benchmarks
 
 Add a `benchmark/` directory with scripts using `benchmark-ips` and `benchmark/memory`:
