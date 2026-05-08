@@ -1,3 +1,4 @@
+require "set"
 require_relative "data_redactor/version"
 require_relative "data_redactor/data_redactor" # loads the compiled .so
 
@@ -12,9 +13,11 @@ require_relative "data_redactor/data_redactor" # loads the compiled .so
 #   DataRedactor.redact("key is AKIAIOSFODNN7EXAMPLE")
 #   # => "key is [REDACTED]"
 #
-# @example Filter by tag
+# @example Filter by tag or pattern name
 #   DataRedactor.redact(text, only: :credentials)
 #   DataRedactor.redact(text, except: [:contact, :network])
+#   DataRedactor.redact(text, only: :contact, except: ["email"])
+#   DataRedactor.redact(text, only: ["aws_access_key_id"])
 #
 # @example Custom placeholder
 #   DataRedactor.redact(text, placeholder: "***")
@@ -49,6 +52,10 @@ module DataRedactor
   # Raised when a tag symbol passed to +only:+ / +except:+ / +tag:+ is not in {TAGS}.
   class UnknownTagError     < ArgumentError; end
 
+  # Raised when a String passed via +only:+ / +except:+ does not match any
+  # registered pattern name. See {pattern_names}.
+  class UnknownPatternError < ArgumentError; end
+
   # Raised by {add_pattern} when the supplied regex is not valid POSIX ERE,
   # uses Ruby-only syntax (+\d+, +\s+, lookaround, non-greedy, etc.), or
   # contains capture groups while +boundary: true+ is requested.
@@ -74,38 +81,56 @@ module DataRedactor
     TAGS.keys
   end
 
+  # List of every pattern name the redactor knows about.
+  #
+  # Includes the {BUILTIN_PATTERN_NAMES} plus any names registered via
+  # {add_pattern}. Useful for discovering what String values +only:+ /
+  # +except:+ accept, and for filtering / debugging.
+  #
+  # @return [Array<String>] built-in names first (in execution order),
+  #   then custom names in registration order.
+  def pattern_names
+    BUILTIN_PATTERN_NAMES + _custom_patterns.map { |h| h[:name] }
+  end
+
   # Redact every match of the configured patterns in +text+.
   #
+  # +only:+ and +except:+ both accept a single value or an Array, mixing:
+  # - **Symbols** — tag names from {TAGS} (e.g. +:contact+, +:credentials+).
+  # - **Strings** — specific pattern names from {pattern_names} (e.g. +"email"+).
+  #
+  # They can be combined: +only: :contact, except: ["email"]+ means
+  # "redact every contact pattern except email." Symbols give you tag-level
+  # control; Strings give you per-pattern precision.
+  #
+  # **Precedence:** a pattern is redacted iff
+  # +(only is nil OR pattern matches only:)+ AND +(pattern does not match except:)+.
+  # +except:+ always wins over +only:+ when they overlap — e.g.
+  # +only: :contact, except: :contact+ produces an empty redaction (no-op),
+  # and +only: ["email"], except: ["email"]+ likewise skips email entirely.
+  #
   # @param text [String] input string. Returned unchanged if no patterns match.
-  # @param only [Symbol, Array<Symbol>, nil] redact only patterns belonging to
-  #   the given tag(s). Mutually exclusive with +except:+.
-  # @param except [Symbol, Array<Symbol>, nil] redact every pattern except
-  #   those in the given tag(s). Mutually exclusive with +only:+.
+  # @param only [Symbol, String, Array, nil] include only the given tag(s)
+  #   and/or pattern name(s).
+  # @param except [Symbol, String, Array, nil] exclude the given tag(s)
+  #   and/or pattern name(s). May be combined with +only:+.
   # @param placeholder [String, :tagged, :hash] replacement strategy.
   #   A String is used verbatim. +:tagged+ produces +[REDACTED:TAGNAME]+.
   #   +:hash+ produces a deterministic +[TAGNAME_xxxx]+ token (4-hex djb2)
   #   so the same input value always maps to the same token.
   # @return [String] a new string with every match replaced.
-  # @raise [ArgumentError] if both +only:+ and +except:+ are passed, or if
-  #   +placeholder:+ is not a String/:tagged/:hash.
-  # @raise [UnknownTagError] if any element of +only:+/+except:+ is not in {TAGS}.
+  # @raise [ArgumentError] if +placeholder:+ is not a String/:tagged/:hash.
+  # @raise [UnknownTagError] if any Symbol in +only:+/+except:+ is not in {TAGS}.
+  # @raise [UnknownPatternError] if any String in +only:+/+except:+ is not in {pattern_names}.
   #
   # @example
   #   DataRedactor.redact("token sk_live_abc123", only: :credentials)
+  #   DataRedactor.redact(text, only: [:contact, "aws_access_key_id"])
+  #   DataRedactor.redact(text, only: :contact, except: ["email"])
   def redact(text, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
-    raise ArgumentError, "pass only: or except:, not both" if only && except
-
-    mask =
-      if only
-        bits_for(only)
-      elsif except
-        TAG_ALL & ~bits_for(except)
-      else
-        TAG_ALL
-      end
-
+    enable_bits = build_enable_bits(only, except)
     ph_mode, ph_str = resolve_placeholder(placeholder)
-    _redact(text, mask, ph_mode, ph_str)
+    _redact(text, ph_mode, ph_str, enable_bits)
   end
 
   # Scan +text+ and return both the redacted string and per-match metadata.
@@ -115,13 +140,13 @@ module DataRedactor
   # +text.byteslice(m[:start], m[:length]) == m[:value]+.
   #
   # @param text [String] input string.
-  # @param only [Symbol, Array<Symbol>, nil] same semantics as {redact}.
-  # @param except [Symbol, Array<Symbol>, nil] same semantics as {redact}.
+  # @param only [Symbol, String, Array, nil] same semantics as {redact}.
+  # @param except [Symbol, String, Array, nil] same semantics as {redact}.
   # @return [Hash{Symbol => Object}] +{ redacted: String, matches:
   #   Array<Hash> }+. Each match hash has +:tag+ (Symbol), +:name+ (String),
   #   +:value+ (String), +:start+ (Integer byte offset), +:length+ (Integer).
-  # @raise [ArgumentError] if both +only:+ and +except:+ are passed.
-  # @raise [UnknownTagError] if any tag is not in {TAGS}.
+  # @raise [UnknownTagError] if any Symbol in +only:+/+except:+ is not in {TAGS}.
+  # @raise [UnknownPatternError] if any String in +only:+/+except:+ is not in {pattern_names}.
   #
   # @example
   #   DataRedactor.scan("user@example.com")
@@ -129,22 +154,10 @@ module DataRedactor
   #   #      matches: [{tag: :contact, name: "email",
   #   #                 value: "user@example.com", start: 0, length: 16}] }
   def scan(text, only: nil, except: nil)
-    raise ArgumentError, "pass only: or except:, not both" if only && except
-
-    mask =
-      if only
-        bits_for(only)
-      elsif except
-        TAG_ALL & ~bits_for(except)
-      else
-        TAG_ALL
-      end
-
-    result = _scan(text, mask)
+    enable_bits = build_enable_bits(only, except)
+    result = _scan(text, enable_bits)
     # Normalise: convert tag string from C (uppercase) back to the Symbol used in TAGS
-    result[:matches].each do |m|
-      m[:tag] = m[:tag].to_s.downcase.to_sym
-    end
+    result[:matches].each { |m| m[:tag] = m[:tag].to_s.downcase.to_sym }
     result
   end
 
@@ -236,17 +249,82 @@ module DataRedactor
   end
 
   # @api private
-  # Build the integer tag bitmask consumed by the C layer.
+  # Split a mixed Symbol/String filter list into +(tag_bitmask, name_set)+.
   #
-  # @param tag_list [Symbol, Array<Symbol>] one tag or a list of tags.
-  # @return [Integer] OR of every tag's bit.
-  # @raise [UnknownTagError] if any tag is not in {TAGS}.
-  def bits_for(tag_list)
-    Array(tag_list).inject(0) do |acc, tag|
-      bit = TAGS[tag] or raise UnknownTagError,
-        "unknown tag #{tag.inspect}; valid tags: #{TAGS.keys.inspect}"
-      acc | bit
+  # @param entries [nil, Symbol, String, Array]
+  # @return [Array(Integer, Set<String>)] tag bits OR-ed together; set of
+  #   pattern-name Strings.
+  # @raise [UnknownTagError] for unknown Symbols.
+  # @raise [UnknownPatternError] for unknown Strings.
+  def split_filter(entries)
+    bits = 0
+    names = Set.new
+    return [bits, names] if entries.nil?
+    Array(entries).each do |e|
+      case e
+      when Symbol
+        bit = TAGS[e] or raise UnknownTagError,
+          "unknown tag #{e.inspect}; valid tags: #{TAGS.keys.inspect}"
+        bits |= bit
+      when String
+        unless pattern_names.include?(e)
+          raise UnknownPatternError,
+            "unknown pattern name #{e.inspect}; see DataRedactor.pattern_names"
+        end
+        names << e
+      else
+        raise ArgumentError,
+          "only:/except: entries must be a Symbol (tag) or String (pattern name), got #{e.inspect}"
+      end
     end
+    [bits, names]
+  end
+
+  # @api private
+  # Build the per-pattern enable bit-list passed to the C layer.
+  #
+  # The list has one Integer (0 or 1) per pattern in execution order:
+  # built-ins first (NUM_PATTERNS entries), then currently registered custom
+  # patterns in registration order. C iterates by index and skips zeros.
+  #
+  # Semantics of +only:+ / +except:+ — both accept a mix of Symbols (tags)
+  # and Strings (pattern names):
+  #   enabled(p) iff
+  #     (only is nil OR p.tag ∈ only_tags OR p.name ∈ only_names)
+  #     AND p.tag ∉ except_tags AND p.name ∉ except_names
+  #
+  # @return [Array<Integer>] same length as built-ins + customs.
+  def build_enable_bits(only, except)
+    only_bits,   only_names   = split_filter(only)
+    except_bits, except_names = split_filter(except)
+    only_present = !only.nil?
+
+    bits = Array.new(BUILTIN_PATTERN_NAMES.length + _custom_patterns.length, 0)
+
+    BUILTIN_PATTERN_NAMES.each_with_index do |name, i|
+      tag_bit = BUILTIN_PATTERN_TAG_BITS[i]
+      bits[i] = 1 if pattern_enabled?(name, tag_bit, only_present,
+                                      only_bits, only_names,
+                                      except_bits, except_names)
+    end
+
+    _custom_patterns.each_with_index do |h, i|
+      bits[BUILTIN_PATTERN_NAMES.length + i] = 1 if pattern_enabled?(
+        h[:name], h[:tag_bit], only_present,
+        only_bits, only_names, except_bits, except_names)
+    end
+
+    bits
+  end
+
+  # @api private
+  def pattern_enabled?(name, tag_bit, only_present, only_bits, only_names,
+                       except_bits, except_names)
+    return false if (tag_bit & except_bits) != 0
+    return false if except_names.include?(name)
+    return true  unless only_present
+    return true  if (tag_bit & only_bits) != 0
+    only_names.include?(name)
   end
 
   # @api private

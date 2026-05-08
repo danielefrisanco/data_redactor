@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-08
+
+### Added
+- **Per-pattern allow / deny via `only:` / `except:`.** Both kwargs now accept a mix of Symbols (tags) and Strings (pattern names from `DataRedactor.pattern_names`). They can be combined: `only: :contact, except: ["email"]` redacts every contact pattern except email. Mixed-list shapes like `only: [:credentials, "iban_de"]` also work. Precedence: `except:` always wins when the two overlap.
+- `DataRedactor.pattern_names` — array of every known pattern name (built-ins + currently registered custom).
+- `DataRedactor::BUILTIN_PATTERN_NAMES` and `DataRedactor::BUILTIN_PATTERN_TAG_BITS` constants (frozen) exposing the compiled-in pattern roster.
+- `DataRedactor::UnknownPatternError` raised when a String passed to `only:`/`except:` does not match any known pattern.
+- YARD docs deploy job in `.github/workflows/ci.yml` publishes `bundle exec yard doc` output to GitHub Pages on every push to `main`.
+
 ### Changed
-- **Internal: C extension split into focused modules.** `ext/data_redactor/data_redactor.c` was a single ~1000-line file; it is now a 60-line entry point plus `patterns.{c,h}`, `placeholder.{c,h}`, `redact.{c,h}`, `scan.{c,h}`, `custom_patterns.{c,h}`, and `tags.h`. `extconf.rb` now globs every `.c` in the extension directory via `$srcs`, so adding a new module needs no Makefile edits. No behaviour change — public API and all 155 specs unchanged.
+- **C entry-point signatures.** `_redact(text, ph_mode, ph_str, enable_bits)` and `_scan(text, enable_bits)` now take a per-pattern enable bit array (built by the Ruby wrapper from `only:`/`except:`) instead of a tag bitmask. The public `DataRedactor.redact` / `.scan` API is fully backward compatible — only the underscore-prefixed C boundary changed. Single-pass: filtering happens in C, no second pass through `_scan`.
+- `only:` and `except:` may now be combined (previously raised `ArgumentError` if both were passed).
+- **Internal: C extension split into focused modules.** `ext/data_redactor/data_redactor.c` was a single ~1000-line file; it is now a 60-line entry point plus `patterns.{c,h}`, `placeholder.{c,h}`, `redact.{c,h}`, `scan.{c,h}`, `custom_patterns.{c,h}`, and `tags.h`. `extconf.rb` now globs every `.c` in the extension directory via `$srcs`, so adding a new module needs no Makefile edits.
 - **YARD inline docs** — every public method on `DataRedactor` now has `@param`/`@return`/`@raise` annotations (100% coverage); `.yardopts` configures markdown rendering with the README as the front page.
 
 ### Documentation
@@ -69,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.5.0...v0.6.0
 [0.2.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/danielefrisanco/data_redactor/releases/tag/v0.1.0

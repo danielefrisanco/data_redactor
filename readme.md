@@ -20,25 +20,34 @@ DataRedactor.redact(text)
 # => "User CF is [REDACTED] and key is [REDACTED]"
 ```
 
-### Filtering by tag
+### Filtering by tag or pattern name
 
-Every pattern belongs to one tag. Use `only:` to redact a subset, or `except:` to skip one.
+`only:` and `except:` both accept a single value or an Array, mixing **Symbols** (tag names) and **Strings** (specific pattern names).
 
 ```ruby
 DataRedactor.tags
-# => [:credentials, :financial, :tax_id, :national_id, :contact, :network, :travel, :other]
+# => [:credentials, :financial, :tax_id, :national_id, :contact, :network, :travel, :other, :custom]
 
-# Only redact API keys / tokens / private keys
+DataRedactor.pattern_names
+# => ["aws_s3_presigned_url", "aws_access_key_id", "email", "phone_e164", "ipv4", ...]
+
+# Tag-level filtering
 DataRedactor.redact(text, only: [:credentials])
+DataRedactor.redact(text, except: :contact)
 
-# Redact everything except contact info (emails, phone numbers)
-DataRedactor.redact(text, except: [:contact])
+# Single specific pattern
+DataRedactor.redact(text, only: ["aws_access_key_id"])
 
-# Single symbol works too
-DataRedactor.redact(text, only: :financial)
+# Mix — every credentials pattern PLUS aws_access_key_id (even if it lived in another tag)
+DataRedactor.redact(text, only: [:credentials, "aws_access_key_id"])
+
+# Combine — every contact pattern EXCEPT email
+DataRedactor.redact(text, only: :contact, except: ["email"])
 ```
 
-Passing an unknown tag raises `DataRedactor::UnknownTagError`. Passing both `only:` and `except:` raises `ArgumentError`.
+**Precedence:** a pattern is redacted iff `(only is nil OR matches only:)` AND `(does not match except:)`. `except:` always wins when the two overlap, so `only: :contact, except: :contact` produces a no-op (everything is excluded).
+
+**Errors:** an unknown tag Symbol raises `DataRedactor::UnknownTagError`; an unknown pattern name String raises `DataRedactor::UnknownPatternError`.
 
 ### Configurable placeholder
 
@@ -88,9 +97,10 @@ result = DataRedactor.scan("User AKIAIOSFODNN7EXAMPLE logged in from 192.168.1.1
 m = result[:matches].first
 original_text.byteslice(m[:start], m[:length])  # => "AKIAIOSFODNN7EXAMPLE"
 
-# Accepts the same tag filters as redact
+# Accepts the same filters as redact (tags + specific pattern names)
 DataRedactor.scan(text, only: :credentials)
 DataRedactor.scan(text, except: :network)
+DataRedactor.scan(text, only: :contact, except: ["email"])
 ```
 
 ### Custom patterns
@@ -118,7 +128,9 @@ DataRedactor.clear_custom_patterns!               # mostly for test suites
 
 **`boundary: true`** — wraps the pattern with `(^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)` so it only fires when the token is not embedded in a longer alphanumeric string. Incompatible with patterns that contain capture groups.
 
-## Detected patterns (49 total)
+## Detected patterns (79 total)
+
+The table below is a representative sample. Use `DataRedactor.pattern_names` for the canonical, machine-readable list — it stays in sync with the C extension automatically.
 
 ### Cloud & API secrets
 
@@ -209,10 +221,16 @@ redactor/
 │       └── version.rb
 ├── ext/
 │   └── data_redactor/
-│       ├── extconf.rb         # Checks for C headers, generates Makefile
-│       └── data_redactor.c       # C extension: regex compilation + redaction
+│       ├── extconf.rb            # Checks for C headers, generates Makefile (globs *.c)
+│       ├── data_redactor.c       # Entry point: Init_data_redactor only
+│       ├── patterns.{c,h}        # Built-in pattern table + compiled regex_t array
+│       ├── placeholder.{c,h}     # write_placeholder, djb2 hash, tag_name_for_bit
+│       ├── redact.{c,h}          # _redact + replace_all_matches + wrap_boundary
+│       ├── scan.{c,h}            # _scan + byte-offset replacement-log macros
+│       ├── custom_patterns.{c,h} # Dynamic registry: add/remove/clear/list
+│       └── tags.h                # TAG_* bit constants
 └── spec/
-    └── data_redactor_spec.rb     # RSpec tests (61 examples, one per pattern)
+    └── data_redactor_spec.rb     # RSpec tests — at least one example per pattern, plus filter / placeholder / custom-pattern coverage
 ```
 
 ## Requirements
@@ -249,7 +267,7 @@ bundle exec rake
 
 ## How it works
 
-1. At load time, `Init_data_redactor` compiles all 49 regex patterns once using `regcomp` (POSIX ERE) and stores them as static `regex_t` structs. Patterns marked as boundary-wrapped are expanded with `wrap_boundary()` before compilation.
+1. At load time, `Init_data_redactor` compiles all 79 regex patterns once using `regcomp` (POSIX ERE) and stores them as static `regex_t` structs. Patterns marked as boundary-wrapped are expanded with `wrap_boundary()` before compilation.
 2. `DataRedactor.redact(text)` receives a Ruby `String`, converts it to a C `char*` via `StringValueCStr`, and runs each compiled pattern in sequence on a working buffer.
 3. For each pattern, `replace_all_matches` iterates using `regexec`, copies non-matching segments to a fresh output buffer, and inserts `[REDACTED]` in place of each match. For boundary-wrapped patterns, `regexec` is called with `nmatch=4` and sub-match groups `[1]`/`[3]` identify the boundary characters so they are preserved verbatim.
 4. The output buffer is grown with `realloc` as needed. After all patterns are applied the result is returned as a Ruby `String` via `rb_str_new_cstr`. All intermediate `malloc`/`strdup` allocations are explicitly `free`d.

@@ -37,10 +37,21 @@ void Init_data_redactor(void) {
     VALUE mDataRedactor = rb_define_module("DataRedactor");
     rb_define_module_function(mDataRedactor, "_redact",                rb_data_redactor_redact,    4);
     rb_define_module_function(mDataRedactor, "_scan",                  rb_data_redactor_scan,      2);
+    /* Note: _redact(text, ph_mode, ph_str, enable_bits) and _scan(text, enable_bits). */
     rb_define_module_function(mDataRedactor, "_add_pattern",           rb_add_pattern,             4);
     rb_define_module_function(mDataRedactor, "_remove_pattern",        rb_remove_pattern,          1);
     rb_define_module_function(mDataRedactor, "_clear_custom_patterns", rb_clear_custom_patterns,   0);
     rb_define_module_function(mDataRedactor, "_custom_patterns",       rb_custom_patterns,         0);
+
+    /* Frozen array of built-in pattern names, for introspection and only:/except: validation. */
+    VALUE builtin_names = rb_ary_new_capa(NUM_PATTERNS);
+    VALUE builtin_tag_bits = rb_ary_new_capa(NUM_PATTERNS);
+    for (int i = 0; i < NUM_PATTERNS; i++) {
+        rb_ary_push(builtin_names, rb_str_new_frozen(rb_str_new_cstr(pattern_names[i])));
+        rb_ary_push(builtin_tag_bits, INT2NUM(pattern_tags[i]));
+    }
+    rb_define_const(mDataRedactor, "BUILTIN_PATTERN_NAMES",    rb_ary_freeze(builtin_names));
+    rb_define_const(mDataRedactor, "BUILTIN_PATTERN_TAG_BITS", rb_ary_freeze(builtin_tag_bits));
 
     /* Placeholder mode constants. */
     rb_define_const(mDataRedactor, "PH_MODE_PLAIN",  INT2NUM(PLACEHOLDER_MODE_PLAIN));

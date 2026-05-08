@@ -78,12 +78,16 @@ DataRedactor.redact_deep(params_hash)
 DataRedactor.redact_json(json_string)
 ```
 
-### 6. Allowlist / ignore list
-Escape hatch for the broad patterns we already flag (40-char base64, 9-digit passport, etc.):
+### 6. Allowlist / ignore list ✅ DONE in 0.6.0 (pattern-level)
+Shipped a *pattern-level* allow/deny: `only:` and `except:` accept a mix of Symbols (tags) and Strings (pattern names). Combine them for precision: `only: :contact, except: ["email"]` redacts every contact pattern except email. `except:` wins when the two overlap. Implementation: Ruby builds a per-pattern enable bit array; C iterates by index and skips zeros — single pass, no second scan.
+
+**Future: value-level allowlist** — escape hatch for known-safe substrings the broad patterns flag (40-char base64 inside a known image blob, `test@example.com` in fixtures, etc.). Original sketch:
 
 ```ruby
-DataRedactor.redact(text, ignore: [/example\.com/, "test@foo.com"])
+DataRedactor.redact(text, allow: [/example\.com/, "test@foo.com"])
 ```
+
+Different from the pattern-level filter we have now — this would suppress individual *matches* whose value is in the allowlist, regardless of which pattern hit them. Implementable as a per-match check after `regexec` succeeds (cheap if the allowlist is small) or as a post-filter on `_scan`. Defer until someone asks — `except: ["email"]` already covers the most common case (turn off the noisy pattern entirely).
 
 ### 7. Checksum validation
 Massive false-positive killer. Apply only when the structural regex matches:
@@ -113,13 +117,13 @@ What turns "neat gem" into "we put it in production":
 - ~~Publish to RubyGems~~ ✅ DONE — 0.5.0 published 2026-05-08
 - ~~CI matrix: Ruby 2.7, 3.0, 3.1, 3.2, 3.3 on Linux + macOS~~ ✅ DONE — `.github/workflows/ci.yml` tests Ruby 3.1/3.2/3.3, builds gem, publishes via OIDC on release
 - ~~RubyGems OIDC trusted publisher setup~~ ✅ DONE
-- ~~YARD inline documentation~~ ✅ DONE — `@param`/`@return`/`@raise` for all public methods; `bundle exec yard doc` is 100% documented. Deferred: GitHub Pages deploy job in `ci.yml`.
+- ~~YARD inline documentation~~ ✅ DONE — `@param`/`@return`/`@raise` for all public methods; `bundle exec yard doc` is 100% documented.
+- ~~GitHub Pages deploy job for YARD docs~~ ✅ DONE — `docs` job in `ci.yml` builds and deploys on every push to `main`.
 - ~~Thread-safety note in README~~ ✅ DONE
 - ~~Shields.io badges in README~~ ✅ DONE — gem version, CI build, license
 - Precompiled binaries via `rake-compiler-dock` so `gem install` doesn't need a C toolchain — biggest reason people skip C-extension gems
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
 - Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
-- GitHub Pages deploy job for YARD docs (currently disabled; would need a separate job after YARD docs are stable)
 
 ## C extension refactor ✅ DONE
 
@@ -209,12 +213,12 @@ Publish numbers in the README — the C extension is the differentiator and the 
 Things to do **once the gem is published** to build visibility and trust.
 
 ### One-time setup
-- [ ] `gem push` to RubyGems.org
-- [ ] Add GitHub repo topics: `ruby`, `gem`, `pii`, `redaction`, `security`, `rails`
+- [x] `gem push` to RubyGems.org — published 2026-05-08 (0.5.0)
+- [x] Add GitHub repo topics: `ruby`, `gem`, `pii`, `redaction`, `security`, `rails`
 - [ ] Submit to [The Ruby Toolbox](https://www.ruby-toolbox.com) (community-curated catalog; lets developers compare gems in the same category)
-- [ ] Add Shields.io badges to README: gem version, CI build, coverage
-- [ ] Write YARD docs for all public methods (`@param`, `@return`, `@raise`)
-- [ ] Add a thread-safety note to README (built-in `regex_t` array is read-only after init; custom pattern registration is not thread-safe — document this)
+- [x] Add Shields.io badges to README: gem version, CI build, license
+- [x] Write YARD docs for all public methods (`@param`, `@return`, `@raise`)
+- [x] Add a thread-safety note to README (built-in `regex_t` array is read-only after init; custom pattern registration is not thread-safe — document this)
 - [ ] Create a minimal demo app or `examples/` directory showing real-world usage (Rails logger wrapper, Rack middleware, etc.)
 
 ### Announcement

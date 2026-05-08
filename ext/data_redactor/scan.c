@@ -19,9 +19,16 @@
  *                               replacements whose working_pos <= W
  *   original_pos = W - cumulative_shift_before_W
  */
-VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_mask) {
-    Check_Type(rb_text, T_STRING);
-    int mask = NUM2INT(rb_mask);
+/* Look up the i-th entry of the enable_bits Array. Out-of-bounds → 0 (skip). */
+static inline int scan_enable_bit(VALUE rb_enable_bits, long i) {
+    if (i < 0 || i >= RARRAY_LEN(rb_enable_bits)) return 0;
+    VALUE v = rb_ary_entry(rb_enable_bits, i);
+    return RTEST(v) && NUM2INT(v) != 0;
+}
+
+VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
+    Check_Type(rb_text,        T_STRING);
+    Check_Type(rb_enable_bits, T_ARRAY);
 
     const char *input = StringValueCStr(rb_text);
 
@@ -97,13 +104,13 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_mask) {
     } while (0)
 
     for (int i = 0; i < NUM_PATTERNS; i++) {
-        if ((pattern_tags[i] & mask) == 0) continue;
+        if (!scan_enable_bit(rb_enable_bits, i)) continue;
         COLLECT_AND_REPLACE(&compiled_patterns[i], boundary_wrapped[i],
                             pattern_tags[i], pattern_names[i]);
     }
 
     for (int i = 0; i < custom_count; i++) {
-        if ((custom_patterns[i].tag & mask) == 0) continue;
+        if (!scan_enable_bit(rb_enable_bits, NUM_PATTERNS + i)) continue;
         COLLECT_AND_REPLACE(&custom_patterns[i].compiled,
                             custom_patterns[i].boundary,
                             custom_patterns[i].tag, custom_patterns[i].name);

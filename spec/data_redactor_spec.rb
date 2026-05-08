@@ -577,19 +577,53 @@ RSpec.describe DataRedactor do
     end
 
     describe "validation" do
-      it "raises when both only: and except: are passed" do
-        expect { DataRedactor.redact(input, only: [:contact], except: [:financial]) }
-          .to raise_error(ArgumentError, /not both/)
+      it "allows only: and except: to be combined (e.g. only :contact except email)" do
+        text = "user@example.com phone +1-202-555-0173 key AKIAIOSFODNN7EXAMPLE"
+        result = DataRedactor.redact(text, only: :contact, except: ["email"])
+        expect(result).to include("user@example.com") # email kept
+        expect(result).not_to include("+1-202-555-0173") # phone redacted
+        expect(result).to include("AKIAIOSFODNN7EXAMPLE") # not in :contact
       end
 
       it "raises UnknownTagError for an unknown tag" do
         expect { DataRedactor.redact(input, only: [:bogus]) }
           .to raise_error(DataRedactor::UnknownTagError, /bogus/)
       end
+
+      it "raises UnknownPatternError for an unknown pattern name" do
+        expect { DataRedactor.redact(input, except: ["nope"]) }
+          .to raise_error(DataRedactor::UnknownPatternError, /nope/)
+      end
+
+      it "lets except: win over only: when they overlap (same tag → no-op)" do
+        text = "user@example.com and +1-202-555-0173"
+        expect(DataRedactor.redact(text, only: :contact, except: :contact)).to eq(text)
+      end
+
+      it "lets except: win over only: when both name the same pattern" do
+        text = "user@example.com is the address"
+        expect(DataRedactor.redact(text, only: ["email"], except: ["email"])).to eq(text)
+      end
+
+      it "redacts a single named pattern via only: as a String" do
+        text = "user@example.com and AKIAIOSFODNN7EXAMPLE"
+        result = DataRedactor.redact(text, only: ["aws_access_key_id"])
+        expect(result).to include("user@example.com")
+        expect(result).not_to include("AKIAIOSFODNN7EXAMPLE")
+      end
+
+      it "redacts a tag plus an extra named pattern from another tag" do
+        text = "user@example.com and AKIAIOSFODNN7EXAMPLE"
+        result = DataRedactor.redact(text, only: [:contact, "aws_access_key_id"])
+        expect(result).not_to include("user@example.com")
+        expect(result).not_to include("AKIAIOSFODNN7EXAMPLE")
+      end
     end
 
-    it "with no filter behaves identically to the legacy single-arg call" do
-      expect(DataRedactor.redact(input)).to eq(DataRedactor._redact(input, DataRedactor::TAG_ALL, DataRedactor::PH_MODE_PLAIN, "[REDACTED]"))
+    it "with no filter behaves identically to a fully-enabled call into _redact" do
+      all_on = Array.new(DataRedactor::BUILTIN_PATTERN_NAMES.length, 1)
+      expect(DataRedactor.redact(input))
+        .to eq(DataRedactor._redact(input, DataRedactor::PH_MODE_PLAIN, "[REDACTED]", all_on))
     end
   end
 
@@ -891,9 +925,12 @@ RSpec.describe DataRedactor do
       expect(names).to include("aws_access_key_id")
     end
 
-    it "raises ArgumentError when both only: and except: are passed" do
-      expect { DataRedactor.scan(email, only: :contact, except: :financial) }
-        .to raise_error(ArgumentError)
+    it "supports combining only: and except: with mixed Symbols and pattern names" do
+      text = "alice@example.com +1-202-555-0173"
+      result = DataRedactor.scan(text, only: :contact, except: ["email"])
+      names = result[:matches].map { |m| m[:name] }
+      expect(names).not_to include("email")
+      expect(names).to include("phone_e164")
     end
 
     it "includes custom pattern matches" do

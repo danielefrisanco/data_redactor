@@ -106,12 +106,20 @@ char *replace_all_matches(regex_t *pattern, const char *input,
     return output;
 }
 
-VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text, VALUE rb_mask,
-                              VALUE rb_ph_mode, VALUE rb_ph_str) {
-    Check_Type(rb_text,   T_STRING);
-    Check_Type(rb_ph_str, T_STRING);
+/* Look up the i-th entry of the enable_bits Array. Out-of-bounds → 0 (skip). */
+static inline int enable_bit(VALUE rb_enable_bits, long i) {
+    if (i < 0 || i >= RARRAY_LEN(rb_enable_bits)) return 0;
+    VALUE v = rb_ary_entry(rb_enable_bits, i);
+    return RTEST(v) && NUM2INT(v) != 0;
+}
 
-    int mask    = NUM2INT(rb_mask);
+VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
+                              VALUE rb_ph_mode, VALUE rb_ph_str,
+                              VALUE rb_enable_bits) {
+    Check_Type(rb_text,         T_STRING);
+    Check_Type(rb_ph_str,       T_STRING);
+    Check_Type(rb_enable_bits,  T_ARRAY);
+
     int ph_mode = NUM2INT(rb_ph_mode);
     const char *ph_str_plain = StringValueCStr(rb_ph_str);
 
@@ -123,7 +131,7 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text, VALUE rb_mask,
     ph.mode = ph_mode;
 
     for (int i = 0; i < NUM_PATTERNS; i++) {
-        if ((pattern_tags[i] & mask) == 0) continue;
+        if (!enable_bit(rb_enable_bits, i)) continue;
         ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
                      ? ph_str_plain
                      : tag_name_for_bit(pattern_tags[i]);
@@ -135,7 +143,7 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text, VALUE rb_mask,
     }
 
     for (int i = 0; i < custom_count; i++) {
-        if ((custom_patterns[i].tag & mask) == 0) continue;
+        if (!enable_bit(rb_enable_bits, NUM_PATTERNS + i)) continue;
         ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
                      ? ph_str_plain
                      : tag_name_for_bit(custom_patterns[i].tag);
