@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Internal: C extension split into focused modules.** `ext/data_redactor/data_redactor.c` was a single ~1000-line file; it is now a 60-line entry point plus `patterns.{c,h}`, `placeholder.{c,h}`, `redact.{c,h}`, `scan.{c,h}`, `custom_patterns.{c,h}`, and `tags.h`. `extconf.rb` now globs every `.c` in the extension directory via `$srcs`, so adding a new module needs no Makefile edits. No behaviour change — public API and all 155 specs unchanged.
+- **YARD inline docs** — every public method on `DataRedactor` now has `@param`/`@return`/`@raise` annotations (100% coverage); `.yardopts` configures markdown rendering with the README as the front page.
+
+### Documentation
+- README: gem version / CI / license badges; new "Thread safety" section clarifying that `redact`/`scan` are thread-safe but `add_pattern`/`remove_pattern`/`clear_custom_patterns!` are not (register custom patterns once at boot).
+
 ## [0.5.0] - 2026-05-02
 
 ### Added
