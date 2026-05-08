@@ -163,6 +163,34 @@ Today `redact` and `scan` are thread-safe but `add_pattern` / `remove_pattern` /
 
 **Why:** "register at boot" is a real ergonomic limitation — anyone building a multi-tenant app that loads tenant-specific patterns at request time can't use the gem safely today. Removing that caveat is a real differentiator.
 
+## Possible Erlang / Elixir port
+
+The C core is portable — the Ruby-specific layer is thin (`StringValueCStr`, `rb_str_new_cstr`, `rb_define_module_function`, the `TAG_*`/`PH_MODE_*` constant exposure, and the keyword-argument wrapper). Reimplementing for the BEAM is realistic.
+
+Two viable shapes:
+
+- **NIF (`erl_nif.h`)** — wrap the same POSIX `regex.h` engine in a NIF, exposed as a Hex package `data_redactor_ex`. Same patterns, same tags, same placeholder modes. Use `enif_make_binary` / `enif_inspect_binary` instead of `rb_str_new_cstr` / `StringValueCStr`. NIFs that can run >1ms must yield via `enif_consume_timeslice` / `enif_schedule_nif`, so large-payload `redact` would need chunked execution to avoid blocking the scheduler.
+- **Pure Elixir with `:re` (PCRE)** — slower but no NIF risk and idiomatic for the BEAM. Patterns would need translating from POSIX ERE to PCRE (largely a no-op since PCRE is a superset, but `(^|[^0-9A-Za-z])` boundary wrappers can be replaced with `\b` for legibility).
+
+**API sketch (Elixir):**
+
+```elixir
+DataRedactor.redact("token AKIA...")
+DataRedactor.redact(text, only: [:credentials])
+DataRedactor.scan(text)
+# => {:ok, %{redacted: "...", matches: [%{tag: :credentials, name: "aws_access_key_id", ...}]}}
+DataRedactor.add_pattern(name: "employee_id", regex: "EMP-[0-9]{6}")
+```
+
+**Why:** Phoenix and Broadway pipelines have the same redaction problem Rails apps do — logs and message payloads with embedded PII. The BEAM ecosystem doesn't have an obvious incumbent here, and a NIF that mirrors the Ruby gem keeps both implementations honest (same patterns, same tag taxonomy, same placeholder semantics, shared test corpus).
+
+**Cost / risk:**
+- Maintenance doubles. Either the C core lives in a shared submodule both gems vendor in, or the two implementations drift.
+- NIF safety bugs (segfaults) crash the entire BEAM VM, not just one process. Higher bar than a Ruby C extension where a segfault only crashes the worker.
+- Hex publishing, ExDoc, and a separate CI matrix are real work.
+
+Defer until the Ruby gem has real adoption and someone explicitly asks for it. Documented here so the option isn't forgotten.
+
 ## Benchmarks
 
 Add a `benchmark/` directory with scripts using `benchmark-ips` and `benchmark/memory`:
