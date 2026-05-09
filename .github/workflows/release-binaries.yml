@@ -87,10 +87,18 @@ jobs:
           echo "Built: $gem_file ($(du -h "$gem_file" | cut -f1))"
           mkdir -p /tmp/inspect && cd /tmp/inspect
           tar -xf "$GITHUB_WORKSPACE/$gem_file"
-          tar -tzf data.tar.gz | grep -q '\.so$' || (echo "FAIL: no .so files"; exit 1)
+          echo "Contents:"
+          tar -tzf data.tar.gz | sort
+          echo "---"
+          # Compiled extension is .so on Linux, .bundle on macOS (target platform's DLEXT).
+          if ! tar -tzf data.tar.gz | grep -qE '\.(so|bundle)$'; then
+            echo "FAIL: no compiled extension (.so or .bundle) in native gem"
+            exit 1
+          fi
           if tar -tzf data.tar.gz | grep -q '^ext/'; then
             echo "FAIL: ext/ leaked into native gem"; exit 1
           fi
+          echo "OK: native gem contains compiled extension, no ext/ sources"
 
       - uses: actions/upload-artifact@v4.6.2
         with:

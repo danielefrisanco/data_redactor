@@ -154,9 +154,10 @@ safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 - ~~GitHub Pages deploy job for YARD docs~~ ✅ DONE — `docs` job in `ci.yml` builds and deploys on every push to `main`.
 - ~~Thread-safety note in README~~ ✅ DONE
 - ~~Shields.io badges in README~~ ✅ DONE — gem version, CI build, license
-- Precompiled binaries via `rake-compiler-dock` so `gem install` doesn't need a C toolchain — biggest reason people skip C-extension gems
+- ~~Precompiled binaries via `rake-compiler-dock`~~ ✅ DONE in 0.7.2 — 6 native gems (Linux glibc/musl x86_64+aarch64, macOS Intel+ARM) for Ruby 3.1–3.4. Atomic release pipeline gates source + native together.
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
 - Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
+- **Bump CI/release workflow actions to Node 24-compatible versions before 2026-06-02.** GitHub deprecated Node 20 actions; `actions/checkout@v4.2.2` and `actions/upload-artifact@v4.6.2` (used in `ci.yml` and `release-binaries.yml`) emit warnings now and will be force-migrated to Node 24 by GitHub on 2026-06-02. Check for `actions/checkout@v5+` and `actions/upload-artifact@v5+`. Low-risk upgrade, just version bumps in the workflow YAML files.
 
 ### 12. Name-pattern helper (planned for 0.8.0)
 
