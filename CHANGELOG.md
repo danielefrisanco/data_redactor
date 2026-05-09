@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-09
+
+### Added
+- **Precompiled native gems** for the most common platforms — installing
+  `data_redactor` no longer requires a C toolchain on these targets:
+  - `x86_64-linux`, `aarch64-linux` (glibc)
+  - `x86_64-linux-musl`, `aarch64-linux-musl` (Alpine)
+  - `x86_64-darwin`, `arm64-darwin` (macOS Intel + Apple Silicon)
+  Each native gem ships compiled `.so` files for Ruby 3.1, 3.2, 3.3, and 3.4.
+  Bundler/RubyGems automatically picks the right gem for the host; users on
+  any other platform fall back to the source gem and compile as before.
+- `rake gem:all` task — builds every native gem locally via `rake-compiler-dock`
+  (requires Docker). Single command to regenerate the full release matrix.
+- `.github/workflows/release-binaries.yml` — builds & publishes all native
+  gems on every GitHub release. Also exposes `workflow_dispatch` so a
+  maintainer can rebuild any past release without cutting a new tag.
+
+### Changed
+- CI test matrix now includes Ruby 3.4 in addition to 3.1, 3.2, 3.3.
+- Gemspec: added `rake-compiler-dock` as a development dependency. Source-only
+  gem size is unchanged — native gems strip `ext/` and the `extconf.rb`
+  extension hook so they only carry the prebuilt `.so` files.
+
 ## [0.7.0] - 2026-05-08
 
 ### Added
@@ -106,7 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.5.0...v0.6.0

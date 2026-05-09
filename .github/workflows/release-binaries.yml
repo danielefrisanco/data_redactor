@@ -1,0 +1,105 @@
+name: Release precompiled binaries
+
+# Builds platform-specific .gem files containing the prebuilt C extension
+# for every supported (Ruby ABI x platform) combination, then publishes them
+# to RubyGems. Source-only gems are still published by ci.yml.
+#
+# Triggers:
+#   - release.published: automatic on every GitHub release
+#   - workflow_dispatch: re-run manually to rebuild & republish at any time
+#     (useful if a build flakes, or to backfill binaries for an old release)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (tag/branch/SHA) to build from. Defaults to the workflow's checkout ref."
+        required: false
+        default: ""
+      publish:
+        description: "Publish to RubyGems? Set to 'false' for a dry-run that only builds artifacts."
+        required: false
+        default: "true"
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - x86_64-linux
+          - aarch64-linux
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - x86_64-darwin
+          - arm64-darwin
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - uses: oxidize-rb/actions/cross-gem@v1
+        id: cross-gem
+        with:
+          platform: ${{ matrix.platform }}
+          ruby-versions: "3.1,3.2,3.3,3.4"
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: native-gem-${{ matrix.platform }}
+          path: pkg/*-${{ matrix.platform }}.gem
+          if-no-files-found: error
+
+  publish:
+    name: Publish to RubyGems (OIDC)
+    runs-on: ubuntu-latest
+    needs: build
+    # Skip publish on workflow_dispatch when the user passes publish=false
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'false')
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - uses: actions/download-artifact@v4.1.8
+        with:
+          path: pkg
+          pattern: native-gem-*
+          merge-multiple: true
+
+      - name: List built gems
+        run: ls -la pkg/
+
+      - name: Publish each native gem to RubyGems via OIDC
+        uses: rubygems/configure-rubygems-credentials@v1.0.0
+
+      - name: Push gems
+        run: |
+          for gem in pkg/*.gem; do
+            echo "Pushing $gem"
+            gem push "$gem"
+          done

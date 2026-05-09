@@ -294,22 +294,45 @@ redactor/
 ## Requirements
 
 - Ruby >= 2.7
-- A C compiler (`gcc` or `clang`)
-- POSIX `regex.h` (standard on Linux and macOS)
+- A C compiler (`gcc` or `clang`) — only required when installing the source gem
+- POSIX `regex.h` — only required when installing the source gem (standard on Linux and macOS)
 
-## Setup
+## Installation
+
+```ruby
+# Gemfile
+gem "data_redactor"
+```
 
 ```bash
 bundle install
 ```
 
-## Compile the C extension
+Precompiled native gems are published for the most common platforms — installing on these targets requires **no C toolchain**:
+
+- `x86_64-linux`, `aarch64-linux` (glibc)
+- `x86_64-linux-musl`, `aarch64-linux-musl` (Alpine)
+- `x86_64-darwin`, `arm64-darwin` (macOS Intel + Apple Silicon)
+
+Each native gem ships compiled binaries for Ruby 3.1, 3.2, 3.3, and 3.4. RubyGems/Bundler picks the right gem for your host automatically; on any other platform the source gem is selected and the C extension compiles on install (no change in behavior from before 0.7.1).
+
+## Compile the C extension (source / development install only)
 
 ```bash
 bundle exec rake compile
 ```
 
 This runs `extconf.rb` via `rake-compiler`, which generates a `Makefile` and compiles `data_redactor.c` into a `.so` shared library placed under `lib/data_redactor/`.
+
+## Building precompiled gems locally
+
+Maintainers can rebuild the full set of native gems with one command (requires Docker):
+
+```bash
+bundle exec rake gem:all
+```
+
+This invokes `rake-compiler-dock` to cross-compile every supported (platform × Ruby ABI) combination. Output lands in `pkg/`.
 
 ## Run the tests
 
