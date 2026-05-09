@@ -308,13 +308,30 @@ gem "data_redactor"
 bundle install
 ```
 
-Precompiled native gems are published for the most common platforms — installing on these targets requires **no C toolchain**:
+That's it — there is nothing extra to configure for precompiled binaries. Bundler/RubyGems looks at your platform and Ruby version and picks the right gem automatically.
 
-- `x86_64-linux`, `aarch64-linux` (glibc)
-- `x86_64-linux-musl`, `aarch64-linux-musl` (Alpine)
-- `x86_64-darwin`, `arm64-darwin` (macOS Intel + Apple Silicon)
+### What you'll see
 
-Each native gem ships compiled binaries for Ruby 3.1, 3.2, 3.3, and 3.4. RubyGems/Bundler picks the right gem for your host automatically; on any other platform the source gem is selected and the C extension compiles on install (no change in behavior from before 0.7.1).
+- **On a supported platform** (Linux glibc/musl, macOS Intel/ARM): bundler downloads a precompiled gem with the C extension already built. Install is near-instant — **no compiler, no `make`, no `regex.h` headers needed**. Especially valuable in slim Docker images (`ruby:3.x-alpine`, `ruby:3.x-slim`) that don't ship `gcc`.
+- **On any other platform** (FreeBSD, OpenBSD, etc.): bundler downloads the source gem and compiles the C extension on install — the same behavior as before 0.7.1. You'll need a C compiler and POSIX `regex.h` available.
+
+### Supported precompiled targets
+
+Each precompiled gem ships compiled binaries for Ruby 3.1, 3.2, 3.3, and 3.4.
+
+| Platform | Targets |
+|---|---|
+| Linux (glibc) | `x86_64-linux`, `aarch64-linux` |
+| Linux (musl / Alpine) | `x86_64-linux-musl`, `aarch64-linux-musl` |
+| macOS | `x86_64-darwin` (Intel), `arm64-darwin` (Apple Silicon) |
+
+### Bundler-locked deploys
+
+If your `Gemfile.lock` was generated on one platform but you deploy to another, run `bundle lock --add-platform <target>` so bundler resolves the right native gem at deploy time. Example for Alpine deploys built from a glibc dev box:
+
+```bash
+bundle lock --add-platform x86_64-linux-musl aarch64-linux-musl
+```
 
 ## Compile the C extension (source / development install only)
 
