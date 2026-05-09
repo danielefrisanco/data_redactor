@@ -40,6 +40,52 @@ jobs:
           name: data-redactor-gem
           path: pkg/
 
+  cross-compile-smoke:
+    name: Cross-compile smoke test (x86_64-linux)
+    runs-on: ubuntu-latest
+    needs: test
+
+    # Verifies the rake-compiler-dock cross-compile path actually works on
+    # every PR / push to main. Builds one platform end-to-end (no publish).
+    # Catches Rakefile / workflow / image-tag breakage before release time.
+    # The full 6-platform build still runs only on release-binaries.yml.
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Build native gem for x86_64-linux
+        run: |
+          bundle exec ruby -r rake_compiler_dock -e \
+            'RakeCompilerDock.sh("bundle install --jobs $(nproc) && bundle exec rake native:data_redactor:x86_64-linux gem", platform: "x86_64-linux")'
+
+      - name: Verify native gem contents
+        run: |
+          set -e
+          gem_file=$(ls pkg/data_redactor-*-x86_64-linux.gem | head -1)
+          echo "Built: $gem_file ($(du -h "$gem_file" | cut -f1))"
+          mkdir -p /tmp/inspect && cd /tmp/inspect
+          tar -xf "$GITHUB_WORKSPACE/$gem_file"
+          echo "Contents:"
+          tar -tzf data.tar.gz | sort
+          echo "---"
+          # Sanity checks: must contain .so files, must NOT contain ext/ sources
+          tar -tzf data.tar.gz | grep -q '\.so$' || (echo "FAIL: no .so files in native gem"; exit 1)
+          if tar -tzf data.tar.gz | grep -q '^ext/'; then
+            echo "FAIL: ext/ sources leaked into native gem"; exit 1
+          fi
+          echo "OK: native gem contains compiled .so, no ext/ sources"
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: native-gem-x86_64-linux-smoke
+          path: pkg/data_redactor-*-x86_64-linux.gem
+          if-no-files-found: error
+
   publish:
     name: Publish to RubyGems (OIDC)
     runs-on: ubuntu-latest
