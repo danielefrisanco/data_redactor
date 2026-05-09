@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.1] - 2026-05-09
+## [0.7.2] - 2026-05-09
+
+**Supersedes 0.7.1, which has been yanked from RubyGems.**
+
+0.7.1 had a release pipeline bug: the source gem and the precompiled native
+gems were published by two independent workflows, with no gating between
+them. When the native-binary builds failed (`oxidize-rb/actions/cross-gem`
+couldn't pull `rbsys/aarch64-linux:0.9.128` from Docker Hub), the source
+gem still published — leaving users with release notes that promised
+precompiled binaries that didn't exist on RubyGems. 0.7.2 ships the same
+features as 0.7.1 plus the pipeline fix.
+
+### Changed
+- **Atomic release pipeline.** Source-gem publishing moved out of `ci.yml`
+  and into `release-binaries.yml`, alongside the native-gem builds. The
+  publish job now `needs: [build-source, build-native]`; if any native
+  platform fails to build, **nothing publishes**. This guarantees the
+  RubyGems release matches what the GitHub release notes promise.
+- **Direct `rake-compiler-dock` invocation in CI** instead of the
+  `oxidize-rb/actions/cross-gem` action. Same code path as `rake gem:all`
+  locally and the existing PR-time smoke test in `ci.yml`. Uses
+  `ghcr.io/rake-compiler/*` images (no Docker Hub rate limits).
+
+### Fixed
+- All 6 precompiled native gems now actually publish on release — the
+  `aarch64-linux` variant in particular was previously failing.
+
+### Documentation
+- README installation section rewritten around the user's question
+  ("what changes for me?"). Adds explicit Docker / Alpine guidance and a
+  heads-up about `bundle lock --add-platform` for cross-platform deploys.
+
+## [0.7.1] - 2026-05-09 [YANKED]
 
 ### Added
 - **Precompiled native gems** for the most common platforms — installing
@@ -129,7 +161,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...v0.6.1
