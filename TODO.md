@@ -157,7 +157,8 @@ safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 - ~~Precompiled binaries via `rake-compiler-dock`~~ ✅ DONE in 0.7.2 — 6 native gems (Linux glibc/musl x86_64+aarch64, macOS Intel+ARM) for Ruby 3.1–3.4. Atomic release pipeline gates source + native together.
 - ~~CHANGELOG.md + semver commitment~~ ✅ DONE in 0.1.0
 - Demo / example script (`examples/rails_logger.rb` or similar) showing real-world usage
-- **Bump CI/release workflow actions to Node 24-compatible versions before 2026-06-02.** GitHub deprecated Node 20 actions; `actions/checkout@v4.2.2` and `actions/upload-artifact@v4.6.2` (used in `ci.yml` and `release-binaries.yml`) emit warnings now and will be force-migrated to Node 24 by GitHub on 2026-06-02. Check for `actions/checkout@v5+` and `actions/upload-artifact@v5+`. Low-risk upgrade, just version bumps in the workflow YAML files.
+- ~~Bump CI/release workflow actions to Node 24-compatible versions before 2026-06-02.~~ ✅ DONE — `checkout@v6.0.2`, `upload-artifact@v7.0.1`, `download-artifact@v8.0.1`, `upload-pages-artifact@v5.0.0`, `deploy-pages@v5.0.0`.
+- ~~Drop `release: published` trigger from `ci.yml`.~~ ✅ DONE — removed; CI now runs only on push to main and PRs.
 
 ### 12. Name-pattern helper (planned for 0.8.0)
 
