@@ -71,7 +71,7 @@ Implementation note: `write_placeholder` already receives `match` and `match_len
 ### 4. Report / dry-run mode ✅ DONE in 0.5.0
 `DataRedactor.scan(text, only:, except:)` returns `{ redacted:, matches: [{tag:, name:, value:, start:, length:}, ...] }`. Positions are byte offsets into the original string.
 
-### 5. Hash / JSON / object traversal
+### 5. Hash / JSON / object traversal ✅ DONE in 0.8.0
 Pure-Ruby walker on top of the C `redact`:
 
 ```ruby

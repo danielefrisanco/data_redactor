@@ -8,11 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `DataRedactor.redact_deep(data, only:, except:, placeholder:)` — recursively redacts every String value in a nested Hash/Array structure. Non-string scalars (Integer, Float, nil, Boolean) and Hash keys are passed through unchanged. Returns a deep copy; never mutates the input. Raises `ArgumentError` on circular references.
+- `DataRedactor.redact_json(json_string, only:, except:, placeholder:)` — parses JSON, redacts via `redact_deep`, and returns valid JSON. Raises `JSON::ParserError` on invalid input.
 - HashiCorp Vault service tokens (`hvs.` prefix, 90–120 chars) — pattern `hashicorp_vault_service_token`
 - HashiCorp Vault batch tokens (`hvb.` prefix, 138–300 chars) — pattern `hashicorp_vault_batch_token`
 - HashiCorp Terraform Cloud API tokens (`<14-char-id>.atlasv1.<token>`) — pattern `hashicorp_terraform_api_token`
 
-All three patterns are tagged `:credentials` and do not require word-boundary wrapping (distinctive prefixes eliminate false positives).
+All three HashiCorp patterns are tagged `:credentials` and do not require word-boundary wrapping (distinctive prefixes eliminate false positives).
 
 ## [0.7.2] - 2026-05-09
 
