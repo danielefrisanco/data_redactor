@@ -439,6 +439,27 @@ RSpec.describe DataRedactor do
       redacted?("token=#{token} end", token)
     end
 
+    # ---- HashiCorp tokens ----
+    it "redacts HashiCorp Vault service token (hvs. prefix)" do
+      token = "hvs." + "A" * 95
+      redacted?("token=#{token} end", token)
+    end
+
+    it "redacts HashiCorp Vault batch token (hvb. prefix)" do
+      token = "hvb." + "B" * 150
+      redacted?("token=#{token} end", token)
+    end
+
+    it "redacts HashiCorp Terraform Cloud API token (atlasv1)" do
+      token = "abcdefghijklmn.atlasv1." + "C" * 65
+      redacted?("token=#{token} end", token)
+    end
+
+    it "does not redact short hvs. string (below minimum length)" do
+      short = "hvs.tooshort"
+      expect(DataRedactor.redact(short)).to eq(short)
+    end
+
     # ---- 0.6.1: Sentry DSN ----
     it "redacts Sentry DSN" do
       dsn = "https://" + "0" * 32 + "@o123456.ingest.sentry.io/7654321"
