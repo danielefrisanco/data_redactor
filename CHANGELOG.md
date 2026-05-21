@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-21
+
 ### Added
 - `DataRedactor.redact_deep(data, only:, except:, placeholder:)` — recursively redacts every String value in a nested Hash/Array structure. Non-string scalars (Integer, Float, nil, Boolean) and Hash keys are passed through unchanged. Returns a deep copy; never mutates the input. Raises `ArgumentError` on circular references.
 - `DataRedactor.redact_json(json_string, only:, except:, placeholder:)` — parses JSON, redacts via `redact_deep`, and returns valid JSON. Raises `JSON::ParserError` on invalid input.
@@ -173,6 +175,7 @@ features as 0.7.1 plus the pipeline fix.
 [Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.2...HEAD
 [0.7.2]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.0...v0.7.1
+[0.8.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.2...v0.8.0
 [0.7.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.5.0...v0.6.0
