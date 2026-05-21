@@ -20,6 +20,7 @@ Distinctive-prefix API keys with low false-positive risk, grouped under `:creden
 - Azure SQL hostname — **skipped**: hostname, not a secret
 - DataDog API Key — **deferred**: 32 hex chars with no prefix; needs a context-aware prefix (e.g. `dd[-_]?api[-_]?key=`) to avoid false positives
 - PagerDuty API Key — **skipped**: REST tokens are 20-char alphanum without a stable distinctive prefix; v2 routing keys are 32 hex chars → both FP-prone
+- HashiCorp — ✅ **DONE**: Vault service tokens (`hvs.`), Vault batch tokens (`hvb.`), Terraform Cloud API tokens (`atlasv1`). `hcp.` prefix not found in public pattern databases — skipped.
 
 ## Roadmap to a usable gem
 
