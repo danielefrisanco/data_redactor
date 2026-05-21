@@ -1,4 +1,5 @@
 require "set"
+require "json"
 require_relative "data_redactor/version"
 require_relative "data_redactor/data_redactor" # loads the compiled .so
 
@@ -161,6 +162,54 @@ module DataRedactor
     result
   end
 
+  # Recursively redact every String value in a nested Hash/Array structure.
+  #
+  # Walks the structure depth-first. Only String leaves are passed through
+  # {redact}; all other leaf types (Integer, Float, nil, Symbol, Boolean)
+  # are copied unchanged. Hash keys are never modified.
+  #
+  # Returns a deep copy — the original structure is never mutated.
+  #
+  # @param data [Hash, Array, String, Object] the structure to walk.
+  #   Any type is accepted; non-String scalars are returned as-is.
+  # @param only [Symbol, String, Array, nil] forwarded to {redact}.
+  # @param except [Symbol, String, Array, nil] forwarded to {redact}.
+  # @param placeholder [String, :tagged, :hash] forwarded to {redact}.
+  # @return [Hash, Array, String, Object] a new structure of the same shape
+  #   with all String leaves redacted.
+  # @raise [ArgumentError] if the structure contains a circular reference.
+  #
+  # @example Rails params
+  #   safe = DataRedactor.redact_deep(params.to_h)
+  #
+  # @example Mixed filter
+  #   DataRedactor.redact_deep(payload, only: :credentials, placeholder: :tagged)
+  def redact_deep(data, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
+    _walk(data, only: only, except: except, placeholder: placeholder, seen: Set.new)
+  end
+
+  # Parse +json_string+, redact every String value in the resulting structure,
+  # and return valid JSON.
+  #
+  # Delegates traversal to {redact_deep}. All keyword arguments are forwarded
+  # to {redact}.
+  #
+  # @param json_string [String] valid JSON input.
+  # @param only [Symbol, String, Array, nil] forwarded to {redact}.
+  # @param except [Symbol, String, Array, nil] forwarded to {redact}.
+  # @param placeholder [String, :tagged, :hash] forwarded to {redact}.
+  # @return [String] a JSON string with all String values redacted.
+  # @raise [JSON::ParserError] if +json_string+ is not valid JSON.
+  #
+  # @example
+  #   DataRedactor.redact_json('{"email":"alice@example.com","count":3}')
+  #   # => '{"email":"[REDACTED]","count":3}'
+  def redact_json(json_string, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
+    parsed = JSON.parse(json_string)
+    redacted = redact_deep(parsed, only: only, except: except, placeholder: placeholder)
+    JSON.generate(redacted)
+  end
+
   # Register a custom redaction pattern.
   #
   # Patterns must be valid POSIX ERE. Ruby-only syntax (+\d+, +\s+, +\w+,
@@ -315,6 +364,31 @@ module DataRedactor
     end
 
     bits
+  end
+
+  # @api private
+  # Depth-first recursive walker for {redact_deep}.
+  # +seen+ is a Set of object_ids already on the current traversal stack,
+  # used to detect circular references.
+  def _walk(node, only:, except:, placeholder:, seen:)
+    case node
+    when String
+      redact(node, only: only, except: except, placeholder: placeholder)
+    when Hash
+      raise ArgumentError, "redact_deep: circular reference detected" if seen.include?(node.object_id)
+      seen.add(node.object_id)
+      result = node.transform_values { |v| _walk(v, only: only, except: except, placeholder: placeholder, seen: seen) }
+      seen.delete(node.object_id)
+      result
+    when Array
+      raise ArgumentError, "redact_deep: circular reference detected" if seen.include?(node.object_id)
+      seen.add(node.object_id)
+      result = node.map { |v| _walk(v, only: only, except: except, placeholder: placeholder, seen: seen) }
+      seen.delete(node.object_id)
+      result
+    else
+      node
+    end
   end
 
   # @api private

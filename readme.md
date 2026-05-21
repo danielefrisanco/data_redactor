@@ -103,6 +103,36 @@ DataRedactor.scan(text, except: :network)
 DataRedactor.scan(text, only: :contact, except: ["email"])
 ```
 
+### Hash / JSON traversal
+
+Redact every string value inside a nested Hash or Array — useful for params hashes, Sidekiq job payloads, webhook bodies, and anything that isn't a flat string:
+
+```ruby
+# Hash — returns a deep copy, never mutates the input
+result = DataRedactor.redact_deep({
+  "user"  => { "email" => "alice@example.com" },
+  "count" => 3,
+  "tags"  => ["admin", "alice@example.com"]
+})
+# => { "user" => { "email" => "[REDACTED]" }, "count" => 3, "tags" => ["admin", "[REDACTED]"] }
+
+# Hash keys are never touched — only values are redacted
+# Non-string scalars (Integer, Float, nil, Boolean) pass through unchanged
+
+# Accepts the same filters as redact
+DataRedactor.redact_deep(params, only: :credentials)
+DataRedactor.redact_deep(payload, except: :network, placeholder: :tagged)
+```
+
+```ruby
+# JSON string — parse → redact_deep → re-serialise
+safe_json = DataRedactor.redact_json('{"email":"alice@example.com","count":3}')
+# => '{"email":"[REDACTED]","count":3}'
+
+# Raises JSON::ParserError on invalid input
+DataRedactor.redact_json("not json")  # => JSON::ParserError
+```
+
 ### Custom patterns
 
 Teams often have internal IDs that the gem can't ship. Register them at boot:
@@ -179,7 +209,7 @@ Pass an empty subset (e.g. `scrub: [:headers]`) to opt out of body wrapping. For
 
 > **Body wrapping is buffering.** The middleware reads the entire response body into memory before scanning. For streaming endpoints (SSE, large file downloads, Rack::Hijack) use `scrub: [:headers]` and rely on the Logger formatter for application logs instead.
 
-## Detected patterns (85 total)
+## Detected patterns (88 total)
 
 The table below is a representative sample. Use `DataRedactor.pattern_names` for the canonical, machine-readable list — it stays in sync with the C extension automatically.
 
