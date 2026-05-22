@@ -43,15 +43,25 @@ void Init_data_redactor(void) {
     rb_define_module_function(mDataRedactor, "_clear_custom_patterns", rb_clear_custom_patterns,   0);
     rb_define_module_function(mDataRedactor, "_custom_patterns",       rb_custom_patterns,         0);
 
-    /* Frozen array of built-in pattern names, for introspection and only:/except: validation. */
+    /* Frozen introspection arrays, parallel to the pattern table (same index = same
+     * pattern). NAMES/TAG_BITS back only:/except: validation; SOURCES/BOUNDARY are
+     * internal aids (the benchmark suite rebuilds the patterns in pure Ruby from
+     * them). SOURCES holds the unwrapped POSIX ERE — boundary wrapping is applied
+     * above at compile time for patterns with BOUNDARY[i] == true. */
     VALUE builtin_names = rb_ary_new_capa(NUM_PATTERNS);
     VALUE builtin_tag_bits = rb_ary_new_capa(NUM_PATTERNS);
+    VALUE builtin_sources = rb_ary_new_capa(NUM_PATTERNS);
+    VALUE builtin_boundary = rb_ary_new_capa(NUM_PATTERNS);
     for (int i = 0; i < NUM_PATTERNS; i++) {
         rb_ary_push(builtin_names, rb_str_new_frozen(rb_str_new_cstr(pattern_names[i])));
         rb_ary_push(builtin_tag_bits, INT2NUM(pattern_tags[i]));
+        rb_ary_push(builtin_sources, rb_str_new_frozen(rb_str_new_cstr(pattern_strings[i])));
+        rb_ary_push(builtin_boundary, boundary_wrapped[i] ? Qtrue : Qfalse);
     }
     rb_define_const(mDataRedactor, "BUILTIN_PATTERN_NAMES",    rb_ary_freeze(builtin_names));
     rb_define_const(mDataRedactor, "BUILTIN_PATTERN_TAG_BITS", rb_ary_freeze(builtin_tag_bits));
+    rb_define_const(mDataRedactor, "BUILTIN_PATTERN_SOURCES",  rb_ary_freeze(builtin_sources));
+    rb_define_const(mDataRedactor, "BUILTIN_PATTERN_BOUNDARY", rb_ary_freeze(builtin_boundary));
 
     /* Placeholder mode constants. */
     rb_define_const(mDataRedactor, "PH_MODE_PLAIN",  INT2NUM(PLACEHOLDER_MODE_PLAIN));
