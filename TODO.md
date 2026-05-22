@@ -188,6 +188,80 @@ Design decisions made:
 
 ## Performance: optimize and minimize allocations
 
+### ⏸️ IN PROGRESS — checkpoint 2026-05-22 (branch `fix/redact-performance`)
+
+Resume here. Branch `fix/redact-performance` is off `feat/benchmarks`.
+One commit landed: `7a70f0a fix: eliminate O(n^2) buffer sizing in redact.c`.
+
+**What we know (measured):**
+- The benchmark suite found `redact` runs at ~0.5 MB/s and is ~7× SLOWER than a
+  pure-Ruby `gsub` loop on the same 88 patterns. 10MB redact ≈ 56s before any fix.
+- Defect 1 (per-match `strlen(cursor+full_eo)` in `replace_all_matches`) is FIXED
+  in `7a70f0a` — buffer now sized once as `in_len*(ph_max+1)+1`. 231 specs green.
+- **But the engine is still O(n²).** After the fix, 10MB redact = 32s. Email-only
+  scaling: 1MB 144ms → 2MB 347ms (2.4×) → 4MB 954ms (2.7×) → 8MB 3216ms (3.4×).
+  Each doubling more than doubles the time — confirmed super-linear.
+- Cost is per-MATCH, not per-byte: on 10MB, `gpg_private_key` (0 matches) = 24ms
+  (~420 MB/s, healthy); `email` (heavy matches) = 4729ms; `credit_card` = 4419ms.
+- So Defect 1 was real but NOT the dominant cost. The TODO's old assumption
+  ("allocation is almost certainly the bottleneck") is WRONG — see below.
+
+**What we DON'T know yet:**
+- The exact mechanism of the remaining O(n²). Two live hypotheses:
+  1. `regexec()` itself is super-linear for patterns with `+` quantifiers
+     (`email` = `[...]+@[...]+\.[...]{2,}`) — glibc POSIX regex backtracks; a long
+     alphanumeric run with no `@` makes it try/backtrack at many start positions.
+  2. The per-pattern loop re-walks: each `regexec` call after a match starts at
+     `cursor` and the cost of finding the next match scales with how far it must
+     scan — but that should be linear in total. Unclear if there's a hidden
+     re-scan of already-processed tail.
+- A test was started to disambiguate (fixed matches + growing PLAIN filler tail;
+  if time grows with filler → cost is per-regexec-call scanning the whole
+  remaining buffer). **It was killed before producing output — RE-RUN IT FIRST
+  on resume.** Script: redact `((log_line+"\n")*1000) + ("x"*filler_mb*1MB)` with
+  `only:["email"]`, filler ∈ {0,1,4,9} MB, time each.
+
+**How the engine actually works (and how the user expects it to):**
+- ACTUAL: for each of 88 patterns separately, call glibc `regexec()` in a loop
+  over the whole working buffer, replace matches, emit a new buffer, pass it to
+  the next pattern. 88 independent full passes, 88 separate regex engines.
+- USER'S MENTAL MODEL (and the right fix direction): a single streaming pass —
+  read a char, advance every pattern's match state, track which patterns are
+  still alive, replace when one completes. That's a combined multi-pattern
+  matcher (Aho-Corasick for literals / a merged NFA-DFA for regex). O(n) total,
+  one pass, regardless of pattern count. This is a much bigger change than
+  "ping-pong buffers" but it is the real answer if `regexec` is the bottleneck.
+
+**Our ideas / options to evaluate on resume (in rough order):**
+- A. **Confirm the mechanism first** — re-run the filler test; if confirmed it's
+  per-call `regexec` cost, the ping-pong/alloc fixes (old plan Parts B/C) will
+  NOT solve it and should be reconsidered.
+- B. **`memchr` literal pre-filter** — most patterns have a required literal
+  (`@`, `AKIA`, `BEGIN `, `sk_live_`). `memchr` the buffer once; if absent, skip
+  `regexec` entirely. Big win for the 80+ patterns that match nothing in a given
+  payload — but does NOT help `email` on a log full of emails.
+- C. **`REG_NOSUB`** for non-boundary patterns — cheap, marginal.
+- D. **Anchor / bound the greedy patterns** — `email`'s `+` quantifiers backtrack;
+  rewriting to possessive-style or length-capped forms (POSIX has no possessive
+  quantifiers — would need `{1,64}` style caps) could kill the backtracking.
+- E. **Combined single-pass matcher** (the user's model) — merge all 88 patterns
+  into one engine. Biggest payoff, biggest effort, breaks the "specific→generic
+  sequential ordering" correctness model — would need a new overlap-resolution
+  strategy. May justify revisiting the Onigmo-vs-POSIX engine decision.
+- F. Swap glibc POSIX `regex.h` for a faster engine (RE2/Hyperscan are
+  multi-pattern and linear-time — but add a build dependency, against the
+  zero-dep rule).
+
+**Old plan status:** `~/.claude/plans/dapper-forging-nest.md` Parts B/C/D (ping-pong
+buffers, scan offset-map) were written BEFORE we learned `regexec` is the hot
+spot. Parts B/C/D are still valid cleanups but will NOT fix the O(n²) on their
+own. RE-PLAN after the filler test pins the mechanism.
+
+**Benchmark suite caveat:** `scaling.rb`'s 50MB step and `per_pattern.rb` take
+many minutes under the current O(n²) engine — expected, they'll be fast post-fix.
+
+---
+
 Current `redact` runs each pattern over a fresh working buffer, copying non-matching segments and `realloc`ing as needed. That's correct but allocation-heavy. Things to try, roughly in order of expected payoff:
 
 - **Single-pass, two-buffer ping-pong** — keep two buffers alive across patterns and swap pointers instead of `malloc`/`free`-ing per pattern. Saves `NUM_PATTERNS - 1` allocation pairs per call.
@@ -199,7 +273,13 @@ Current `redact` runs each pattern over a fresh working buffer, copying non-matc
 - **Branch-free `write_placeholder` for the plain mode** — the common case is one `memcpy` of a fixed-size string; specialize it.
 - **Profile first** — wire up `benchmark/throughput.rb` (see [Benchmarks](#benchmarks)) and `perf` / `Instruments` before changing code. Optimize the actual hot spot, not the assumed one.
 
-**Why:** the C extension is the gem's selling point. Beating pure-Ruby `gsub` by 2× isn't impressive; beating it by 20× is. Allocation is almost certainly the bottleneck — `regcomp` is a one-time cost, `regexec` is fast, `malloc` per pattern per call is not.
+**Why:** the C extension is the gem's selling point. Beating pure-Ruby `gsub` by 2× isn't impressive; beating it by 20× is.
+
+> **Update 2026-05-22:** the original guess here — "allocation is almost
+> certainly the bottleneck" — was DISPROVEN by the benchmark suite. Allocation
+> is minor; the dominant cost is per-match `regexec` work (see the IN PROGRESS
+> checkpoint above). `regexec` is NOT fast for greedy patterns. Profile, don't
+> guess.
 
 ## Full thread safety
 
