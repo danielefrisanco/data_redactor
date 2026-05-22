@@ -158,6 +158,46 @@ DataRedactor.clear_custom_patterns!               # mostly for test suites
 
 **`boundary: true`** — wraps the pattern with `(^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)` so it only fires when the token is not embedded in a longer alphanumeric string. Incompatible with patterns that contain capture groups.
 
+### Name patterns
+
+Personal names can't ship as built-ins — every team has different ones — but the regex
+boilerplate to match a name across its written variations is the same every time.
+`name_pattern` generates that regex for you, ready to hand to `add_pattern`:
+
+```ruby
+DataRedactor.add_pattern(
+  name:  "person_mario_rossi",
+  regex: DataRedactor.name_pattern("Mario", "Rossi"),
+  tag:   :contact
+)
+
+DataRedactor.redact("ticket from Mario Rossi about ...")
+# => "ticket from [REDACTED] about ..."
+```
+
+A single generated pattern matches all of these:
+
+- **Case** — `Mario Rossi`, `mario rossi`, `MARIO ROSSI`
+- **Order** — `Mario Rossi`, `Rossi Mario`, `Rossi, Mario`, `Rossi,Mario`
+- **Initials** — `M. Rossi`, `M Rossi`, `Mario R.`, `M.R.`, `MR`
+- **Diacritics** — `name_pattern("Jose", "Munoz")` also matches `José Muñoz` (and vice versa)
+- **Separators** — spaces and hyphens are interchangeable. `name_pattern("Anne-Marie", "Berg")`
+  matches `Anne-Marie Berg`, `Anne Marie Berg`, `AnneMarie Berg`, and each half alone
+  (`Anne Berg`, `Marie Berg`). Multi-word parts like `"Van der Berg"` tolerate any
+  space/hyphen separator between words.
+
+It does **not** match a name embedded in a longer word — `Mario` will not fire inside
+`Mariolino` — because the generated pattern is boundary-wrapped. For that reason, register
+it with the default `boundary: false` (the wrapper is already baked into the returned
+string; `boundary: true` would double-wrap and reject its capture groups).
+
+Pass `middle:` to also cover a middle name — both the no-middle and with-middle forms match:
+
+```ruby
+DataRedactor.name_pattern("Mario", "Rossi", middle: "Luigi")
+# matches "Mario Rossi" AND "Mario Luigi Rossi" AND "Rossi Mario Luigi"
+```
+
 ## Integrations
 
 Optional adapters for Logger, Rails, and Rack. None are loaded automatically — `require` only what you use, and the gem adds zero runtime dependencies in the gemspec.
@@ -306,7 +346,9 @@ redactor/
 ├── lib/
 │   ├── data_redactor.rb          # Ruby entry point, loads the .so
 │   └── data_redactor/
-│       └── version.rb
+│       ├── version.rb
+│       ├── name_pattern.rb        # name_pattern helper — generates a name regex for add_pattern
+│       └── integrations/          # soft-required Logger / Rails / Rack adapters
 ├── ext/
 │   └── data_redactor/
 │       ├── extconf.rb            # Checks for C headers, generates Makefile (globs *.c)

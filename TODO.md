@@ -161,42 +161,16 @@ safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 - ~~Bump CI/release workflow actions to Node 24-compatible versions before 2026-06-02.~~ ✅ DONE — `checkout@v6.0.2`, `upload-artifact@v7.0.1`, `download-artifact@v8.0.1`, `upload-pages-artifact@v5.0.0`, `deploy-pages@v5.0.0`.
 - ~~Drop `release: published` trigger from `ci.yml`.~~ ✅ DONE — removed; CI now runs only on push to main and PRs.
 
-### 12. Name-pattern helper (planned for 0.8.0)
+### 12. Name-pattern helper ✅ DONE in 0.9.0
 
-Helper to generate a custom pattern from a person's name covering common variations. Names can't ship as built-ins (every team has different ones), but the pattern-construction logic is the same boilerplate everyone re-derives.
+`DataRedactor.name_pattern(first, last, middle:)` in `lib/data_redactor/name_pattern.rb` — pure Ruby, returns a POSIX ERE String for `add_pattern`.
 
-**Proposed API:**
-
-```ruby
-DataRedactor.name_pattern("Mario", "Rossi")
-# => returns a String regex (POSIX ERE) ready to pass to add_pattern
-
-DataRedactor.add_pattern(
-  name: "person_mario_rossi",
-  regex: DataRedactor.name_pattern("Mario", "Rossi"),
-  tag:   :contact
-)
-```
-
-**Variations to cover** (all confirmed in scope by user):
-
-1. **Order swap** — `Mario Rossi`, `Rossi Mario`, `Rossi, Mario`, `Rossi,Mario`
-2. **Initials** — `M. Rossi`, `M Rossi`, `Mario R.`, `Mario R`, `M.R.`, `MR`, `M. R.`
-3. **Case-insensitive matching** — POSIX ERE has no `/i` flag, so build per-letter alternations: `[Mm][Aa][Rr][Ii][Oo]` (or `[mM][aA]...` — same thing). Apply uniformly to first AND last name. Increases pattern length but is the only way without engine support.
-4. **Diacritics tolerance** — when input contains accented characters (`é`, `ñ`, `ü`, `ç`, `ø`...), also match the unaccented form. Implement by mapping each accented char to a `[éeÉE]`-style class. ASCII-only inputs skip this step.
-
-**Open design questions:**
-
-- Multi-part last names (`Van der Berg`, `García Marquez`)? Treat space as `[ ]?` between parts, or require canonical spacing?
-- Middle names (`Mario Luigi Rossi`)? Probably accept optional `(Luigi )?` between first and last — or take an explicit `middle:` kwarg.
-- Hyphens vs spaces (`Anne-Marie` vs `Anne Marie`)? Make hyphens match `[ -]?`.
-- Word boundaries: wrap with the existing boundary-wrap mechanism (`boundary: true`)? Probably yes by default — otherwise `Mario` matches inside `Mariolino`. But boundary-wrapped patterns reject capture groups, so the alternation would have to use `(?:...)` — which POSIX ERE doesn't support either. May need to expose a non-capturing alternation builder, or relax the no-capture-groups rule for this helper specifically.
-- Output as `String` (POSIX ERE) or `Regexp`? `String` is simpler and matches what `add_pattern` already accepts.
-- Where to put the implementation: pure Ruby in `lib/data_redactor/name_pattern.rb` — no need for C since this runs at registration time, not on the hot path.
-
-**Test plan:**
-
-Roundtrip via `add_pattern` and assert that each canonical variant gets redacted and that obvious non-matches (`marioland`, `Maria Rossi`, `Mariolino Rossini`) do not.
+Design decisions made:
+- **Boundary** — the wrapper `(^|[^A-Za-z])(...)([^A-Za-z]|$)` is baked into the returned string, so the caller registers with the default `boundary: false`. `Mario` matches as a word but not inside `Mariolino`.
+- **Separator** — `[ ,-]*` (optional) between name parts, so `MR` / `M.R.` / `Rossi,Mario` all collapse correctly. Spaces and hyphens are interchangeable; a hyphenated part (`Anne-Marie`) also matches `Anne Marie`, `AnneMarie`, and each half alone. Multi-word parts (`Van der Berg`) tolerate any separator between words.
+- **Middle** — explicit `middle:` kwarg; when given, generates both the no-middle and with-middle forms.
+- **Diacritics** — `DIACRITIC_FOLD` table maps each ASCII letter to its accented variants; matching is bidirectional (`Jose` matches `José` and vice versa).
+- **Output** — `String` (POSIX ERE), matching what `add_pattern` accepts.
 
 ## C extension refactor ✅ DONE
 

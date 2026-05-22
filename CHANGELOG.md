@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-22
+
+### Added
+- `DataRedactor.name_pattern(first, last, middle:)` — generates a POSIX ERE that matches a person's name across common written variations (case-insensitivity, First/Last order swaps, `Last, First`, initials, diacritics, and interchangeable space/hyphen separators). Returns a String ready to pass to `add_pattern`. The pattern is boundary-wrapped, so `"Mario"` matches as a word but not inside `"Mariolino"`. When `middle:` is given, both the no-middle and with-middle forms match.
+
 ## [0.8.0] - 2026-05-21
 
 ### Added
@@ -172,10 +177,11 @@ features as 0.7.1 plus the pipeline fix.
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.0...v0.7.1
-[0.8.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.7.2...v0.8.0
 [0.7.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.5.0...v0.6.0
