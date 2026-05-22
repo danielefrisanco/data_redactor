@@ -8,7 +8,32 @@ A Ruby gem with a C extension for high-performance regex-based redaction of sens
 
 ## What it does
 
-DataRedactor scans text for sensitive patterns and replaces matches with `[REDACTED]`. It uses a C extension backed by POSIX `regex.h` so the heavy lifting happens outside the Ruby VM, making it fast enough for large payloads.
+DataRedactor scans text for sensitive data — API keys and cloud secrets, IBANs,
+credit cards, national IDs, emails, phone numbers, IPs, and more — and replaces
+each match with a placeholder. The scanning runs in a C extension backed by POSIX
+`regex.h`, so the heavy lifting happens outside the Ruby VM and stays fast enough
+to run inline on large payloads.
+
+It ships **88 built-in patterns** across 15+ countries, grouped into tags
+(`:credentials`, `:financial`, `:contact`, ...) so you can redact only what you
+care about. Beyond plain strings it can walk nested Hashes, Arrays, and JSON,
+audit a payload without mutating it (`scan`), and plug into Logger, Rails, and
+Rack. You can also register your own patterns at boot.
+
+### Use cases
+
+- **Log scrubbing** — drop the `Logger` formatter in so no secret or PII ever
+  reaches disk or your log aggregator.
+- **Rails parameter filtering** — feed `filter_parameters` a redactor-backed proc
+  to keep request params out of logs and error reports.
+- **HTTP request/response sanitising** — Rack middleware scrubs response bodies
+  and sensitive headers in flight.
+- **Sanitising LLM / API payloads** — run `redact_deep` over a params hash or
+  `redact_json` over a JSON body before it leaves the process.
+- **Compliance & auditing** — `scan` reports every match with byte offsets, tag,
+  and pattern name without changing the text, for false-positive tuning.
+- **Internal identifiers** — register company-specific patterns (`add_pattern`)
+  or generate them from a person's name (`name_pattern`).
 
 ## Usage
 
@@ -158,6 +183,46 @@ DataRedactor.clear_custom_patterns!               # mostly for test suites
 
 **`boundary: true`** — wraps the pattern with `(^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)` so it only fires when the token is not embedded in a longer alphanumeric string. Incompatible with patterns that contain capture groups.
 
+### Name patterns
+
+Personal names can't ship as built-ins — every team has different ones — but the regex
+boilerplate to match a name across its written variations is the same every time.
+`name_pattern` generates that regex for you, ready to hand to `add_pattern`:
+
+```ruby
+DataRedactor.add_pattern(
+  name:  "person_mario_rossi",
+  regex: DataRedactor.name_pattern("Mario", "Rossi"),
+  tag:   :contact
+)
+
+DataRedactor.redact("ticket from Mario Rossi about ...")
+# => "ticket from [REDACTED] about ..."
+```
+
+A single generated pattern matches all of these:
+
+- **Case** — `Mario Rossi`, `mario rossi`, `MARIO ROSSI`
+- **Order** — `Mario Rossi`, `Rossi Mario`, `Rossi, Mario`, `Rossi,Mario`
+- **Initials** — `M. Rossi`, `M Rossi`, `Mario R.`, `M.R.`, `MR`
+- **Diacritics** — `name_pattern("Jose", "Munoz")` also matches `José Muñoz` (and vice versa)
+- **Separators** — spaces and hyphens are interchangeable. `name_pattern("Anne-Marie", "Berg")`
+  matches `Anne-Marie Berg`, `Anne Marie Berg`, `AnneMarie Berg`, and each half alone
+  (`Anne Berg`, `Marie Berg`). Multi-word parts like `"Van der Berg"` tolerate any
+  space/hyphen separator between words.
+
+It does **not** match a name embedded in a longer word — `Mario` will not fire inside
+`Mariolino` — because the generated pattern is boundary-wrapped. For that reason, register
+it with the default `boundary: false` (the wrapper is already baked into the returned
+string; `boundary: true` would double-wrap and reject its capture groups).
+
+Pass `middle:` to also cover a middle name — both the no-middle and with-middle forms match:
+
+```ruby
+DataRedactor.name_pattern("Mario", "Rossi", middle: "Luigi")
+# matches "Mario Rossi" AND "Mario Luigi Rossi" AND "Rossi Mario Luigi"
+```
+
 ## Integrations
 
 Optional adapters for Logger, Rails, and Rack. None are loaded automatically — `require` only what you use, and the gem adds zero runtime dependencies in the gemspec.
@@ -306,7 +371,9 @@ redactor/
 ├── lib/
 │   ├── data_redactor.rb          # Ruby entry point, loads the .so
 │   └── data_redactor/
-│       └── version.rb
+│       ├── version.rb
+│       ├── name_pattern.rb        # name_pattern helper — generates a name regex for add_pattern
+│       └── integrations/          # soft-required Logger / Rails / Rack adapters
 ├── ext/
 │   └── data_redactor/
 │       ├── extconf.rb            # Checks for C headers, generates Makefile (globs *.c)

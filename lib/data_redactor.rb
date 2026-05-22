@@ -2,6 +2,7 @@ require "set"
 require "json"
 require_relative "data_redactor/version"
 require_relative "data_redactor/data_redactor" # loads the compiled .so
+require_relative "data_redactor/name_pattern"
 
 # High-performance regex-based redactor for sensitive data.
 #
