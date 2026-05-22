@@ -8,7 +8,32 @@ A Ruby gem with a C extension for high-performance regex-based redaction of sens
 
 ## What it does
 
-DataRedactor scans text for sensitive patterns and replaces matches with `[REDACTED]`. It uses a C extension backed by POSIX `regex.h` so the heavy lifting happens outside the Ruby VM, making it fast enough for large payloads.
+DataRedactor scans text for sensitive data — API keys and cloud secrets, IBANs,
+credit cards, national IDs, emails, phone numbers, IPs, and more — and replaces
+each match with a placeholder. The scanning runs in a C extension backed by POSIX
+`regex.h`, so the heavy lifting happens outside the Ruby VM and stays fast enough
+to run inline on large payloads.
+
+It ships **88 built-in patterns** across 15+ countries, grouped into tags
+(`:credentials`, `:financial`, `:contact`, ...) so you can redact only what you
+care about. Beyond plain strings it can walk nested Hashes, Arrays, and JSON,
+audit a payload without mutating it (`scan`), and plug into Logger, Rails, and
+Rack. You can also register your own patterns at boot.
+
+### Use cases
+
+- **Log scrubbing** — drop the `Logger` formatter in so no secret or PII ever
+  reaches disk or your log aggregator.
+- **Rails parameter filtering** — feed `filter_parameters` a redactor-backed proc
+  to keep request params out of logs and error reports.
+- **HTTP request/response sanitising** — Rack middleware scrubs response bodies
+  and sensitive headers in flight.
+- **Sanitising LLM / API payloads** — run `redact_deep` over a params hash or
+  `redact_json` over a JSON body before it leaves the process.
+- **Compliance & auditing** — `scan` reports every match with byte offsets, tag,
+  and pattern name without changing the text, for false-positive tuning.
+- **Internal identifiers** — register company-specific patterns (`add_pattern`)
+  or generate them from a person's name (`name_pattern`).
 
 ## Usage
 
