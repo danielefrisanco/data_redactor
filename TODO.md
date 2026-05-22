@@ -191,7 +191,13 @@ Design decisions made:
 ### ⏸️ IN PROGRESS — checkpoint 2026-05-22 (branch `fix/redact-performance`)
 
 Resume here. Branch `fix/redact-performance` is off `feat/benchmarks`.
-One commit landed: `7a70f0a fix: eliminate O(n^2) buffer sizing in redact.c`.
+Commits on this branch so far:
+- `7a70f0a fix: eliminate O(n^2) buffer sizing in redact.c` (the only real fix)
+- `4b0dd25` + `55e6634` — this checkpoint (docs only).
+
+Sibling branch `feat/benchmarks` (parent of this one) is HELD — 2 commits, the
+benchmark suite + the `BUILTIN_PATTERN_SOURCES/BOUNDARY` constants, not yet
+merged or PR'd. The benchmark scripts used below live there.
 
 **What we know (measured):**
 - The benchmark suite found `redact` runs at ~0.5 MB/s and is ~7× SLOWER than a
@@ -270,6 +276,20 @@ One commit landed: `7a70f0a fix: eliminate O(n^2) buffer sizing in redact.c`.
   zero-dep rule). Note: writing our own matcher (E) is the zero-dep way to get
   the same multi-pattern/linear-time property; F buys it off-the-shelf at the
   cost of the dependency.
+
+**Will the fix beat the pure-Ruby benchmark? (assessment 2026-05-22)**
+- Yes, with confidence in the *direction*, not yet a number. Ruby's `gsub` loop
+  also does 88 passes — it just uses Onigmo, a better engine than glibc POSIX
+  `regexec`, and wins 7× today on engine quality alone while doing the same
+  redundant work.
+- Options B/D are constant-factor wins → likely beat Ruby for typical payloads
+  (most patterns skip via `memchr`) but not dramatically.
+- Option E (combined matcher) is a complexity-class win: O(n) one pass vs Ruby's
+  O(88 × n-with-backtracking). Should land tens of MB/s — plausibly 5–20× faster
+  than Ruby. No promised number until a prototype is measured (this session
+  already proved a confident perf guess can be wrong).
+- Pragmatic path: ship B (`memchr` pre-filter) first as the quick win, then E as
+  the big follow-up. Correctness gates speed — a matcher bug = a leaked secret.
 
 **Old plan status:** `~/.claude/plans/dapper-forging-nest.md` Parts B/C/D (ping-pong
 buffers, scan offset-map) were written BEFORE we learned `regexec` is the hot
