@@ -248,9 +248,28 @@ One commit landed: `7a70f0a fix: eliminate O(n^2) buffer sizing in redact.c`.
   into one engine. Biggest payoff, biggest effort, breaks the "specific→generic
   sequential ordering" correctness model — would need a new overlap-resolution
   strategy. May justify revisiting the Onigmo-vs-POSIX engine decision.
+  - **Key idea (user, 2026-05-22):** "remember at which part of the regex string
+    the match arrived." I.e. track each pattern's *partial-match state* — how far
+    into its regex the current input prefix has advanced — and carry that state
+    forward char-by-char instead of restarting. That partial state IS the
+    NFA/DFA state. `regexec` is O(n²) here precisely because it discards this
+    state and restarts every call. Keeping it across chars = O(n), one pass.
+  - Constraint: glibc `regexec` exposes no intermediate/pausable state, so this
+    needs either our own NFA simulation or a multi-pattern engine (option F).
+  - **Could be its own C library (user, 2026-05-22):** the combined-matcher core
+    — compile N patterns into one merged automaton, stream input once, emit
+    (pattern-id, start, end) match events — is generic and gem-agnostic. Worth
+    considering as a standalone C library that `data_redactor` then links/vendors:
+    keeps the matcher testable in isolation, and the planned Erlang/Elixir port
+    (see "Possible Erlang/Elixir port" section) could share the SAME core via a
+    NIF instead of reimplementing. Trade-off: a separate library is more
+    packaging/versioning overhead; only split it out once the matcher design is
+    proven. Decide AFTER the filler test + a prototype.
 - F. Swap glibc POSIX `regex.h` for a faster engine (RE2/Hyperscan are
   multi-pattern and linear-time — but add a build dependency, against the
-  zero-dep rule).
+  zero-dep rule). Note: writing our own matcher (E) is the zero-dep way to get
+  the same multi-pattern/linear-time property; F buys it off-the-shelf at the
+  cost of the dependency.
 
 **Old plan status:** `~/.claude/plans/dapper-forging-nest.md` Parts B/C/D (ping-pong
 buffers, scan offset-map) were written BEFORE we learned `regexec` is the hot
