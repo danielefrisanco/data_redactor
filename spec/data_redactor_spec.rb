@@ -1280,4 +1280,115 @@ RSpec.describe DataRedactor do
       expect(result.scan("[REDACTED]").size).to be >= 6  # 3 matches × 2 lines
     end
   end
+
+  # Overlap-resolution behaviour. Two sets of specs because today's engine and
+  # the future combined matcher resolve overlaps differently — see
+  # docs/combined_matcher_plan.md "Prep 2" and docs/standalone_matcher_design.md
+  # "Overlap resolution".
+  #
+  # TODAY (the C engine on glibc regex): patterns run sequentially in array
+  # order; once a pattern replaces a span with [REDACTED] later patterns can't
+  # re-match those bytes. Net effect: the *earliest pattern by index* wins
+  # any region it can match, regardless of length.
+  #
+  # POST-1.0 (combined matcher): longest-match-wins, with pattern-id as the
+  # tiebreak for equal-length matches. This is a deliberate behaviour change
+  # — the AKIA+suffix case below shows today's policy leaving secrets partly
+  # unredacted, which is the worst kind of failure for a redaction gem.
+  describe "overlap resolution — today's pattern-id-priority behaviour" do
+    it "earlier-index pattern wins even when a later-index pattern could match a LONGER span" do
+      # aws_access_key_id (index 14) matches the leading 20 chars.
+      # aws_secret_access_key (index 15) could match all 40 chars.
+      # Today's behaviour: AKIA wins the 20-char prefix; the trailing 20 A's
+      # are left unredacted.
+      # ⚠ This is the case the 1.0 matcher will FIX (see pending specs below).
+      input = "AKIAIOSFODNN7EXAMPLE" + ("A" * 20)  # 40 chars
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
+      expect(result[:matches].first[:value]).to eq("AKIAIOSFODNN7EXAMPLE")
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]" + ("A" * 20))
+    end
+
+    it "earlier-index pattern wins among multiple patterns matching the same exact span" do
+      # 11-digit number: polish_pesel (81), belgian_national_number (82),
+      # norwegian_fodselsnummer (83), polish_pesel_2 (87) all match.
+      # polish_pesel at the lowest index wins (preserved post-1.0 by the
+      # pattern-id tiebreak).
+      input = "id 85121612345 end"
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:name] }).to eq(["polish_pesel"])
+    end
+
+    it "a 9-digit number matches czech_rodne_cislo (its regex allows the / to be optional), winning over more-specific 9-digit patterns at higher indices" do
+      # czech_rodne_cislo (index 69) is `[0-9]{6}/?[0-9]{3,4}` — the / is
+      # optional so it matches 9 consecutive digits.
+      # passport_9digits (84), dutch_bsn (85), austrian_abgabenkontonummer (86)
+      # all also match 9 digits — but index 69 < 84,85,86 so czech wins.
+      # All four match the same 9-char span so this case is unchanged post-1.0.
+      input = "num 123456789 end"
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:name] }).to eq(["czech_rodne_cislo"])
+    end
+
+    it "credit_card consumes 16 digits, leaving no 11-digit run for national-ID patterns to match" do
+      # credit_card (index 56) matches a 16-digit Visa.
+      # polish_pesel/belgian/norwegian/etc. (indices 81-87) would each match
+      # an 11-digit slice — but credit_card runs first and replaces with
+      # [REDACTED], so the digit-only patterns see no 11-digit run.
+      # Post-1.0 longest-match also picks credit_card (16 > 11), unchanged.
+      input = "card=4111111111111111 end"
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:name] }).to eq(["credit_card"])
+    end
+
+    it "non-overlapping matches from different patterns all fire independently" do
+      # When patterns match disjoint spans, both fire under either policy.
+      input = "AKIAIOSFODNN7EXAMPLE" + ("x" * 40)  # AKIA (20) + 40 alphanum
+      result = DataRedactor.scan(input)
+      names = result[:matches].map { |m| m[:name] }.sort
+      expect(names).to eq(["aws_access_key_id", "aws_secret_access_key"].sort)
+    end
+
+    it "consumes the 'specific prefix' even when only it matches; later patterns see leftovers verbatim" do
+      # Only AKIA fits (need 40 chars for secret; only have 39).
+      # No actual overlap — both policies match only AKIA.
+      input = "key=AKIAIOSFODNN7EXAMPLEextrabytesfor20"
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
+    end
+  end
+
+  # Specs marked `pending` describe the INTENDED 1.0 matcher behaviour
+  # (longest-match wins, tiebreak by pattern-id). They fail today by design,
+  # so they're skipped; the combined-matcher PR will unmark them and remove
+  # the corresponding "today's behaviour" specs above.
+  describe "overlap resolution — intended 1.0 longest-match-wins behaviour" do
+    it "longest-match wins: AKIA+suffix that forms a valid 40-char secret is redacted whole" do
+      pending "1.0.0: combined matcher implements longest-match policy"
+      input = "AKIAIOSFODNN7EXAMPLE" + ("A" * 20)  # 40 alphanum chars
+      # Under longest-match, aws_secret_access_key (40 chars) beats
+      # aws_access_key_id (20 chars). Whole span redacted; nothing leaks.
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]")
+      names = DataRedactor.scan(input)[:matches].map { |m| m[:name] }
+      expect(names).to eq(["aws_secret_access_key"])
+    end
+
+    it "ties broken by pattern-id (preserving today's behaviour for tied lengths)" do
+      # 11-digit number: 4 patterns match the same 11-char span. Today's
+      # pattern-id behaviour AND post-1.0 longest-with-id-tiebreak both pick
+      # polish_pesel. Not marked pending — this spec passes under either
+      # policy and documents the invariant tied lengths preserve.
+      input = "id 85121612345 end"
+      names = DataRedactor.scan(input)[:matches].map { |m| m[:name] }
+      expect(names).to eq(["polish_pesel"])
+    end
+
+    it "longest-match safer when uncertain: prefers the more-thorough redaction" do
+      pending "1.0.0: combined matcher implements longest-match policy"
+      # This is the safety argument: when we can't tell whether bytes are
+      # 'one secret' or 'two adjacent secrets', redact more rather than less.
+      input = "AKIAIOSFODNN7EXAMPLE" + "B" * 20  # 40 alphanum
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]")
+    end
+  end
 end
