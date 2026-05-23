@@ -189,40 +189,120 @@ Memory is O(DFA_states × alphabet_size) for the transition table. For 256-byte
 alphabet (raw bytes, UTF-8-safe by byte) and a few thousand states, that's a
 few MB — acceptable for a one-time cost held in the compiled matcher.
 
-## Overlap resolution (the hard design question)
+## Overlap resolution — DECIDED 2026-05-23
 
-When multiple patterns match overlapping spans — e.g. on the input `AKIA...`,
-both `aws_access_key_id` (specific) and a generic 20-alphanum pattern would
-match the same bytes — *which one wins?*
+**Policy: longest match wins, tied lengths broken by pattern-id (lower index
+wins).** Locked in via Prep 2 (see
+[`pattern_subset_audit.md`](pattern_subset_audit.md) sibling and
+[`combined_matcher_plan.md`](combined_matcher_plan.md)). Spec coverage is in
+`spec/data_redactor_spec.rb` under the "overlap resolution" describe blocks
+— both today's pattern-id-priority behaviour AND the post-1.0 longest-match
+behaviour are written as specs, with the latter marked `pending` until the
+matcher ships.
 
-`data_redactor` today resolves this by **sequential pattern execution in
-specific→generic order**: after pattern `i` replaces a match with `[REDACTED]`,
-pattern `i+1` sees the modified buffer and can't re-match the same span.
-This is implicit in the pattern array ordering (see `patterns.c`).
+### Why longest-match-wins, not pattern-id priority
 
-The combined matcher walks once and sees all matches simultaneously. We need
-an explicit policy. Options:
+The previous draft of this doc recommended pattern-id priority (today's
+implicit behaviour). Prep 2's empirical investigation revealed a class of
+cases where pattern-id priority **leaks secrets**:
 
-1. **Longest match wins.** Standard regex engine behaviour. Simple, predictable,
-   but doesn't capture the "specific over generic" semantics — a 20-char generic
-   pattern would beat the 20-char `AKIA...` because they're the same length and
-   tie-breaking is undefined.
-2. **Priority by pattern_id.** The caller orders patterns; lower id wins ties.
-   Maps cleanly to today's specific→generic array order. **Recommended.**
-3. **Longest match, tie-broken by priority.** Combines (1) and (2).
-   Recommended if we want the "longest" intuition preserved.
-4. **Emit all overlapping matches, let the caller resolve.** Most flexible,
-   pushes complexity to the caller. Useful for `scan` (which wants to report
-   everything); wrong for `redact` (which needs to pick one).
+> Input: `AKIAIOSFODNN7EXAMPLEAAAAAAAAAAAAAAAAAAAA` (40 alphanum bytes).
+>
+> - Pattern-id priority (today): `aws_access_key_id` (idx 14) wins, redacts
+>   the leading 20 chars, **leaves the trailing 20 unredacted**.
+> - Longest-match: `aws_secret_access_key` (idx 15, 40 chars) wins, the
+>   whole span is redacted.
 
-The library should support **policy (3) by default** with a flag to choose
-between policies, and `mm_scan` should expose match events in a consistent
-order (sorted by start, then by priority). Then `redact` picks the first
-non-overlapping set; `scan` reports them all.
+For a redaction gem the correct failure mode when uncertain is "redact
+more, not less." The pattern-id semantic is also an *accidental* outcome of
+sequential pattern execution — no one designed it; it fell out of the
+implementation. Adopting longest-match aligns with Onigmo, PCRE, RE2, and
+Hyperscan's standard semantics.
 
-This is the *single most important design decision* and needs prototyping
-against the gem's existing spec suite (which encodes the specific→generic
-expectations).
+### Worked example
+
+Input: `AKIAIOSFODNN7EXAMPLEAAAAAAAAAAAAAAAAAAAA` (40 chars).
+
+| Match candidate | Start | Length | Pattern id |
+|---|---|---|---|
+| `AKIAIOSFODNN7EXAMPLE` | 0 | 20 | 14 (`aws_access_key_id`) |
+| `AKIAIOSFODNN7EXAMPLEAAAAAAAAAAAAAAAAAAAA` | 0 | 40 | 15 (`aws_secret_access_key`) |
+
+Longest match (40) wins. `redact` emits one `[REDACTED]` covering the
+whole input.
+
+Input: `id 85121612345 end` (11-digit span at offset 3).
+
+| Match candidate | Start | Length | Pattern id |
+|---|---|---|---|
+| `85121612345` | 3 | 11 | 81 (`polish_pesel`) |
+| `85121612345` | 3 | 11 | 82 (`belgian_national_number`) |
+| `85121612345` | 3 | 11 | 83 (`norwegian_fodselsnummer`) |
+| `85121612345` | 3 | 11 | 87 (`polish_pesel_2`) |
+
+All four candidates are the same length. Tiebreak by pattern-id: index 81
+wins, so `polish_pesel` is reported. Matches today's behaviour.
+
+### Compatibility implications
+
+This **is a behaviour change** from today. Concrete consequences:
+
+- **Major version bump.** The combined-matcher PR ships as `1.0.0` (already
+  planned per `combined_matcher_plan.md`). The overlap-policy change is
+  called out prominently in the CHANGELOG.
+- **`scan` API unchanged.** Still returns `matches: [...]`. The set of
+  matches reported may differ from today (one longer match instead of
+  multiple shorter overlapping ones).
+- **Custom patterns inherit the policy.** No new flag — the policy is the
+  matcher's, applies uniformly.
+
+### Reporting all overlaps (optional)
+
+For `scan`-style introspection use cases, the underlying matcher API can
+optionally report **all** overlapping matches in input-position order, with
+the consumer (in our case the `redact`/`scan` Ruby layer) choosing what
+to do with them. Today's `scan` would just keep emitting the
+longest-wins-with-id-tiebreak selection; a future `scan_all` could expose
+the full set. Out of scope for the 1.0 matcher; design space left open.
+
+## Why a combined automaton is structurally better — the prefix-sharing win
+
+Beyond the asymptotic "O(N) one pass instead of O(N×P) for P patterns,"
+combining patterns into one automaton **shares work across patterns with
+common prefixes** (or any common subgraph after DFA minimisation).
+
+Example with three Github token patterns:
+
+```
+github_pat_fine_grained:  github_pat_[0-9a-zA-Z_]{82}
+github_classic_pat:       ghp_[0-9a-zA-Z]{36}
+github_oauth_token:       gho_[0-9a-zA-Z]{36}
+```
+
+Three separate `regexec` calls each read `g` then `h` independently — 3
+byte comparisons of `g`, 3 of `h`, total 6. The combined NFA goes:
+
+```
+start ──g──> Sx ──h──> Sy ──┬── i ──> github_pat_fine_grained branch
+                            ├── p ──> github_classic_pat branch
+                            └── o ──> github_oauth_token branch
+```
+
+The `g` and `h` bytes are inspected **once** for all three patterns at this
+position. With 88 patterns the savings compound:
+
+- Every IBAN starts with two uppercase letters → the `[A-Z][A-Z]`
+  recognition is shared across 18 patterns.
+- Stripe / SendGrid / GitLab / Github tokens etc. share initial-character
+  classes that collapse to a single transition.
+- After DFA minimisation, common *suffixes* (e.g. trailing alphanum runs of
+  fixed length) merge too.
+
+This isn't a separate optimisation we'd add — it falls out of
+NFA-merging + subset construction + Hopcroft minimisation, all standard
+Thompson-construction steps. The "we don't check the same byte twice" win
+is the structural payoff for building the combined automaton in the first
+place, not an extra trick.
 
 ## Streaming / chunk-boundary handling
 
@@ -324,8 +404,9 @@ Ruby API stays identical.
 
 ## Open questions to resolve before coding starts
 
-1. **Overlap resolution policy** — decide between policies (2) and (3) above
-   with prototype evidence against the spec suite.
+1. ~~Overlap resolution policy~~ — **DECIDED 2026-05-23** (Prep 2):
+   longest-match wins, tied lengths broken by pattern-id. See the
+   "Overlap resolution" section above.
 2. **DFA state explosion limit** — what's the largest combined automaton we
    tolerate before refusing to compile? (Practical limit, not theoretical.)
 3. **Streaming partial-match buffering** — should the library buffer
