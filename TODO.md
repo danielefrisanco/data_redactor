@@ -235,11 +235,35 @@ in below CHUNK_SIZE=64KB, only adds the bytesize-and-is_a-String check.)
 - **Option H** (use Onigmo): pragmatic stopgap if I/E are too far off.
   Brings us to roughly Ruby parity at the cost of MRI coupling.
 
-**Loose ends from this session:**
-- README perf disclosure is still pessimistic (says "4-7× slower"); could be
-  updated to "3-5× slower" with the same overall framing intact.
-- The benchmark/per_pattern.rb script wasn't re-run after B+G — would show
-  which patterns benefit most.
+**Per-pattern impact of B+G (1MB log, re-run 2026-05-23):**
+Sum of all 88 patterns: **3001 ms → 1451 ms (2.07× faster).**
+Two regimes — patterns split cleanly:
+- **Patterns with a required literal** (the `pattern_required_literal[]`
+  entries) → typically 0.5-0.7 ms each. They `strstr`-fail on most 64KB
+  chunks and skip `regexec` entirely. `hashicorp_terraform_api_token` went
+  from 125 ms to 0.6 ms — 208×. `slack_webhook_url`, `github_pat_*`,
+  `iban_*` etc. all ~0.5-1 ms.
+- **Patterns without a required literal** (NULL in the array) → still
+  expensive even after G:
+  ```
+  email                   96 ms   10 MB/s   (was 205 ms /  5 MB/s)
+  aws_secret_access_key  116 ms    9 MB/s   (was 154 ms /  7 MB/s)
+  credit_card             55 ms   18 MB/s   (was 155 ms /  6 MB/s)
+  ipv4                    49 ms   21 MB/s   (was 148 ms /  7 MB/s)
+  pure-digit IDs         ~35 ms each  ~28 MB/s
+  ```
+  These are exactly the patterns where no distinctive literal exists:
+  `email`'s `@` is too common to skip useful work; AWS secret/credit
+  card/IPv4 are alternation-heavy with no required literal.
+
+**Implication for option I/E:** the remaining 1.45 s on a 1 MB log is
+~85% spent in ~10 patterns. A combined matcher that walks the input once
+and tracks partial-match state across these patterns simultaneously would
+collapse most of this to a single linear pass. The "long tail" of 78
+prefixed patterns is essentially free already (0.6 ms each, fully skipped
+when literal absent).
+
+**Other loose ends from this session:**
 - Option G could in theory recompose two adjacent chunks if the boundary
   splits a long line; deferred until someone files a real bug for it.
 
