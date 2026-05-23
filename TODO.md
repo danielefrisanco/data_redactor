@@ -243,15 +243,57 @@ Defer until the Ruby gem has real adoption and someone explicitly asks for it. D
 
 ## Benchmarks
 
-Add a `benchmark/` directory with scripts using `benchmark-ips` and `benchmark/memory`:
+A `benchmark/` directory using `benchmark-ips` and `benchmark/memory` (both
+dev-only deps). Repo-only — not packaged in the gem.
 
-- `benchmark/throughput.rb` — MB/s on representative payloads (log line, JSON blob, 1MB log file, 10MB log file)
-- `benchmark/per_pattern.rb` — cost of each pattern in isolation, to spot the expensive ones
-- `benchmark/vs_pure_ruby.rb` — head-to-head against a pure-Ruby `gsub` loop with the same patterns, to demonstrate the C extension's value
-- `benchmark/vs_alternatives.rb` — vs. existing gems (e.g. `pii-redactor`, `personally_identifiable_information`) on the same input
-- `benchmark/scaling.rb` — runtime vs. input size (1KB → 100MB) to confirm linear scaling
+**Done (on branch `feat/benchmarks`, committed):**
+- `benchmark/support/corpus.rb` — payload builders + pure-Ruby baseline redactor
+  (reads `BUILTIN_PATTERN_SOURCES`/`BOUNDARY` live, no drift from `patterns.c`).
+- `benchmark/throughput.rb` — MB/s on log line, JSON blob, 1MB/10MB log files.
+- `benchmark/per_pattern.rb` — per-pattern scan cost over a 1MB payload.
+- `benchmark/vs_pure_ruby.rb` — C extension vs pure-Ruby `gsub`, same 88 patterns.
+- `benchmark/scaling.rb` — runtime vs input size (1KB → 50MB).
+- `benchmark/README.md` — how to run / what each script measures.
+- `BUILTIN_PATTERN_SOURCES` / `BUILTIN_PATTERN_BOUNDARY` C constants.
 
-Publish numbers in the README — the C extension is the differentiator and the current README does not show it off.
+**`vs_alternatives.rb` — skipped.** No comparable maintained Ruby gem:
+`pii-detector` (Shopify) is abandoned, `confidential_info_redactor` is NER-based
+and not comparable, `logstop` covers far fewer patterns. A head-to-head would
+mislead more than inform.
+
+**What the benchmarks found (the reason the fix below exists):**
+- `redact` runs at ~0.5 MB/s on a 1MB log; a 10MB log takes ~56s.
+- The C extension is **~7× slower than pure-Ruby `gsub`** on the same 88 patterns.
+- Cost is per-match, not per-byte: patterns that don't match run at 500–900 MB/s;
+  patterns that match heavily (`email`, `credit_card`, `ipv4`) crawl at ~5 MB/s.
+- Root cause: O(n²) tail re-scan — see the Performance section above.
+
+**Remaining benchmark work (do NOT do until the performance fix lands):**
+- [ ] Re-run all four scripts on the fixed engine and capture real numbers.
+- [ ] Add a `## Benchmarks` section to the README with the post-fix numbers
+      (throughput MB/s, vs-pure-Ruby speedup). Deliberately deferred — publishing
+      pre-fix numbers would advertise the gem losing to pure Ruby.
+- [ ] Note in the README that no other Ruby PII gem publishes benchmarks
+      (factual differentiator).
+- [ ] Add `benchmark/` to the README `## Directory structure` tree.
+- [ ] CHANGELOG `[Unreleased]` entry for the benchmark suite + the two new
+      `BUILTIN_PATTERN_*` constants. No version bump (repo tooling + internal
+      constants).
+- [x] Verify `benchmark/` is excluded from the built `.gem` — confirmed, 0
+      `benchmark/` entries in `data_redactor-0.9.0.gem`.
+- [x] Fix `benchmark/README.md`: run command is `bundle exec ruby`, not bare
+      `ruby` (bare `ruby` hits `incompatible library version` when the system
+      Ruby differs from the bundled one).
+- [ ] Reconsider `scaling.rb`'s 50MB step — under the current O(n²) engine it
+      runs for many minutes. After the fix it should be fast; if not, drop the
+      largest size or reduce the repeat count.
+
+**Follow-up (separate task, not part of the benchmark suite):**
+- [ ] CI benchmark integration — a PR job that runs the suite on the branch +
+      `main` and posts a before/after comment (e.g. `github-action-benchmark`,
+      history on `gh-pages`). Caveat: GitHub-hosted runners have 5–15%
+      run-to-run variance, so any regression gate needs a loose threshold (≥20%)
+      or must stay informational-only.
 
 ---
 
