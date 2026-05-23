@@ -188,45 +188,60 @@ Design decisions made:
 
 ## Performance: optimize and minimize allocations
 
-### ⏸️ IN PROGRESS — checkpoint 2026-05-23 evening (branch `fix/redact-performance`)
+### ✅ DONE 2026-05-23: B, G, scan-offset fixes shipped on `fix/redact-performance`
 
-**Where we are right now:**
-1. Buffer-sizing fix (commit `7a70f0a`) ✓
-2. Option B / memchr pre-filter (commit `c2f773c`) ✓ — gives 25-30% speedup
-3. Partial scan offset fix (commit `de4641e`) ✓ — fixed the *intra-pattern*
-   shift bug; the existing scan specs (single-match) all pass.
-4. Option G chunking implementation (UNCOMMITTED in `lib/data_redactor.rb`
-   and `spec/data_redactor_spec.rb`): redact-side works; scan-side ALMOST
-   works but exposes a DEEPER scan offset bug we hadn't seen.
+**Commits (newest first):**
+- `24bade5` G — chunk inputs > 64KB in Ruby wrapper, bounds glibc per-call O(N).
+- `8bf28a7` Deep scan offset fix — repl_log now in original-input coords,
+  sorted-walk translation. Fixed a pre-existing cross-pattern bug that the
+  G testing surfaced (intra-pass only entries were limited but cross-frame
+  comparison was still wrong).
+- `de4641e` Partial scan fix — intra-pattern shift exclusion (kept; superseded
+  by 8bf28a7 but doesn't conflict).
+- `c2f773c` B — `strstr` literal pre-filter, 54/88 patterns get one.
+- `7a70f0a` Buffer-sizing fix in `replace_all_matches`.
 
-**The deeper scan bug (UNRESOLVED):**
-- When patterns run sequentially and earlier patterns shrink the buffer, the
-  later patterns' `WORKING_TO_ORIG` macro compares wpositions in TWO
-  DIFFERENT reference frames: AKIA repl_log entries hold wpositions in the
-  AKIA-pass buffer (= original), while a later pattern's `_wpos` is in the
-  post-AKIA buffer. The current `<=` comparison undercounts prior
-  replacements when the boundary falls between them.
-- Concrete failure (5 lines × email & ipv4 patterns after AKIA):
-  - 4th and 5th email/ipv4 matches report `:start` off by 10 bytes
-  - because the 3rd AKIA's recorded wpos (168 in original frame) is > the
-    current email's wpos (164 in post-AKIA frame), so it's excluded, but
-    it SHOULD be included.
-- This is the underlying scan offset bug. The fix needs to either:
-  - Normalize all repl_log entries to original-position frame at log time
-    (record where in the ORIGINAL input each replacement consumed bytes),
-    then translate by walking sorted ranges. ~moderate complexity.
-  - Or, between patterns, "rewind" repl_log entries to express positions
-    in the post-current-pattern frame. Brittle.
-  - Recommendation: rewrite scan.c to track an explicit "original-range
-    redacted" list and compute working-pos arithmetically. Cleanest.
+**Measured impact (`benchmark/vs_pure_ruby.rb`):**
 
-**Resume plan:**
-1. Fix the deeper scan offset bug (record original ranges, not wpositions).
-2. Verify the chunked-scan spec passes.
-3. Commit G (the working-tree changes in `lib/data_redactor.rb` +
-   `spec/data_redactor_spec.rb`).
-4. Run full benchmarks (small + 1MB; redact and scan).
-5. Update README perf disclosure based on results.
+| Size  | Pre-fix       | After B      | After B+G    |
+|-------|---------------|--------------|--------------|
+| 168B  | 4.2× slower   | 3.0× slower  | 3.4× slower  |
+| 580B  | 6.3× slower   | 4.7× slower  | 5.0× slower  |
+| 1.3KB | 5.4× slower   | 3.9× slower  | 4.1× slower  |
+| 17KB  | 5.7× slower   | 4.2× slower  | 4.4× slower  |
+| 1MB   | 6.3× slower   | 4.7× slower  | 4.25× slower |
+| 10MB  | ~56s (cliff)  | ~32s         | **~15s**     |
+
+(Small-string post-G numbers within noise of post-B — chunking doesn't kick
+in below CHUNK_SIZE=64KB, only adds the bytesize-and-is_a-String check.)
+
+**What B+G actually achieved:**
+- **B: ~25-30% faster across the board.** Real, lasting win. Skipping
+  patterns with absent literals avoids a chunk of glibc's per-call O(N)
+  setup × 80-ish patterns per call.
+- **G: linear scaling for large inputs.** 10MB went from "cliffs to 56s"
+  to "~15s, MB/s flat across 1-10MB". Doesn't speed up the per-byte
+  constant — chunk size from 4KB to 256KB barely changes 1MB timing
+  because the per-pattern × per-match work dominates.
+- **Honest conclusion: we did NOT beat Ruby.** Still 3-5× slower at every
+  size. Onigmo's built-in Boyer-Moore literal pre-filter (option H finding)
+  is structurally faster than what we can manually replicate with `strstr`.
+
+**What's still needed to actually beat Ruby:**
+- **Option I** (user idea, 2026-05-23): single-pass, position-by-position
+  match. Naive form still O(N×P), but lets us skip whole matched tokens.
+- **Option E** (combined automaton): the real answer. O(N) one pass. See
+  [docs/standalone_matcher_design.md](docs/standalone_matcher_design.md).
+- **Option H** (use Onigmo): pragmatic stopgap if I/E are too far off.
+  Brings us to roughly Ruby parity at the cost of MRI coupling.
+
+**Loose ends from this session:**
+- README perf disclosure is still pessimistic (says "4-7× slower"); could be
+  updated to "3-5× slower" with the same overall framing intact.
+- The benchmark/per_pattern.rb script wasn't re-run after B+G — would show
+  which patterns benefit most.
+- Option G could in theory recompose two adjacent chunks if the boundary
+  splits a long line; deferred until someone files a real bug for it.
 
 ### Earlier checkpoint 2026-05-22 (branch `fix/redact-performance`)
 
