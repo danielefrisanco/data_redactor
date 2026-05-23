@@ -365,6 +365,27 @@ N (G) when N is already small.
   with the Elixir port, testable in isolation, big enough that mixing it into
   `ext/` would dwarf the gem). Multi-week project, deferred. Land B and/or G as
   the near-term wins.
+- I. **Streaming position-by-position match (user idea, 2026-05-23).** Walk the
+  input once, left to right. At each position, try patterns sequentially until
+  one matches. If a pattern matches → emit `[REDACTED]`, advance past the
+  matched span (no later pattern can re-match within it, naturally enforcing
+  specific→generic priority by pattern order). If no pattern matches → advance
+  one byte, retry. **Conceptually exactly what option E does** — but the naive
+  form still costs O(N × P) `regexec` calls (P = 88), same complexity class as
+  today. What turns it into true O(N) is a *shared automaton* over all pattern
+  prefixes so each position needs ONE state transition, not P probes — that's
+  the combined-matcher data structure in [docs/standalone_matcher_design.md](docs/standalone_matcher_design.md).
+  - **Useful as an intermediate step toward E:** the algorithmic skeleton
+    (single pass, position-by-position, first-match-wins, skip past matches)
+    is exactly what E uses. The combined automaton just replaces the inner
+    "try P patterns" loop with a single DFA lookup.
+  - **Might already win as a quick prototype** even in naive form: when
+    matches are common, each match skips a whole token (~20-40 bytes), so
+    average cost per byte = P / token_length, often << P. Worth measuring
+    before E if we want a partial win sooner.
+  - Cleanly solves the chunking boundary problem (option G) — no buffer
+    between patterns to chunk in the first place.
+
 - H. **Use Onigmo (Ruby's own regex engine) instead of glibc `regex.h`.**
   Available "for free" via Ruby's C API (`onig_search`, `rb_reg_search`); no new
   dependency — Onigmo ships with MRI Ruby. Gets Onigmo's Boyer-Moore literal
