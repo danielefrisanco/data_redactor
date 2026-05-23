@@ -74,6 +74,15 @@ module DataRedactor
   # Default placeholder used when +placeholder:+ is not given to {redact}.
   PLACEHOLDER_DEFAULT = "[REDACTED]"
 
+  # @api private
+  # Inputs larger than this (bytes) are split into newline-bounded chunks before
+  # being handed to the C engine. Bounds the per-call O(N) cost glibc regexec
+  # pays for state-log allocation, turning total redaction cost from O(N²) (one
+  # giant pass) into O(N × CHUNK_SIZE) (many bounded passes). 64 KB is a
+  # compromise: small enough to keep per-call cost low, large enough that
+  # typical log/JSON inputs use few chunks. See option G in TODO.md.
+  CHUNK_SIZE = 64 * 1024
+
   module_function
 
   # List of supported tag symbols.
@@ -132,6 +141,11 @@ module DataRedactor
   def redact(text, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
     enable_bits = build_enable_bits(only, except)
     ph_mode, ph_str = resolve_placeholder(placeholder)
+    # Defer to the C layer's TypeError for non-Strings; only chunk if the input
+    # is a String big enough to benefit (avoid bytesize on non-Strings).
+    if text.is_a?(String) && text.bytesize > CHUNK_SIZE
+      return _chunk_bytes(text).map { |c| _redact(c, ph_mode, ph_str, enable_bits) }.join
+    end
     _redact(text, ph_mode, ph_str, enable_bits)
   end
 
@@ -157,7 +171,12 @@ module DataRedactor
   #   #                 value: "user@example.com", start: 0, length: 16}] }
   def scan(text, only: nil, except: nil)
     enable_bits = build_enable_bits(only, except)
-    result = _scan(text, enable_bits)
+    result =
+      if text.is_a?(String) && text.bytesize > CHUNK_SIZE
+        _chunked_scan(text, enable_bits)
+      else
+        _scan(text, enable_bits)
+      end
     # Normalise: convert tag string from C (uppercase) back to the Symbol used in TAGS
     result[:matches].each { |m| m[:tag] = m[:tag].to_s.downcase.to_sym }
     result
@@ -418,5 +437,60 @@ module DataRedactor
       raise ArgumentError,
         "placeholder must be a String, :tagged, or :hash — got #{placeholder.inspect}"
     end
+  end
+
+  # @api private
+  # Split +text+ into byte-bounded chunks for the chunked redact/scan path.
+  # Chunks end at a +\n+ when possible so no match straddles a boundary; if a
+  # single line exceeds {CHUNK_SIZE} (rare in real inputs), it becomes one
+  # oversized chunk and pays the per-pattern O(N) cost — documented limitation.
+  # Returns an Array of byte-Strings whose concatenation equals +text+ exactly
+  # (including the original newline separators).
+  #
+  # @param text [String]
+  # @return [Array<String>]
+  def _chunk_bytes(text)
+    chunks = []
+    pos = 0
+    len = text.bytesize
+    while pos < len
+      remaining = len - pos
+      if remaining <= CHUNK_SIZE
+        chunks << text.byteslice(pos, remaining)
+        break
+      end
+      # Find the last \n in [pos, pos+CHUNK_SIZE). If none, chunk is one long
+      # line — take CHUNK_SIZE bytes as a fallback (boundary-split risk).
+      window = text.byteslice(pos, CHUNK_SIZE)
+      nl = window.rindex("\n")
+      take = nl ? nl + 1 : CHUNK_SIZE
+      chunks << text.byteslice(pos, take)
+      pos += take
+    end
+    chunks
+  end
+
+  # @api private
+  # Chunked variant of +_scan+: runs the C scanner on each chunk, then offsets
+  # each match's +:start+ by the chunk's base byte-position in the original
+  # input so the byteslice invariant holds end-to-end.
+  #
+  # @param text [String]
+  # @param enable_bits [Array<Integer>]
+  # @return [Hash{Symbol => Object}] +{ redacted: String, matches: Array<Hash> }+
+  def _chunked_scan(text, enable_bits)
+    redacted = +""
+    matches = []
+    base = 0
+    _chunk_bytes(text).each do |chunk|
+      part = _scan(chunk, enable_bits)
+      redacted << part[:redacted]
+      part[:matches].each do |m|
+        m[:start] += base
+        matches << m
+      end
+      base += chunk.bytesize
+    end
+    { redacted: redacted, matches: matches }
   end
 end

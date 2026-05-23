@@ -1244,4 +1244,40 @@ RSpec.describe DataRedactor do
       expect { DataRedactor.name_pattern("Mario", "Rossi", middle: "") }.to raise_error(ArgumentError)
     end
   end
+
+  # Inputs larger than DataRedactor::CHUNK_SIZE take a different Ruby code path
+  # that splits the input on newlines and runs the C engine per chunk. The
+  # observable behaviour must be identical to the single-shot path.
+  describe "chunked path (inputs > CHUNK_SIZE)" do
+    let(:line) { "user mario@example.com ip 192.168.0.1 key AKIAIOSFODNN7EXAMPLE\n" }
+    # Repeat enough times to comfortably exceed CHUNK_SIZE (64 KB).
+    let(:big_text) { line * 2000 }  # ~140 KB
+
+    it "produces output identical to running the C engine on the whole input at once" do
+      chunked   = DataRedactor.redact(big_text)
+      direct    = DataRedactor.send(:_redact, big_text,
+                                     DataRedactor::PH_MODE_PLAIN, "[REDACTED]",
+                                     DataRedactor.send(:build_enable_bits, nil, nil))
+      expect(chunked).to eq(direct)
+    end
+
+    it "scan preserves the byteslice invariant across chunk boundaries" do
+      result = DataRedactor.scan(big_text)
+      expect(result[:matches]).not_to be_empty
+      result[:matches].each do |m|
+        expect(big_text.byteslice(m[:start], m[:length])).to eq(m[:value]),
+          "#{m[:name]} @ #{m[:start]}: byteslice mismatch across chunks"
+      end
+    end
+
+    it "redacts a match that sits right at a chunk boundary (last line of chunk)" do
+      # Construct an input where a match ends exactly at byte CHUNK_SIZE-1, so
+      # the newline that terminates it falls on the boundary.
+      cs = DataRedactor::CHUNK_SIZE
+      filler = "x" * (cs - line.bytesize)
+      text = filler + line + line  # match on the line straddling boundary
+      result = DataRedactor.redact(text)
+      expect(result.scan("[REDACTED]").size).to be >= 6  # 3 matches × 2 lines
+    end
+  end
 end
