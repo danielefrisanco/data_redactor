@@ -965,6 +965,19 @@ RSpec.describe DataRedactor do
       end
     end
 
+    it "returns correct positions for repeated matches of the same pattern" do
+      # Three AKIAs across three lines exercises intra-pattern repl_log
+      # accumulation; before the fix the 2nd and 3rd reported start offsets
+      # were off by +10 per prior match (the placeholder length).
+      line = "user mario@example.com ip 192.168.0.1 key AKIAIOSFODNN7EXAMPLE\n"
+      text = line * 3
+      result = DataRedactor.scan(text)
+      result[:matches].each do |m|
+        expect(text.byteslice(m[:start], m[:length])).to eq(m[:value]),
+          "#{m[:name]} @ #{m[:start]}: byteslice mismatch (regression of multi-match offset bug)"
+      end
+    end
+
     it "returns no matches for text with nothing sensitive" do
       result = DataRedactor.scan("hello world")
       expect(result[:matches]).to be_empty

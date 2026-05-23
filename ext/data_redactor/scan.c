@@ -56,9 +56,16 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
         repl_count++;                                                         \
     } while (0)
 
-    #define WORKING_TO_ORIG(_wpos) ({                                         \
+    /* Translate a working-buffer position back to the original-input position
+     * using only replacements applied by *prior patterns*. Replacements made
+     * by the current pattern's pass are NOT yet visible in the buffer (the
+     * regexec loop runs on the unmodified-for-this-pattern buffer), so they
+     * must not enter the shift sum — that was the historical bug. The caller
+     * passes _entries_limit = the repl_count snapshot taken before the
+     * current pattern's pass; only entries [0, _entries_limit) are summed. */
+    #define WORKING_TO_ORIG(_wpos, _entries_limit) ({                         \
         long _shift = 0;                                                      \
-        for (int _ri = 0; _ri < repl_count; _ri++) {                         \
+        for (int _ri = 0; _ri < (_entries_limit); _ri++) {                   \
             if (repl_log[_ri].wpos <= (_wpos))                                \
                 _shift += 10 - repl_log[_ri].orig_len;                       \
         }                                                                     \
@@ -66,6 +73,7 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
     })
 
     #define COLLECT_AND_REPLACE(pat, use_bnd, tag_bit, pat_name) do {        \
+        int _entries_at_start = repl_count;                                   \
         const char *_cur = working;                                           \
         regmatch_t _m[4];                                                     \
         while (regexec((pat), _cur, 4, _m, 0) == 0) {                        \
@@ -80,7 +88,7 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
             }                                                                 \
             size_t _vlen = (size_t)(_ceo - _cso);                             \
             long _wpos   = (long)(_cur - working) + (long)_cso;              \
-            long _orig   = WORKING_TO_ORIG(_wpos);                            \
+            long _orig   = WORKING_TO_ORIG(_wpos, _entries_at_start);         \
             VALUE _match = rb_hash_new();                                     \
             rb_hash_aset(_match, ID2SYM(rb_intern("tag")),                    \
                          ID2SYM(rb_intern(tag_name_for_bit(tag_bit))));       \
