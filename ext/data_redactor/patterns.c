@@ -1,5 +1,6 @@
 #include "patterns.h"
 #include "tags.h"
+#include <stddef.h>  /* NULL for pattern_required_literal entries */
 
 regex_t compiled_patterns[NUM_PATTERNS];
 
@@ -269,6 +270,124 @@ const char *pattern_names[NUM_PATTERNS] = {
     "dutch_bsn",                     /* 85 */
     "austrian_abgabenkontonummer",   /* 86 */
     "polish_pesel_2"                 /* 87 */
+};
+
+/*
+ * Required literal substrings for the pre-filter. See pattern_required_literal
+ * in patterns.h for the contract. Conservative: only literals provably required
+ * by the regex source are listed; the rest are NULL (pattern runs always).
+ *
+ * Boundary-wrapped patterns (boundary_wrapped[i] == 1) must consider that the
+ * compiled regex is wrapped with (^|[^0-9A-Za-z])(...)([^0-9A-Za-z]|$), so the
+ * required literal of the core pattern is still the required literal of the
+ * wrapped form — the wrapper only adds boundary-char classes, no literals.
+ *
+ * The 2-letter IBAN country prefixes are case-sensitive in the regex source
+ * (e.g. "DE", "IT"), so the memmem pre-filter is case-sensitive too. This is
+ * consistent with today's matching behaviour.
+ */
+const char *pattern_required_literal[NUM_PATTERNS] = {
+    /* ---- Tier 1: Full URLs ---- */
+    "amazonaws.com",  /*  0: AWS S3 presigned URL */
+    "webhook.office.com",  /*  1: Microsoft Teams webhook */
+    "hooks.slack.com",     /*  2: Slack webhook URL */
+    "mongodb",        /*  3: MongoDB connection string — "mongodb" or "mongodb+srv" both contain it */
+    "ingest.sentry.io",    /*  4: Sentry DSN */
+    "://",            /*  5: URI with embedded password — scheme://...:...@... */
+
+    /* ---- Tier 2: Long prefixed tokens ---- */
+    "github_pat_",    /*  6 */
+    "eyJ",            /*  7: JWT — all three segments start "eyJ", at least the first must */
+    "eyJrIjoi",       /*  8: Grafana API token */
+    "ssh-",           /*  9: SSH public key */
+    NULL,             /* 10: Bearer token — "[Bb]earer " has two forms, no single literal. Could memmem twice but skip for now. */
+    "sk-ant-api",     /* 11: Anthropic API key */
+    "sk-proj-",       /* 12: OpenAI project API key */
+    "AIza",           /* 13: Google API key */
+    NULL,             /* 14: AWS access key ID — many prefix alternations (AKIA|ABIA|...); skip pre-filter */
+    NULL,             /* 15: AWS secret access key — pure base64, no literal */
+    "SG.",            /* 16: SendGrid API key */
+    "amzn.mws.",      /* 17: Amazon MWS auth token */
+    NULL,             /* 18: LaunchDarkly — "api-" or "sdk-"; no single literal */
+    "ghp_",           /* 19: GitHub classic PAT */
+    "gho_",           /* 20: GitHub OAuth token */
+    "sk_live_",       /* 21: Stripe secret key */
+    "pk_",            /* 22: ClickUp API key */
+    "glpat-",         /* 23: GitLab PAT */
+    "dop_v1_",        /* 24: DigitalOcean PAT */
+    "dapi",           /* 25: Databricks API token */
+    "SCW",            /* 26: Scaleway access key */
+    "-----BEGIN ",    /* 27: PEM private key header */
+    "-----BEGIN PGP PRIVATE KEY BLOCK-----",  /* 28 — full literal, exact match */
+    "hvs.",           /* 29: HashiCorp Vault service token */
+    "hvb.",           /* 30: HashiCorp Vault batch token */
+    ".atlasv1.",      /* 31: HashiCorp Terraform Cloud API token */
+
+    /* ---- Tier 3: IBANs ---- */
+    "HU",             /* 32 */
+    "PL",             /* 33 */
+    "FR",             /* 34 */
+    "IT",             /* 35 */
+    "PT",             /* 36 */
+    "ES",             /* 37 */
+    "CZ",             /* 38 */
+    "RO",             /* 39 */
+    "SE",             /* 40 */
+    "DE",             /* 41 */
+    "IE",             /* 42 */
+    "CH",             /* 43 */
+    "AT",             /* 44 */
+    "NL",             /* 45 */
+    "DK",             /* 46 */
+    "FI",             /* 47 */
+    "BE",             /* 48 */
+    "NO",             /* 49 */
+
+    /* ---- Tier 4: Structured formats ---- */
+    "@",              /* 50: email — '@' is rare in typical text, great filter */
+    NULL,             /* 51: phone E.164 — '+' is too common to filter usefully (URLs, code) */
+    NULL,             /* 52: Brazilian CNPJ — pure digits + separators, no useful literal */
+    NULL,             /* 53: Brazilian CPF — same */
+    NULL,             /* 54: UUID v4 — '-' too common to filter usefully */
+    NULL,             /* 55: IPv4 — digits + '.', no useful literal */
+    NULL,             /* 56: credit card — pure digit alternations */
+    NULL,             /* 57: Indian Aadhaar — digits + '-' or ' ' too common */
+
+    /* ---- Tier 5: Letter-anchored ---- */
+    NULL,             /* 58: Mexican CURP — letter classes only */
+    NULL,             /* 59: Italian CF omocodia — letter classes only */
+    NULL,             /* 60: Italian CF basic — letter classes only */
+    NULL,             /* 61: UK NIN — letter classes only */
+    NULL,             /* 62: Spanish NIE — [XYZ] + digits + letter */
+    NULL,             /* 63: passport with letter prefix — too generic */
+
+    /* ---- Tier 6: Boundary-wrapped structured ---- */
+    NULL,             /* 64: Korean RRN — digits + '-' */
+    "756.",           /* 65: Swiss AHV — always starts with "756." */
+    NULL,             /* 66: Finnish HETU — digits + [-+A] */
+    NULL,             /* 67: Swedish personnummer — digits + [-+] */
+    NULL,             /* 68: Danish CPR — digits + '-' */
+    NULL,             /* 69: Czech rodne cislo — digits + optional '/' */
+    NULL,             /* 70: US SSN — digits + '-' */
+    NULL,             /* 71: US ITIN — starts "9", but '9' is too common */
+    NULL,             /* 72: Canadian SIN — digits + '-' */
+    NULL,             /* 73: Australian TFN — digits + '-' or ' ' */
+    NULL,             /* 74: Indian PAN — letters + digits, no required literal */
+    NULL,             /* 75: Spanish DNI — 8 digits + letter */
+    NULL,             /* 76: Hungarian Tax ID — starts "8", too common */
+
+    /* ---- Tier 7: Boundary-wrapped pure digits ---- */
+    NULL,             /* 77: French NIR — pure digits */
+    NULL,             /* 78: South African ID — pure digits */
+    NULL,             /* 79: Romanian CNP — pure digits */
+    NULL,             /* 80: Japanese My Number — pure digits */
+    NULL,             /* 81: Polish PESEL — pure digits */
+    NULL,             /* 82: Belgian National Number — pure digits */
+    NULL,             /* 83: Norwegian Fødselsnummer — pure digits */
+    NULL,             /* 84: passport 9 digits — pure digits */
+    NULL,             /* 85: Dutch BSN — pure digits */
+    NULL,             /* 86: Austrian Abgabenkontonummer — pure digits */
+    NULL              /* 87: Polish PESEL duplicate — pure digits */
 };
 
 /*

@@ -105,6 +105,9 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
 
     for (int i = 0; i < NUM_PATTERNS; i++) {
         if (!scan_enable_bit(rb_enable_bits, i)) continue;
+        /* Same literal pre-filter as redact.c — see commentary there. */
+        const char *lit = pattern_required_literal[i];
+        if (lit && !strstr(working, lit)) continue;
         COLLECT_AND_REPLACE(&compiled_patterns[i], boundary_wrapped[i],
                             pattern_tags[i], pattern_names[i]);
     }

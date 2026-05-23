@@ -123,6 +123,15 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
 
     for (int i = 0; i < NUM_PATTERNS; i++) {
         if (!enable_bit(rb_enable_bits, i)) continue;
+        /* Literal pre-filter: if the pattern has a required substring and it's
+         * not in the current buffer, skip regexec entirely. Saves the per-call
+         * O(N) state-log allocation that glibc regex makes before any matching.
+         * "[REDACTED]" introduces none of our literals, so checking the
+         * working buffer (rather than the original input) is correct across
+         * iterations. */
+        const char *lit = pattern_required_literal[i];
+        if (lit && !strstr(working, lit)) continue;
+
         ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
                      ? ph_str_plain
                      : tag_name_for_bit(pattern_tags[i]);
