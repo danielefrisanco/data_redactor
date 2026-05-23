@@ -188,7 +188,47 @@ Design decisions made:
 
 ## Performance: optimize and minimize allocations
 
-### ⏸️ IN PROGRESS — checkpoint 2026-05-22 (branch `fix/redact-performance`)
+### ⏸️ IN PROGRESS — checkpoint 2026-05-23 evening (branch `fix/redact-performance`)
+
+**Where we are right now:**
+1. Buffer-sizing fix (commit `7a70f0a`) ✓
+2. Option B / memchr pre-filter (commit `c2f773c`) ✓ — gives 25-30% speedup
+3. Partial scan offset fix (commit `de4641e`) ✓ — fixed the *intra-pattern*
+   shift bug; the existing scan specs (single-match) all pass.
+4. Option G chunking implementation (UNCOMMITTED in `lib/data_redactor.rb`
+   and `spec/data_redactor_spec.rb`): redact-side works; scan-side ALMOST
+   works but exposes a DEEPER scan offset bug we hadn't seen.
+
+**The deeper scan bug (UNRESOLVED):**
+- When patterns run sequentially and earlier patterns shrink the buffer, the
+  later patterns' `WORKING_TO_ORIG` macro compares wpositions in TWO
+  DIFFERENT reference frames: AKIA repl_log entries hold wpositions in the
+  AKIA-pass buffer (= original), while a later pattern's `_wpos` is in the
+  post-AKIA buffer. The current `<=` comparison undercounts prior
+  replacements when the boundary falls between them.
+- Concrete failure (5 lines × email & ipv4 patterns after AKIA):
+  - 4th and 5th email/ipv4 matches report `:start` off by 10 bytes
+  - because the 3rd AKIA's recorded wpos (168 in original frame) is > the
+    current email's wpos (164 in post-AKIA frame), so it's excluded, but
+    it SHOULD be included.
+- This is the underlying scan offset bug. The fix needs to either:
+  - Normalize all repl_log entries to original-position frame at log time
+    (record where in the ORIGINAL input each replacement consumed bytes),
+    then translate by walking sorted ranges. ~moderate complexity.
+  - Or, between patterns, "rewind" repl_log entries to express positions
+    in the post-current-pattern frame. Brittle.
+  - Recommendation: rewrite scan.c to track an explicit "original-range
+    redacted" list and compute working-pos arithmetically. Cleanest.
+
+**Resume plan:**
+1. Fix the deeper scan offset bug (record original ranges, not wpositions).
+2. Verify the chunked-scan spec passes.
+3. Commit G (the working-tree changes in `lib/data_redactor.rb` +
+   `spec/data_redactor_spec.rb`).
+4. Run full benchmarks (small + 1MB; redact and scan).
+5. Update README perf disclosure based on results.
+
+### Earlier checkpoint 2026-05-22 (branch `fix/redact-performance`)
 
 Resume here. Branch `fix/redact-performance` is off `feat/benchmarks`.
 Commits on this branch so far:
