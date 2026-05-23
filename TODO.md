@@ -461,6 +461,36 @@ N (G) when N is already small.
   Conclusion: no portable, multi-pattern, regex-subset C library exists — which
   is exactly why E warrants the spinoff.
 
+- J. **Convert the C extension to C++ (open question, raised 2026-05-23).**
+  Worth considering before/during E since the matcher is the biggest new C
+  surface area we'd ever write. Trade-offs to evaluate:
+  - **Pro:** standard library (`std::vector`, `std::unique_ptr`, RAII)
+    eliminates a lot of the manual `malloc`/`free`/`realloc` discipline
+    that's already caused subtle bugs this session (the scan offset bug,
+    the buffer-sizing bug). For NFA/DFA construction specifically, having
+    `std::set` for state-set comparisons and `std::vector` for adjacency
+    lists is a real ergonomic win.
+  - **Pro:** RE2 is C++ for exactly this reason; their codebase is
+    significantly cleaner than equivalent C implementations like glibc's
+    regex.
+  - **Pro:** Speed parity with C — `-O2` C++ produces equivalent code for
+    the kinds of constructs an NFA/DFA needs. No measurable runtime cost.
+  - **Con:** Ruby C extensions compile their C with `mkmf` and Ruby's
+    default CFLAGS; switching to C++ means `mkmf` C++ support
+    (`have_library`, separate `.cpp` extension, sometimes a manual
+    `Makefile` patch). Cross-platform precompilation via `rake-compiler-dock`
+    has worked for C extensions for years — needs verification for C++.
+  - **Con:** Ruby's C API uses `extern "C"` and pre-C++11 conventions in
+    headers; bridging into modern C++ is fine but requires care at the
+    boundary (no Ruby `VALUE` flowing into C++ template machinery).
+  - **Con:** Build dependencies grow — every install platform needs a C++
+    compiler, not just C. Precompiled gems make this invisible to most
+    users but raises the bar for source installs.
+  - **Decision deferred** to when the Phase 2 matcher implementation
+    starts (per `docs/combined_matcher_plan.md`). If we decide yes, the
+    conversion happens *at the start* of Phase 2 so the matcher is C++
+    from day one; converting later means rewriting.
+
 **Will the fix beat the pure-Ruby benchmark? (assessment 2026-05-23, revised)**
 - Earlier-in-the-day assessment (B comfortably beats Ruby) was WRONG. After
   reading Onigmo's source we found Ruby's engine already does the equivalent of
