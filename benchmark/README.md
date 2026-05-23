@@ -25,6 +25,7 @@ one the `.so` was compiled for and fail with `incompatible library version`.
 | `vs_pure_ruby.rb`  | The C extension vs a pure-Ruby `gsub` loop running the **same 88 patterns**. Prints the speedup factor — the C-extension value proposition. |
 | `scaling.rb`       | Runtime vs input size (1 KB → 50 MB). MB/s should stay roughly flat, confirming linear scaling. |
 | `per_pattern.rb`   | Per-pattern scan cost over a 1 MB payload, sorted slowest-first. Surfaces expensive patterns to target in optimization work. |
+| `matcher_isolated.rb` | Matcher-only cost (just "find all matches", no placeholder substitution): `DataRedactor.scan` vs the pure-Ruby per-pattern scan. Used during combined-matcher development to isolate matcher cost from surrounding pipeline work. |
 
 ## How the comparison stays honest
 
