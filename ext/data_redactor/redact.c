@@ -29,7 +29,13 @@ char *wrap_boundary(const char *core) {
 char *replace_all_matches(regex_t *pattern, const char *input,
                           int use_boundary, const placeholder_t *ph) {
     size_t ph_max   = max_placeholder_len(ph);
-    size_t out_cap  = strlen(input) * 2 + 512;
+    size_t in_len   = strlen(input);
+
+    /* Worst case per input byte: it is either copied verbatim (1 byte out) or
+     * it is one byte of a match replaced by the longest placeholder (ph_max
+     * bytes out). A single byte is never both, but bounding each byte by
+     * (1 + ph_max) is safe and sized once — no per-match strlen, no realloc. */
+    size_t out_cap  = in_len * (ph_max + 1) + 1;
     char *output = (char *)malloc(out_cap);
     if (!output) return NULL;
 
@@ -63,14 +69,6 @@ char *replace_all_matches(regex_t *pattern, const char *input,
 
         size_t ph_len = write_placeholder(ph_buf, ph, cursor + core_so, core_len);
 
-        size_t needed = out_len + prefix_len + ph_len + suffix_len + strlen(cursor + full_eo) + 1;
-        if (needed > out_cap) {
-            out_cap = needed * 2;
-            char *tmp = (char *)realloc(output, out_cap);
-            if (!tmp) { free(output); free(ph_buf); return NULL; }
-            output = tmp;
-        }
-
         memcpy(output + out_len, cursor, prefix_len);
         out_len += prefix_len;
 
@@ -92,13 +90,6 @@ char *replace_all_matches(regex_t *pattern, const char *input,
     free(ph_buf);
 
     size_t tail_len = strlen(cursor);
-    size_t needed = out_len + tail_len + 1;
-    if (needed > out_cap) {
-        out_cap = needed;
-        char *tmp = (char *)realloc(output, out_cap);
-        if (!tmp) { free(output); return NULL; }
-        output = tmp;
-    }
     memcpy(output + out_len, cursor, tail_len);
     out_len += tail_len;
     output[out_len] = '\0';
@@ -132,6 +123,15 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
 
     for (int i = 0; i < NUM_PATTERNS; i++) {
         if (!enable_bit(rb_enable_bits, i)) continue;
+        /* Literal pre-filter: if the pattern has a required substring and it's
+         * not in the current buffer, skip regexec entirely. Saves the per-call
+         * O(N) state-log allocation that glibc regex makes before any matching.
+         * "[REDACTED]" introduces none of our literals, so checking the
+         * working buffer (rather than the original input) is correct across
+         * iterations. */
+        const char *lit = pattern_required_literal[i];
+        if (lit && !strstr(working, lit)) continue;
+
         ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
                      ? ph_str_plain
                      : tag_name_for_bit(pattern_tags[i]);
