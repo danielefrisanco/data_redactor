@@ -8,17 +8,37 @@
 #include <stdlib.h>
 
 /*
- * To map working-buffer positions back to original-string positions we
- * maintain a log of every replacement already applied. Each entry records
- * where in the *working* buffer the replacement started (after all prior
- * replacements) and how many bytes were removed (orig_len) vs. inserted
- * (always 10, the length of "[REDACTED]").
+ * Map working-buffer positions back to original-input positions.
  *
- * For a new match at working position W:
- *   cumulative_shift_before_W = sum of (10 - orig_len) for all prior
- *                               replacements whose working_pos <= W
- *   original_pos = W - cumulative_shift_before_W
+ * Each repl_log entry records a redacted ORIGINAL-INPUT range
+ * {orig_start, orig_len}. Storing ranges in original coordinates (rather
+ * than per-pattern working-buffer positions) is essential — across pattern
+ * passes the working buffer keeps changing, so wpos values logged in
+ * different passes refer to different reference frames and cannot be
+ * compared directly. Original coordinates ARE the common frame.
+ *
+ * To translate a working position W in the current pattern's pass:
+ *   Sort the prior replacements by orig_start, then walk them maintaining
+ *   running (cumulative_orig, cumulative_working). Each replacement
+ *   contributes (orig_start - prev_orig_end) verbatim bytes (same length
+ *   in both frames) then 10 working bytes that correspond to orig_len
+ *   original bytes. W lands either in a verbatim segment (orig position
+ *   recovered by simple offset) or in the trailing segment after all
+ *   replacements (orig = cumulative_orig + W - cumulative_working).
+ *
+ * Within ONE pattern's pass, repl_log entries get pushed in
+ * working-buffer-order (left to right), which is also original-order for
+ * that pass — so intra-pass the new entries are monotonic. ACROSS passes
+ * they interleave, so we sort once per pass start.
  */
+typedef struct { long orig_start; long orig_len; } repl_t;
+
+static int repl_cmp_orig_start(const void *a, const void *b) {
+    long sa = ((const repl_t *)a)->orig_start;
+    long sb = ((const repl_t *)b)->orig_start;
+    return (sa > sb) - (sa < sb);
+}
+
 /* Look up the i-th entry of the enable_bits Array. Out-of-bounds → 0 (skip). */
 static inline int scan_enable_bit(VALUE rb_enable_bits, long i) {
     if (i < 0 || i >= RARRAY_LEN(rb_enable_bits)) return 0;
@@ -39,40 +59,54 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
 
     VALUE matches_arr = rb_ary_new();
 
-    typedef struct { long wpos; long orig_len; } repl_t;
     repl_t *repl_log = NULL;
     int     repl_count = 0;
     int     repl_cap   = 0;
 
-    #define REPL_LOG_PUSH(_wpos, _olen) do {                                  \
+    /* Push a new replacement (orig_start, orig_len) onto repl_log. Append-only;
+     * sorting happens once at the start of each pattern's pass. */
+    #define REPL_LOG_PUSH(_orig_start, _olen) do {                            \
         if (repl_count >= repl_cap) {                                         \
             int _nc = repl_cap == 0 ? 16 : repl_cap * 2;                     \
             repl_t *_t = (repl_t *)realloc(repl_log, sizeof(repl_t) * _nc);  \
             if (!_t) { free(repl_log); free(working); rb_raise(rb_eNoMemError, "repl_log"); } \
             repl_log = _t; repl_cap = _nc;                                    \
         }                                                                     \
-        repl_log[repl_count].wpos     = (_wpos);                              \
-        repl_log[repl_count].orig_len = (_olen);                              \
+        repl_log[repl_count].orig_start = (_orig_start);                      \
+        repl_log[repl_count].orig_len   = (_olen);                            \
         repl_count++;                                                         \
     } while (0)
 
-    /* Translate a working-buffer position back to the original-input position
-     * using only replacements applied by *prior patterns*. Replacements made
-     * by the current pattern's pass are NOT yet visible in the buffer (the
-     * regexec loop runs on the unmodified-for-this-pattern buffer), so they
-     * must not enter the shift sum — that was the historical bug. The caller
-     * passes _entries_limit = the repl_count snapshot taken before the
-     * current pattern's pass; only entries [0, _entries_limit) are summed. */
+    /* Translate a current-pattern working-buffer position W → original-input
+     * position. Caller guarantees repl_log[0.._entries_limit) is sorted by
+     * orig_start (we sort at pass start). Walks the sorted prior replacements
+     * maintaining running (cumulative_orig, cumulative_working); W lands in
+     * either a verbatim segment between/before replacements or the trailing
+     * segment after all of them. */
     #define WORKING_TO_ORIG(_wpos, _entries_limit) ({                         \
-        long _shift = 0;                                                      \
+        long _cum_orig = 0;                                                   \
+        long _cum_work = 0;                                                   \
+        long _result   = -1;                                                  \
         for (int _ri = 0; _ri < (_entries_limit); _ri++) {                   \
-            if (repl_log[_ri].wpos <= (_wpos))                                \
-                _shift += 10 - repl_log[_ri].orig_len;                       \
+            long _verbatim = repl_log[_ri].orig_start - _cum_orig;            \
+            if ((_wpos) < _cum_work + _verbatim) {                            \
+                _result = _cum_orig + ((_wpos) - _cum_work);                  \
+                break;                                                        \
+            }                                                                 \
+            _cum_orig += _verbatim + repl_log[_ri].orig_len;                  \
+            _cum_work += _verbatim + 10; /* "[REDACTED]" */                   \
         }                                                                     \
-        (_wpos) - _shift;                                                     \
+        if (_result < 0) _result = _cum_orig + ((_wpos) - _cum_work);         \
+        _result;                                                              \
     })
 
     #define COLLECT_AND_REPLACE(pat, use_bnd, tag_bit, pat_name) do {        \
+        /* Sort prior-pattern entries by orig_start so WORKING_TO_ORIG can    \
+         * walk them in original-position order. Within one pass entries     \
+         * arrive sorted (regexec walks left to right) but ACROSS passes     \
+         * they interleave. */                                                \
+        if (repl_count > 1) qsort(repl_log, repl_count, sizeof(repl_t),      \
+                                  repl_cmp_orig_start);                       \
         int _entries_at_start = repl_count;                                   \
         const char *_cur = working;                                           \
         regmatch_t _m[4];                                                     \
@@ -101,7 +135,7 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
             rb_hash_aset(_match, ID2SYM(rb_intern("length")),                \
                          LONG2NUM((long)_vlen));                              \
             rb_ary_push(matches_arr, _match);                                 \
-            REPL_LOG_PUSH(_wpos, (long)_vlen);                                \
+            REPL_LOG_PUSH(_orig, (long)_vlen);                                \
             if (_feo == _fso) { if (*_cur) _cur++; else break; }             \
             else _cur += _feo;                                                \
         }                                                                     \
