@@ -212,6 +212,17 @@ merged or PR'd. The benchmark scripts used below live there.
 - So Defect 1 was real but NOT the dominant cost. The TODO's old assumption
   ("allocation is almost certainly the bottleneck") is WRONG — see below.
 
+**Why Onigmo (Ruby) is faster — CONFIRMED from Onigmo source (2026-05-23):**
+Onigmo's `forward_search_range` does Boyer-Moore (`bm_search`) fast-skipping to
+literal anchors *before* calling the NFA matcher. The compiled regex stores
+`reg->optimize` flags (`ONIG_OPTIMIZE_EXACT_BM` etc.) and pointers to the
+extracted literal. glibc `regex.h` has no such pre-filter — it runs the full
+DFA from every position. **That difference IS the 4–6× gap.** It also means
+**option B (`memchr` pre-filter) only brings us TO parity with Ruby, not
+dramatically past it** — we'd be manually replicating what Onigmo does
+automatically for every pattern. Beating Ruby decisively requires G (chunked
+input) or E (true multi-pattern matcher).
+
 **Mechanism — CONFIRMED from glibc source (2026-05-23):**
 Read `posix/regexec.c` `re_search_internal` in the glibc tree. Findings:
 1. Every `regexec` call allocates a state-log array proportional to the input
@@ -274,13 +285,17 @@ N (G) when N is already small.
 
 **Our ideas / options to evaluate (re-ordered with new understanding):**
 - A. ~~Confirm the mechanism first~~ — DONE via glibc source; skip.
-- B. **`memchr` literal pre-filter — biggest real-world win.** Most patterns have
-  a required literal (`@`, `AKIA`, `BEGIN `, `sk_live_`, `eyJ`, etc.). `memchr`
-  the buffer once per pattern; if the literal is absent, skip `regexec` entirely
-  — saving the O(N) state-log alloc AND the O(N) DFA walk. ~60 of 88 patterns
-  have an obvious literal. For typical inputs most patterns won't match → big
-  cumulative skip. **Does NOT help heavy-match patterns on matching input**
-  (`email` on a log of emails still pays the cost per match).
+- B. **`memchr` literal pre-filter — closes the gap with Ruby, doesn't exceed it.**
+  Most patterns have a required literal (`@`, `AKIA`, `BEGIN `, `sk_live_`,
+  `eyJ`, etc.). `memchr` the buffer once per pattern; if the literal is absent,
+  skip `regexec` entirely — saving the O(N) state-log alloc AND the O(N) DFA
+  walk. ~60 of 88 patterns have an obvious literal. **Reality check:** this
+  manually replicates what Onigmo already does internally via `bm_search` (see
+  the "Why Onigmo is faster" note above), so it brings the C extension TO
+  parity with Ruby, not far past it. The remaining edge from C (no Ruby-VM
+  overhead) is small. Still worth doing — it eliminates the embarrassing
+  "C extension is slower than Ruby" situation — but understand it's the floor,
+  not the ceiling. Does NOT help heavy-match patterns on matching input.
 - C. **`REG_NOSUB`** for non-boundary patterns — cheap, marginal.
 - D. **Anchor / bound the greedy patterns** — `email`'s `+` quantifiers backtrack;
   rewriting to possessive-style or length-capped forms (POSIX has no possessive
@@ -323,20 +338,21 @@ N (G) when N is already small.
   Conclusion: no portable, multi-pattern, regex-subset C library exists — which
   is exactly why E warrants the spinoff.
 
-**Will the fix beat the pure-Ruby benchmark? (assessment 2026-05-23)**
-- Direction yes; no promised number until measured. The 2026-05-22 reasoning
-  stands and is now sharper given the glibc finding:
-- **B (memchr) for the typical case:** small strings called many times. Skipping
-  ~80 patterns with `memchr` avoids the per-call O(N) regexec setup × 80 → big
-  win on every redact call. Should comfortably beat Ruby for typical payloads.
-- **G (chunking) for the worst case:** large-string (≥1 MB) heavy-match inputs.
-  Bounds the O(N²/2) per chunk; total becomes effectively linear.
-- **B + G together:** beats Ruby across the board, no engine rewrite. Realistic
-  estimate: 5–20× faster than Ruby on real workloads.
-- **E (combined matcher):** O(N) one pass. Complexity-class win, likely
-  100×+ over Ruby on stress payloads. Multi-week effort; see design doc.
-- **Pragmatic path:** B first (~3-4h, low risk), G second (~half-day, the
-  newline/streaming question to settle), E as the long-game spinoff library.
+**Will the fix beat the pure-Ruby benchmark? (assessment 2026-05-23, revised)**
+- Earlier-in-the-day assessment (B comfortably beats Ruby) was WRONG. After
+  reading Onigmo's source we found Ruby's engine already does the equivalent of
+  option B internally (Boyer-Moore literal pre-filter via `bm_search`). Sharper:
+- **B (memchr) brings us TO parity with Ruby**, maybe slightly past. It catches
+  up to a standard regex-engine optimization glibc lacks. Not a "win," but ends
+  the "C extension is slower than Ruby" embarrassment. ~3-4h, low risk.
+- **G (chunking) is the first genuine win past Ruby** for inputs with many
+  matches. Both engines pay O(N²) per pattern; chunking bounds it for *both*
+  but we get to apply it without Ruby paying for it. Estimate: 3-5× past Ruby
+  on large heavy-match inputs. ~half-day.
+- **E (combined matcher) is the only way to dramatically beat Ruby across the
+  board.** Multi-week project; see design doc.
+- **Pragmatic path unchanged but with realistic expectations:** B first (achieve
+  parity, no embarrassment), G second (the first real win), E long-term.
 
 **Old plan status:** `~/.claude/plans/dapper-forging-nest.md` Parts B/C/D (ping-pong
 buffers, scan offset-map) were written BEFORE we learned `regexec` is the hot
