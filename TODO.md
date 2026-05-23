@@ -325,6 +325,29 @@ N (G) when N is already small.
   with the Elixir port, testable in isolation, big enough that mixing it into
   `ext/` would dwarf the gem). Multi-week project, deferred. Land B and/or G as
   the near-term wins.
+- H. **Use Onigmo (Ruby's own regex engine) instead of glibc `regex.h`.**
+  Available "for free" via Ruby's C API (`onig_search`, `rb_reg_search`); no new
+  dependency — Onigmo ships with MRI Ruby. Gets Onigmo's Boyer-Moore literal
+  pre-filter automatically (the thing currently making Ruby's `gsub` 4–6× faster
+  than us), plus the per-call O(N) state-log allocation that plagues glibc may
+  be smaller for typical patterns (Onigmo uses stack/alloca for short matches).
+  - **Realistic gain:** ~1.5–2× faster than pure-Ruby `gsub` — we save Ruby's
+    `String`/`MatchData`/method-dispatch overhead per pass, but the matching
+    itself is the same engine doing the same work. We are not adding algorithm
+    over `gsub`; we are a thin C wrapper that calls the same engine slightly
+    more efficiently.
+  - **Cost — couples to MRI internals.** JRuby ships Joni (Java port of
+    Oniguruma) and TruffleRuby ships TRegex. Neither has Onigmo. Either we add
+    a Ruby-implementation detection layer with separate code paths, or we drop
+    non-MRI support. The gem currently uses POSIX `regex.h` precisely so it
+    works on any libc — switching to Onigmo gives up that portability.
+  - **Identity cost.** The C-extension framing becomes hollow: "we wrap Ruby's
+    regex engine slightly more efficiently than `gsub`." Honest answer to "what
+    does this gem give me over `gsub` directly?" shrinks to "less object churn."
+    Defensible as a stopgap; not as the long-term differentiator.
+  - **When to consider:** if B + G don't close the gap with Ruby, H is the
+    pragmatic stopgap while E is being built. If E succeeds, H becomes
+    irrelevant.
 - F. Swap glibc POSIX `regex.h` for a faster engine. Survey (2026-05-23):
   - **RE2** (Google, BSD, C++): single regex, linear-time. Used by Chrome, Go's
     `regexp`. **Not multi-pattern** — we'd still call it 88 times. Better per
