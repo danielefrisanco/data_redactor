@@ -212,20 +212,24 @@ merged or PR'd. The benchmark scripts used below live there.
 - So Defect 1 was real but NOT the dominant cost. The TODO's old assumption
   ("allocation is almost certainly the bottleneck") is WRONG — see below.
 
-**What we DON'T know yet:**
-- The exact mechanism of the remaining O(n²). Two live hypotheses:
-  1. `regexec()` itself is super-linear for patterns with `+` quantifiers
-     (`email` = `[...]+@[...]+\.[...]{2,}`) — glibc POSIX regex backtracks; a long
-     alphanumeric run with no `@` makes it try/backtrack at many start positions.
-  2. The per-pattern loop re-walks: each `regexec` call after a match starts at
-     `cursor` and the cost of finding the next match scales with how far it must
-     scan — but that should be linear in total. Unclear if there's a hidden
-     re-scan of already-processed tail.
-- A test was started to disambiguate (fixed matches + growing PLAIN filler tail;
-  if time grows with filler → cost is per-regexec-call scanning the whole
-  remaining buffer). **It was killed before producing output — RE-RUN IT FIRST
-  on resume.** Script: redact `((log_line+"\n")*1000) + ("x"*filler_mb*1MB)` with
-  `only:["email"]`, filler ∈ {0,1,4,9} MB, time each.
+**Mechanism — CONFIRMED from glibc source (2026-05-23):**
+Read `posix/regexec.c` `re_search_internal` in the glibc tree. Findings:
+1. Every `regexec` call allocates a state-log array proportional to the input
+   length passed in (`mctx.state_log = re_malloc(..., mctx.input.bufs_len + 1)`),
+   *before any matching begins*. That's O(N) setup per call, mandatory.
+2. The DFA traversal is O(N) per call in the worst case.
+3. `prune_impossible_nodes` does another O(N) backward sift.
+Therefore our loop `while (regexec(pat, cursor, ...) == 0) cursor += full_eo;`
+with M matches in N bytes costs **Σ(N - cursor_i) ≈ O(N²/2)** when matches are
+evenly spread — the email-in-log case exactly.
+**The bug is in glibc's calling convention, not our code.** No buffer fix, no
+ping-pong, no smarter loop around `regexec` will change the complexity class.
+Either we *call regexec less often* (chunking, memchr pre-filter) or we *stop
+using regexec* (combined matcher / different engine).
+
+(The filler test the previous checkpoint recommended is no longer needed —
+the glibc source confirmed the mechanism directly. The 2× → 4× growth we
+measured matches the O(N²/2) prediction.)
 
 **How the engine actually works (and how the user expects it to):**
 - ACTUAL: for each of 88 patterns separately, call glibc `regexec()` in a loop
@@ -238,58 +242,101 @@ merged or PR'd. The benchmark scripts used below live there.
   one pass, regardless of pattern count. This is a much bigger change than
   "ping-pong buffers" but it is the real answer if `regexec` is the bottleneck.
 
-**Our ideas / options to evaluate on resume (in rough order):**
-- A. **Confirm the mechanism first** — re-run the filler test; if confirmed it's
-  per-call `regexec` cost, the ping-pong/alloc fixes (old plan Parts B/C) will
-  NOT solve it and should be reconsidered.
-- B. **`memchr` literal pre-filter** — most patterns have a required literal
-  (`@`, `AKIA`, `BEGIN `, `sk_live_`). `memchr` the buffer once; if absent, skip
-  `regexec` entirely. Big win for the 80+ patterns that match nothing in a given
-  payload — but does NOT help `email` on a log full of emails.
+**Small-string measurement (2026-05-23):**
+Per-call latency, C extension vs pure-Ruby `gsub` (88 patterns each):
+```
+size                       C        Ruby     ratio
+log line (168B)         0.23 ms   0.06 ms   4.2× slower
+json blob (~578B)       0.69 ms   0.11 ms   6.5× slower
+8 log lines (~1.3KB)    0.23 ms   0.06 ms   4.2× slower
+100 log lines (~17KB)  22.58 ms   3.99 ms   5.7× slower
+```
+**The C extension is slower than Ruby at every size we've measured.** The earlier
+session noted 7× slower on 1 MB; small strings are 4–6× slower. The slowdown
+isn't size-specific — it's per-call overhead × 88 patterns, dominating
+everywhere. This is the central problem.
+
+**Benchmark gap:** `benchmark/vs_pure_ruby.rb` only tests 1 MB. Add a
+small-string variant (or extend it to walk 1KB → 1MB) so we're measuring the
+typical use case, not just the stress test.
+
+**Use-case sizing (matters for which fix wins):**
+The gem is called **many times on small strings**, not once on huge ones:
+- Log scrubbing — per line, ≤ 1 KB
+- Rails param filtering — typically ≤ 10 KB
+- Rack response bodies — can be MB-scale
+- LLM payloads — tens of KB to a few MB
+- `redact_deep` / `redact_json` — walks per-leaf, each leaf typically small
+The 1MB/10MB benchmarks are stress tests, not the dominant use case.
+**Implication:** for the typical small-string call, the O(N) setup *per regexec*
+× 88 patterns dominates. Skipping patterns entirely (B) saves more than reducing
+N (G) when N is already small.
+
+**Our ideas / options to evaluate (re-ordered with new understanding):**
+- A. ~~Confirm the mechanism first~~ — DONE via glibc source; skip.
+- B. **`memchr` literal pre-filter — biggest real-world win.** Most patterns have
+  a required literal (`@`, `AKIA`, `BEGIN `, `sk_live_`, `eyJ`, etc.). `memchr`
+  the buffer once per pattern; if the literal is absent, skip `regexec` entirely
+  — saving the O(N) state-log alloc AND the O(N) DFA walk. ~60 of 88 patterns
+  have an obvious literal. For typical inputs most patterns won't match → big
+  cumulative skip. **Does NOT help heavy-match patterns on matching input**
+  (`email` on a log of emails still pays the cost per match).
 - C. **`REG_NOSUB`** for non-boundary patterns — cheap, marginal.
 - D. **Anchor / bound the greedy patterns** — `email`'s `+` quantifiers backtrack;
   rewriting to possessive-style or length-capped forms (POSIX has no possessive
   quantifiers — would need `{1,64}` style caps) could kill the backtracking.
+- G. **Chunked input — biggest worst-case win, same problem as streaming.** Split
+  the input into bounded chunks (e.g. 4–8 KB), run the existing 88-pattern
+  pipeline on each chunk, concatenate. Each `regexec` sees ≤ chunk_size, so the
+  O(N²) is bounded → effectively linear in total input. **Estimate: 10 MB
+  email-heavy goes ~32 s → ~0.1 s. ~300×.**
+  - **Boundary problem (same as TODO #8 Streaming API — solve them together):**
+    a match could straddle a chunk boundary and be missed → leaked secret.
+    Worst-case bug for a redaction gem.
+  - **Mitigations:**
+    - Newline-split for log inputs (the dominant case); patterns rarely cross
+      lines. Falls back to overlap chunking on any chunk > hard cap.
+    - Overlap windows for general text: chunks overlap by `max_pattern_length`
+      bytes; dedupe matches in the overlap. More general, trickier.
+    - **For very long no-newline inputs:** warn the user (or document the
+      limitation) until overlap chunking is in. A separate opt-in
+      `redact_chunked(text, chunk_size:)` API could surface the trade-off
+      explicitly.
+  - **Max-size safety valve:** consider raising above e.g. 10 MB unless
+    `chunked: true` is passed. Pragmatic backstop.
 - E. **Combined single-pass matcher** (the user's model) — merge all 88 patterns
-  into one engine. Biggest payoff, biggest effort, breaks the "specific→generic
-  sequential ordering" correctness model — would need a new overlap-resolution
-  strategy. May justify revisiting the Onigmo-vs-POSIX engine decision.
-  - **Key idea (user, 2026-05-22):** "remember at which part of the regex string
-    the match arrived." I.e. track each pattern's *partial-match state* — how far
-    into its regex the current input prefix has advanced — and carry that state
-    forward char-by-char instead of restarting. That partial state IS the
-    NFA/DFA state. `regexec` is O(n²) here precisely because it discards this
-    state and restarts every call. Keeping it across chars = O(n), one pass.
-  - Constraint: glibc `regexec` exposes no intermediate/pausable state, so this
-    needs either our own NFA simulation or a multi-pattern engine (option F).
-  - **Could be its own C library (user, 2026-05-22):** the combined-matcher core
-    — compile N patterns into one merged automaton, stream input once, emit
-    (pattern-id, start, end) match events — is generic and gem-agnostic. Worth
-    considering as a standalone C library that `data_redactor` then links/vendors:
-    keeps the matcher testable in isolation, and the planned Erlang/Elixir port
-    (see "Possible Erlang/Elixir port" section) could share the SAME core via a
-    NIF instead of reimplementing. Trade-off: a separate library is more
-    packaging/versioning overhead; only split it out once the matcher design is
-    proven. Decide AFTER the filler test + a prototype.
-- F. Swap glibc POSIX `regex.h` for a faster engine (RE2/Hyperscan are
-  multi-pattern and linear-time — but add a build dependency, against the
-  zero-dep rule). Note: writing our own matcher (E) is the zero-dep way to get
-  the same multi-pattern/linear-time property; F buys it off-the-shelf at the
-  cost of the dependency.
+  into one engine. **Full design doc: `docs/standalone_matcher_design.md`** —
+  decided 2026-05-23 to spec this as its own C library (gem-agnostic, shareable
+  with the Elixir port, testable in isolation, big enough that mixing it into
+  `ext/` would dwarf the gem). Multi-week project, deferred. Land B and/or G as
+  the near-term wins.
+- F. Swap glibc POSIX `regex.h` for a faster engine. Survey (2026-05-23):
+  - **RE2** (Google, BSD, C++): single regex, linear-time. Used by Chrome, Go's
+    `regexp`. **Not multi-pattern** — we'd still call it 88 times. Better per
+    call than glibc but same complexity class for our access pattern.
+  - **Hyperscan** (Intel, BSD, C): **multi-pattern, linear-time** — exactly what
+    we want. **But x86-only** (SSE/AVX intrinsics) → disqualified for a gem that
+    ships on ARM (Apple Silicon, Graviton).
+  - **Aho-Corasick** libraries: multi-pattern but **literals only**, no regex →
+    insufficient.
+  - **Onigmo** (Ruby's engine): single-pattern, just faster per call.
+  Conclusion: no portable, multi-pattern, regex-subset C library exists — which
+  is exactly why E warrants the spinoff.
 
-**Will the fix beat the pure-Ruby benchmark? (assessment 2026-05-22)**
-- Yes, with confidence in the *direction*, not yet a number. Ruby's `gsub` loop
-  also does 88 passes — it just uses Onigmo, a better engine than glibc POSIX
-  `regexec`, and wins 7× today on engine quality alone while doing the same
-  redundant work.
-- Options B/D are constant-factor wins → likely beat Ruby for typical payloads
-  (most patterns skip via `memchr`) but not dramatically.
-- Option E (combined matcher) is a complexity-class win: O(n) one pass vs Ruby's
-  O(88 × n-with-backtracking). Should land tens of MB/s — plausibly 5–20× faster
-  than Ruby. No promised number until a prototype is measured (this session
-  already proved a confident perf guess can be wrong).
-- Pragmatic path: ship B (`memchr` pre-filter) first as the quick win, then E as
-  the big follow-up. Correctness gates speed — a matcher bug = a leaked secret.
+**Will the fix beat the pure-Ruby benchmark? (assessment 2026-05-23)**
+- Direction yes; no promised number until measured. The 2026-05-22 reasoning
+  stands and is now sharper given the glibc finding:
+- **B (memchr) for the typical case:** small strings called many times. Skipping
+  ~80 patterns with `memchr` avoids the per-call O(N) regexec setup × 80 → big
+  win on every redact call. Should comfortably beat Ruby for typical payloads.
+- **G (chunking) for the worst case:** large-string (≥1 MB) heavy-match inputs.
+  Bounds the O(N²/2) per chunk; total becomes effectively linear.
+- **B + G together:** beats Ruby across the board, no engine rewrite. Realistic
+  estimate: 5–20× faster than Ruby on real workloads.
+- **E (combined matcher):** O(N) one pass. Complexity-class win, likely
+  100×+ over Ruby on stress payloads. Multi-week effort; see design doc.
+- **Pragmatic path:** B first (~3-4h, low risk), G second (~half-day, the
+  newline/streaming question to settle), E as the long-game spinoff library.
 
 **Old plan status:** `~/.claude/plans/dapper-forging-nest.md` Parts B/C/D (ping-pong
 buffers, scan offset-map) were written BEFORE we learned `regexec` is the hot
