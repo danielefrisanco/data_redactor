@@ -384,8 +384,18 @@ redactor/
 │       ├── scan.{c,h}            # _scan + byte-offset replacement-log macros
 │       ├── custom_patterns.{c,h} # Dynamic registry: add/remove/clear/list
 │       └── tags.h                # TAG_* bit constants
-└── spec/
-    └── data_redactor_spec.rb     # RSpec tests — at least one example per pattern, plus filter / placeholder / custom-pattern coverage
+├── spec/
+│   └── data_redactor_spec.rb     # RSpec tests — at least one example per pattern, plus filter / placeholder / custom-pattern coverage
+├── benchmark/                    # Repo-only perf scripts (not packaged in the gem)
+│   ├── README.md                 # How to run, what each script measures
+│   ├── support/corpus.rb         # Shared payload builders + pure-Ruby baseline redactor
+│   ├── throughput.rb             # MB/s on representative payloads
+│   ├── vs_pure_ruby.rb           # C extension vs pure-Ruby gsub (same 88 patterns)
+│   ├── scaling.rb                # Runtime vs input size 1KB → 50MB
+│   └── per_pattern.rb            # Per-pattern scan cost
+└── docs/                         # Design and execution docs for future work
+    ├── standalone_matcher_design.md
+    └── combined_matcher_plan.md
 ```
 
 ## Requirements
@@ -459,6 +469,52 @@ Or compile and test in one step:
 ```bash
 bundle exec rake
 ```
+
+## Benchmarks
+
+The `benchmark/` directory holds four scripts that measure the C engine under
+different angles. They are **not** packaged with the gem.
+
+```bash
+bundle install                                   # pulls benchmark-ips, benchmark-memory (dev deps)
+bundle exec rake compile
+bundle exec ruby benchmark/vs_pure_ruby.rb       # head-to-head vs pure-Ruby gsub, same 88 patterns
+bundle exec ruby benchmark/throughput.rb         # MB/s on a log line, JSON, 1MB and 10MB log files
+bundle exec ruby benchmark/scaling.rb            # runtime vs input size (1KB → 50MB), confirms linear scaling
+bundle exec ruby benchmark/per_pattern.rb        # per-pattern scan cost over a 1MB payload
+```
+
+See [`benchmark/README.md`](benchmark/README.md) for what each script measures
+and how the pure-Ruby baseline is kept honest (it reads the same patterns the
+C engine uses, via `DataRedactor::BUILTIN_PATTERN_SOURCES`).
+
+### Where we are today (May 2026)
+
+Recorded so we know where we started when the next round of perf work lands.
+
+| Payload                     | C extension     | Pure-Ruby `gsub` | C vs Ruby      |
+|-----------------------------|-----------------|------------------|----------------|
+| log line (168 B)            | 0.30 ms / call  | 0.07 ms / call   | 3.4× slower    |
+| JSON blob (~580 B)          | 0.92 ms / call  | 0.18 ms / call   | 5.0× slower    |
+| 100 log lines (~17 KB)      | 26.5 ms / call  | 6.1 ms / call    | 4.4× slower    |
+| 1 MB log                    | 1.62 s / call   | 0.38 s / call    | 4.25× slower   |
+| 10 MB log                   | ~15 s           | ~3.8 s           | ~4× slower     |
+
+The C extension is currently **3-5× slower than pure-Ruby `gsub` at every
+size measured.** The cause is structural — glibc's POSIX `regexec` lacks
+the Boyer-Moore literal pre-filter that Ruby's Onigmo engine has built in —
+and is documented in detail under [Known limitations](#known-limitations).
+Two perf fixes have already shipped (a `strstr` literal pre-filter and
+chunked input above 64 KB), which got us 25-30% faster and restored linear
+scaling, but the absolute gap remains.
+
+The long-term plan is a combined multi-pattern matcher
+([design doc](docs/standalone_matcher_design.md),
+[execution plan](docs/combined_matcher_plan.md)) that compiles all 88
+patterns into one automaton and walks the input once. That's expected to
+make the C extension genuinely the fastest option in Ruby; until it ships,
+use the gem on small payloads where absolute latency is acceptable
+(< 1 ms for typical log lines).
 
 ## How it works
 
