@@ -5,9 +5,14 @@ CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -std=c99 -fPIC
 LDFLAGS ?=
 
-.PHONY: all clean smoke smoke2 generate
+# Option A: standalone libonig-dev (apt install libonig-dev).
+# Uses system Oniguruma — no Ruby VM required.
+ONIG_CFLAGS  = $(shell pkg-config --cflags oniguruma 2>/dev/null || echo "-I/usr/include")
+ONIG_LDFLAGS = -lonig
 
-all: matcher matcher.so matcher2 matcher2.so
+.PHONY: all clean smoke smoke2 smoke3 generate
+
+all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so
 
 # Option B generated header (always regenerate from gem source).
 generate: gen_patterns.rb
@@ -36,5 +41,15 @@ smoke: matcher
 smoke2: matcher2
 	./matcher2
 
+# Prototype v3 — 88 patterns, Onigmo (Option A).
+matcher3: matcher3.c matcher3.h patterns_generated.h
+	$(CC) $(CFLAGS) $(ONIG_CFLAGS) -DMM3_MAIN -o $@ matcher3.c $(LDFLAGS) $(ONIG_LDFLAGS)
+
+matcher3.so: matcher3.c matcher3.h patterns_generated.h
+	$(CC) $(CFLAGS) $(ONIG_CFLAGS) -shared -o $@ matcher3.c $(LDFLAGS) $(ONIG_LDFLAGS)
+
+smoke3: matcher3
+	./matcher3
+
 clean:
-	rm -f matcher matcher.so matcher2 matcher2.so patterns_generated.h
+	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so patterns_generated.h

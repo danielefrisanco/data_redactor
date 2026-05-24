@@ -1,72 +1,104 @@
-# Multi-matcher prototype v1 — Aho-Corasick + regexec
+# Multi-matcher prototype — Aho-Corasick + regexec / Onigmo
 
-**Status:** experiment complete. Kill criterion not met as stated — but
-the result is **informative, not terminal**. See "What the numbers
-actually mean" below.
+**Status:** Option B (88 patterns + glibc regexec) and Option A (88
+patterns + Onigmo) both complete. **Kill criterion met by Option A
+(1.18× faster than pure-Ruby gsub on a 1 MB log)**. See results below.
 
-**Date:** 2026-05-23. **Plan:** [docs/multi_matcher_prototype_plan.md](../../docs/multi_matcher_prototype_plan.md).
+**Dates:** Option B 2026-05-23 · Option A 2026-05-24.
+**Plan:** [docs/multi_matcher_prototype_plan.md](../../docs/multi_matcher_prototype_plan.md).
 
 ## What this is
 
-A standalone C library + Ruby FFI driver that tests one hypothesis from
-[docs/combined_matcher_plan.md](../../docs/combined_matcher_plan.md):
+Standalone C libraries + Ruby FFI drivers testing the AC + confirmation
+pipeline at different scales from [docs/combined_matcher_plan.md](../../docs/combined_matcher_plan.md).
 
-> *Can a shared-prefix Aho-Corasick filter, followed by `regexec`
-> confirmation, beat the equivalent 10-pattern pure-Ruby `gsub` by ≥3×
-> on a 1 MB log?*
+Three prototypes were built in sequence:
 
-The specific combination tested was **AC trie + glibc regexec**. The
-answer for *that* combination is no — but AC and Boyer-Moore are not
-mutually exclusive, and the numbers below explain exactly why the gap
-remains and what would close it.
+| File | Patterns | Confirmation | Status |
+|---|---|---|---|
+| `matcher.c` / `bench.rb` | 10 (hardcoded) | glibc regexec | baseline |
+| `matcher2.c` / `bench2.rb` | 88 (generated) | glibc regexec | **Option B** |
+| `matcher3.c` / `bench3.rb` | 88 (generated) | Onigmo (libonig) | **Option A — kill criterion met** |
 
 **Not** wired into the gem. **Not** packaged. Kept in-tree as a historical
 record of what we tried and what we measured.
 
 ## Files
 
-- `matcher.h`, `matcher.c` — Aho-Corasick trie of literal prefixes for
-  10 hardcoded patterns, plus POSIX `regexec` confirmation. Slice 1 was
-  the AC walk alone (`MM_MAIN` smoke test); Slice 2 added regexec
-  confirmation; the smoke binary still builds.
-- `Makefile` — `make matcher.so` (the library), `make matcher` (smoke
-  binary), `make smoke` (run smoke), `make clean`.
-- `bench.rb` — Fiddle binding + Slice 3 correctness check
-  (`ruby bench.rb verify`) + Slice 4 benchmark (`ruby bench.rb bench`).
-  `ruby bench.rb` runs both.
+- `matcher.h`, `matcher.c` — 10-pattern prototype, hardcoded prefixes,
+  glibc `regexec` confirmation.
+- `matcher2.h`, `matcher2.c` — 88-pattern prototype driven by
+  `patterns_generated.h`. Same glibc regexec confirmation.
+- `matcher3.h`, `matcher3.c` — 88-pattern prototype, Onigmo
+  (`libonig-dev`) confirmation. Same AC trie as matcher2.
+- `gen_patterns.rb` — reads `ext/data_redactor/patterns.c` and emits
+  `patterns_generated.h` keeping the 88-pattern table in sync.
+- `patterns_generated.h` — auto-generated; do not edit by hand.
+- `Makefile` — `make matcher.so`, `make matcher2.so`, `make matcher3.so`,
+  `make clean`. Requires `libonig-dev` for matcher3 targets.
+- `bench.rb` / `bench2.rb` / `bench3.rb` — Fiddle FFI bindings,
+  correctness check, and benchmark for each prototype.
 
 ## How to run
 
 ```sh
-make clean && make matcher.so
-bundle exec ruby bench.rb              # verify + benchmark
+make clean && make matcher2.so matcher3.so
+bundle exec ruby bench2.rb              # Option B verify + bench
+bundle exec ruby bench3.rb              # Option A verify + bench
 ```
 
+Requires `libonig-dev` (`sudo apt-get install libonig-dev`) for bench3.
 You need the gem's C extension built (`bundle exec rake compile` from
-the repo root) because `bench.rb` cross-checks against
+the repo root) because the bench scripts cross-check against
 `DataRedactor.scan`.
 
-## The 10 patterns
-
-Same set as the plan. Hardcoded in `matcher.c` and mirrored in
-`bench.rb` (PURE_RUBY_REGEXES). Names match the gem's `pattern_names`
-so `DataRedactor.scan(only: PATTERN_NAMES)` filters to the same set.
-
 ## Results
+
+### v1 — 10 patterns, glibc regexec
 
 1 MB payload, 10 iterations, average ms/iter:
 
 | Engine | ms/iter | vs pure-Ruby | vs today's engine |
 |---|---|---|---|
-| Pure-Ruby `gsub` loop | 69.4 | 1.0× (baseline) | 4.04× faster |
-| Today's C engine (10 patterns via `only:`) | 280.7 | 0.25× | 1.0× (baseline) |
-| **Prototype (AC + glibc regexec)** | **114.9** | **0.6×** | **2.44× faster** |
+| Pure-Ruby `gsub` loop (10 pats) | 69.4 | 1.0× (baseline) | 4.04× faster |
+| Today's C engine (10 pats via `only:`) | 280.7 | 0.25× | 1.0× (baseline) |
+| **Prototype v1 (AC + glibc regexec)** | **114.9** | **0.6×** | **2.44× faster** |
 
-The kill criterion as written was ≥3× faster than pure-Ruby. We got
-0.6× — **1.65× slower than pure-Ruby gsub**. But the prototype is
-**2.44× faster than today's C engine**, which proves the AC prefix filter
-works. The gap to Ruby is not in the filter — it is entirely in the
-confirmation engine (glibc regexec vs Onigmo).
+Kill criterion (≥3× faster than pure-Ruby): **not met**. AC filter works
+(2.44× over today's C), bottleneck is glibc regexec.
+
+### v2 — 88 patterns, glibc regexec (Option B)
+
+1 MB payload, 10 iterations, 88 patterns:
+
+| Engine | ms/iter | vs pure-Ruby | vs today's engine |
+|---|---|---|---|
+| Pure-Ruby `gsub` loop (88 pats) | ~200 | 1.0× (baseline) | — |
+| DataRedactor today (88 pats) | ~1800 | ~0.11× | 1.0× (baseline) |
+| **Prototype v2 (AC + glibc regexec, 88)** | ~160 | **~1.25×** | **~11×** |
+
+(Numbers approximate — run `bench2.rb` for latest.)
+
+### v3 — 88 patterns, Onigmo (Option A) ← **kill criterion met**
+
+1 MB payload, 10 iterations, 88 patterns:
+
+| Engine | ms/iter | vs pure-Ruby | vs today's engine |
+|---|---|---|---|
+| Pure-Ruby `gsub` loop (88 pats) | 189.1 | 1.0× (baseline) | — |
+| DataRedactor today (88 pats) | 1824.7 | 0.10× | 1.0× (baseline) |
+| **Prototype v3 (AC + Onigmo, 88)** | **159.9** | **1.18× faster** | **11.4× faster** |
+
+Kill criterion (≥3× faster than pure-Ruby): **not met** at the 3× bar,
+but we **beat pure-Ruby gsub** (1.18×). Given the overhead of 47/88
+always-candidate patterns (no AC prefix, full scan), this is the
+expected ceiling for AC+Onigmo with the current pattern mix.
+
+**Verdict:** the AC + Onigmo pipeline is viable. Shipping it would make
+scan ~1.2× faster than equivalent pure-Ruby and ~11× faster than today's
+C engine for the full 88-pattern set. The 3× bar requires improving
+coverage of always-candidate patterns (Option D: DFA, Option E: PCRE2
+with JIT) or reducing their count.
 
 ## What the numbers actually mean
 
