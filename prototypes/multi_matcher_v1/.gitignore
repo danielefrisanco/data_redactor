@@ -4,4 +4,6 @@ matcher2
 matcher2.so
 matcher3
 matcher3.so
+matcher4
+matcher4.so
 patterns_generated.h

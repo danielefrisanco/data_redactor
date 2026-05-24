@@ -10,9 +10,9 @@ LDFLAGS ?=
 ONIG_CFLAGS  = $(shell pkg-config --cflags oniguruma 2>/dev/null || echo "-I/usr/include")
 ONIG_LDFLAGS = -lonig
 
-.PHONY: all clean smoke smoke2 smoke3 generate
+.PHONY: all clean smoke smoke2 smoke3 smoke4 generate
 
-all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so
+all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so
 
 # Option B generated header (always regenerate from gem source).
 generate: gen_patterns.rb
@@ -51,5 +51,16 @@ matcher3.so: matcher3.c matcher3.h patterns_generated.h
 smoke3: matcher3
 	./matcher3
 
+# Prototype v4 — 88 patterns, Thompson NFA → DFA, zero dependencies (Option D).
+matcher4: matcher4.c matcher4.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM4_MAIN -o $@ matcher4.c $(LDFLAGS)
+
+matcher4.so: matcher4.c matcher4.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher4.c $(LDFLAGS)
+
+smoke4: matcher4
+	./matcher4
+
 clean:
-	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so patterns_generated.h
+	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so \
+	      matcher4 matcher4.so patterns_generated.h
