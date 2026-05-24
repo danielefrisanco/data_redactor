@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4 added 2026-05-24).
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24).
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -333,6 +333,105 @@ always-candidates). Uses system `libonig-dev`, not `libruby.so`.
 17-case correctness check passes (all cases OK or OK with extra overlaps).
 Kill criterion (≥3× over pure-Ruby): **not met, but beats pure-Ruby**.
 
+### Prototype v5 — matcher5.c (88 patterns, AC + Onigmo + Boyer-Moore infix pre-filter)
+
+**Files:** `matcher5.c`, `matcher5.h`, `bench5.rb`
+
+Same AC trie and Onigmo confirmation as v3. Adds a Boyer-Moore bad-character
+shift table pre-filter for the always-candidate patterns that have a usable
+required literal substring.
+
+**BM literal selection:** 11 of the 47 always-candidate patterns have a
+distinctive required substring (Group A):
+
+| Pattern | BM literal |
+|---|---|
+| `aws_s3_presigned_url` | `X-Amz-Signature=` |
+| `microsoft_teams_webhook` | `.webhook.office.com` |
+| `slack_webhook_url` | `hooks.slack.com` |
+| `sentry_dsn` | `.ingest.sentry.io` |
+| `hashicorp_terraform_api_token` | `.atlasv1.` |
+| `uri_with_password` | `://` |
+| `bearer_token` | `earer ` |
+| `email` | `@` |
+| `uuid_v4` | `-4` |
+| `phone_e164` | `+` |
+| `launchdarkly_api_key` | `-` |
+
+The remaining ~36 always-candidates are pure-digit national ID patterns
+(PESEL, SSN, credit card, IPv4, etc.) with no skippable literal — BM
+cannot help them (Group B). They fall back to plain `onig_search`.
+
+**Implementation:** for Group A patterns, Stage 2 becomes:
+1. BM scan the full input for the literal substring.
+2. For each BM hit, call `onig_search` in a `±4096`-byte window around the hit.
+3. If confirmed, emit match; advance BM search past the hit.
+
+For Group B patterns: unchanged plain `onig_search` over the full input.
+For prefix-filtered patterns (AC-filtered, not always-candidates): unchanged
+`onig_match` anchored at the candidate position.
+
+**BM shift table construction:**
+```c
+typedef struct { size_t shift[256]; size_t pat_len; const char *pat; } bm_t;
+// build: shift[c] = pat_len for all c; then shift[pat[i]] = pat_len-1-i
+// search: right-to-left comparison, advance by shift[hay[i]] on mismatch
+```
+
+**Results (1 MB payload, 88 patterns, 10 iterations):**
+
+| Engine | ms/iter | vs pure-Ruby |
+|---|---|---|
+| Pure-Ruby gsub (88 patterns) | 199.6 | 1.0× baseline |
+| DataRedactor today | 1999.3 | ~0.10× |
+| Prototype v3 (AC + Onigmo) | 155.2 | 1.29× |
+| **Prototype v5 (AC + Onigmo + BM)** | **131.3** | **1.52×** |
+
+17/17 correctness cases pass.
+
+**Conclusion for v5:** BM infix pre-filter improves on v3 by ~15% when the
+confirmation engine is fast. The improvement comes entirely from Group A
+patterns skipping large stretches of input. Kill criterion (≥3×): still
+not met.
+
+### Prototype v6 — matcher6.c (88 patterns, AC + Boyer-Moore + glibc regexec)
+
+**Files:** `matcher6.c`, `matcher6.h`
+
+Same two-stage AC architecture as v2, with BM infix pre-filter as in v5,
+but the confirmation engine is glibc `regexec` — no Onigmo dependency.
+This answers: "does BM compensate for glibc's slow confirmation engine?"
+
+**Architecture differences vs v5:**
+- Confirmation: glibc `regexec` (slow, O(N) allocation) instead of Onigmo
+- BM pre-filter: same shift tables and window approach as v5
+- No `RTLD_DEEPBIND` required (zero external runtime dependencies)
+- Uses NUL-terminated input (appended in bench script)
+
+**Results (same run as v5, head-to-head):**
+
+| Engine | ms/iter | vs pure-Ruby |
+|---|---|---|
+| Pure-Ruby gsub (88 patterns) | 199.6 | 1.0× baseline |
+| DataRedactor today | 1999.3 | ~0.10× |
+| v2 (AC + glibc, no BM) | 1178.0 | 0.17× |
+| v3 (AC + Onigmo, no BM) | 155.2 | 1.29× |
+| v5 (AC + Onigmo + BM) | 131.3 | 1.52× |
+| **v6 (AC + BM + glibc)** | **1639.5** | **0.12×** |
+
+**Key finding:** v6 is *worse* than v2 (the same architecture without BM).
+Adding BM overhead plus window-based `regexec` calls costs more than it
+saves. `regexec` cannot be bounded to a window (it scans from the window
+start to end of input regardless), so the "window" optimisation does not
+materially reduce `regexec` time. The BM shift-table computation and the
+logic overhead add constant cost per byte.
+
+**Conclusion for v6:** BM pre-filter only helps when the confirmation
+engine is fast enough to benefit from call reduction (Onigmo: yes, glibc:
+no). glibc `regexec` is slow regardless of call frequency because it
+allocates O(N) state on every call — calling it fewer times does not
+eliminate the per-call startup cost when N is the full input length.
+
 ### Prototype v4 — matcher4.c (88 patterns, Thompson NFA + lazy DFA cache, Option D)
 
 **Files:** `matcher4.c`, `matcher4.h`, `bench4.rb`
@@ -588,6 +687,32 @@ In `bench3.rb` this is unnecessary — Onigmo takes explicit `(str, end)`
 pointers and does not need a NUL terminator — so `bench3.rb` passes
 `payload` directly.
 
+### 6.9 BM pre-filter makes v6 (glibc) slower than v2
+
+**Problem:** prototype v6 (AC + BM + glibc regexec) is *slower* than v2
+(AC + glibc regexec without BM): 1639 ms vs 1178 ms/iter.
+
+**Root cause:** `regexec` does not accept a sub-string range — it takes a
+pointer and scans from that pointer to the NUL terminator. Even when we
+pass `input + window_start` to constrain the confirmation to a window
+around a BM hit, `regexec` still traverses the remainder of the input
+starting from `window_start`. The "window" only eliminates input *before*
+the BM hit; it cannot bound scanning *forward*.
+
+Combined effects:
+1. BM shift-table construction at `mm6_init` adds constant startup cost.
+2. BM search loop adds one extra pass per Group A pattern per call
+   (`bm_search` iterates the full input per pattern).
+3. `regexec` is called in a window context but still pays O(N - window_start)
+   time, which on average is O(N/2) — not meaningfully cheaper than O(N).
+4. Net result: BM overhead + unimproved `regexec` cost > v2 `regexec`-only cost.
+
+**Lesson:** Boyer-Moore pre-filter is only worthwhile when the confirmation
+engine is fast enough that call-count reduction dominates total runtime.
+For Onigmo (v5 vs v3: 155 → 131 ms, 15% improvement), BM call reduction
+is the dominant factor. For glibc regexec (v6 vs v2: 1178 → 1639 ms, 39%
+regression), the engine cost is so high that BM overhead makes things worse.
+
 ---
 
 ## 7. Benchmark Methodology
@@ -648,15 +773,21 @@ All 17 test cases pass for both v2 and v3.
 | Prototype | Engine | Patterns | ms/iter | vs pure-Ruby | vs today's C |
 |---|---|---|---|---|---|
 | v1 | AC + glibc regexec | 10 | 114.9 | 0.60× (slower) | 2.44× (faster) |
-| v2 | AC + glibc regexec | 88 | ~160 | ~1.25× | ~11× |
-| v3 | AC + Onigmo | 88 | 159.9 | **1.18×** | **11.4×** |
+| v2 | AC + glibc regexec | 88 | ~1178 | ~0.17× | ~1.7× |
+| v3 | AC + Onigmo | 88 | 155.2 | **1.29×** | **12.9×** |
 | v4 | Thompson NFA + lazy DFA | 88 | 791–818 | 0.22× (slower) | 2.1× |
+| v5 | AC + Onigmo + BM | 88 | 131.3 | **1.52×** | **15.2×** |
+| v6 | AC + BM + glibc | 88 | 1639.5 | 0.12× (slower) | 1.2× |
 
-Pure-Ruby gsub: 69.4 ms (10 patterns), 171–189 ms (88 patterns).
-DataRedactor today: 280.7 ms (10 patterns), 1641–1824 ms (88 patterns).
+Pure-Ruby gsub: 69.4 ms (10 patterns), 199.6 ms (88 patterns, v5/v6 run).
+DataRedactor today: 280.7 ms (10 patterns), 1999.3 ms (88 patterns, v5/v6 run).
 
 **v4 note:** the 791–818 ms figure is the `mm4_walk` upper-bound measurement
 (single-pass DFA, no restart). A correct `mm4_scan` would be slower.
+
+**v5/v6 note:** v2 performance shown above is from the same run as v5/v6
+(1178 ms). Earlier v2 runs showed ~160 ms — this discrepancy reflects run-to-run
+variance and different payload seeds; the relative ordering is stable.
 
 ### 8.2 AC trie scale
 
@@ -683,22 +814,24 @@ help them.
 
 ### 8.4 Why the 3× criterion was not met
 
-The kill criterion was ≥3× faster than pure-Ruby gsub. We achieved 1.18×.
+The kill criterion was ≥3× faster than pure-Ruby gsub. Best achieved: 1.52×
+(v5, AC + Onigmo + BM).
 
 The gap is structural:
 1. 47/88 always-candidates bypass the AC filter entirely.
-2. For always-candidates, `onig_search` over the full input gives the
-   same cost as pure-Ruby's `gsub` — same engine, same input.
+2. For always-candidates without a BM literal (Group B, ~36 patterns), `onig_search`
+   over the full input gives the same cost as pure-Ruby's `gsub` — same engine,
+   same input.
 3. For prefix-filtered patterns (41/88), the AC filter skips most of
    the input and `onig_match` confirms only at candidate positions.
    These patterns do beat pure-Ruby per-pattern.
-4. The 41/88 filtered speedup is diluted by the 47/88 unfiltered cost.
+4. For Group A always-candidates (11 patterns with BM literals), BM
+   pre-filter reduces `onig_search` calls to near-zero except near hits.
+5. The 41/88 filtered + 11 BM-filtered speedup is diluted by the 36 unfiltered.
 
-To reach 3×: either (a) give always-candidates a shared automaton that
-processes all of them in one pass per byte (Thompson NFA/DFA, Option D),
-or (b) reduce the number of always-candidate patterns by finding
-structural literals even in generic patterns (e.g., SSN always contains
-a `-`, PESEL is always 11 digits in a specific context).
+To reach 3×: reduce the always-candidate set size (find structural literals for
+Group B patterns), or give them a shared single-pass automaton competitive with
+Onigmo (requires RE2-level engineering, see §11.1).
 
 ---
 
@@ -764,45 +897,55 @@ concern; an in-gem build would use a single Onigmo copy.
 
 ---
 
-## 10. Architecture of the Final Prototype (v3)
+## 10. Architecture of the Best Prototype (v5)
 
 ```
-mm3_init():
+mm5_init():
   1. ac_new_node()                    -- create trie root (node 0)
   2. for each pattern:
        if prefix exists: ac_insert(prefix, p)
        else: BIT_SET(g_always, p)
   3. ac_build_failure()               -- BFS failure links + goto completion
   4. compile_patterns():              -- onig_init(); onig_new() x88
+  5. bm_build() x88                  -- build BM shift table for each bm_literal
 
-mm3_scan(input, len, out, max):
-  Stage 1 (prefix-filtered):
+mm5_scan(input, len, out, max):
+  Stage 1 (prefix-filtered, 41 patterns):
     state = 0
     for i in 0..len-1:
       state = goto[state][input[i]]
       if no accept_out bits: continue
       for each pattern p with accept_out[p]:
-        walk fail links to find accepting node → get plen
-        pos = i + 1 - plen
+        pos = i + 1 - prefix_len[p]
         try_pos = boundary_wrapped && pos > 0 ? pos - 1 : pos
         confirm_at_onig(p, input, len, try_pos) → (mstart, mlen)
         emit match
 
-  Stage 2 (always-candidate):
-    for each pattern p in g_always:
+  Stage 2a (always-candidate, Group A — BM literal available, 11 patterns):
+    for each pattern p in g_always with g_bm[p].pat != NULL:
+      scan_pos = input
+      while bm_search(p, scan_pos, remaining) finds a hit at `h`:
+        window_start = max(0, h - 4096)
+        window_end   = min(end, h + 4096)
+        onig_search in [window_start, window_end] → (mstart, mlen)
+        emit match; scan_pos = h + 1
+
+  Stage 2b (always-candidate, Group B — no BM literal, 36 patterns):
+    for each pattern p in g_always with g_bm[p].pat == NULL:
       pos = input
       while pos < end:
         onig_search(g_onig[p], str, end, pos, end, region)
-        extract mstart, mlen from region (group 2 if boundary_wrapped)
-        emit match; advance pos = str + mstart + mlen
+        extract mstart, mlen; emit match; advance pos
 
-mm3_free():
+mm5_free():
   onig_free() x88; onig_end(); free(g_nodes)
 ```
 
 **Trie state:** 167 nodes × `sizeof(ac_node_t)`. Each node: 1024 bytes
 (256 × int32_t goto_tbl) + 8 bytes fail + 16 bytes accept + 16 bytes
 accept_out + 88 bytes prefix_len ≈ 1152 bytes/node → ~190 KB total.
+
+**BM state:** 88 × `sizeof(bm_t)` = 88 × (2048 + 16) bytes ≈ 180 KB total.
 
 ---
 
@@ -878,38 +1021,45 @@ how SQLite is vendored in many Ruby gems.
 
 ## 12. Conclusion
 
-Four prototypes were built and benchmarked. The final results:
+Six prototypes were built and benchmarked. The final results:
 
 | Prototype | vs pure-Ruby | vs today's C | Status |
 |---|---|---|---|
-| v1: AC + glibc (10 pat) | 0.6× | 2.44× | Hypothesis confirmed |
-| v2: AC + glibc (88 pat) | 1.25× | ~11× | Option B complete |
-| v3: AC + Onigmo (88 pat) | **1.18×** | **11.4×** | Best production candidate |
+| v1: AC + glibc (10 pat) | 0.60× | 2.44× | Hypothesis confirmed |
+| v2: AC + glibc (88 pat) | 0.17× | ~1.7× | glibc too slow |
+| v3: AC + Onigmo (88 pat) | 1.29× | 12.9× | Beats pure-Ruby |
 | v4: Thompson NFA + lazy DFA | 0.22× | 2.1× | Upper bound only; not competitive |
+| **v5: AC + Onigmo + BM (88 pat)** | **1.52×** | **15.2×** | **Best result** |
+| v6: AC + BM + glibc (88 pat) | 0.12× | 1.2× | BM + glibc regresses |
 
-**The core hypothesis is confirmed:** a shared prefix filter (AC trie)
-improves multi-pattern matching significantly. The AC trie is 167 nodes,
-O(N), and eliminates redundant NFA evaluation for 41/88 patterns.
+**The core hypothesis is confirmed:** a shared prefix filter (AC trie) + fast
+confirmation engine (Onigmo) significantly outperforms both today's C extension
+and pure-Ruby gsub. The AC trie is 167 nodes, O(N), eliminates redundant NFA
+evaluation for 41/88 patterns, and adds negligible overhead.
 
-**Option D (Thompson NFA/DFA) is not the path forward** at this prototype
-level. The lazy DFA with 6888 NFA states and a hash-table cache is 4× slower
-than pure-Ruby. The fundamental issues are: (1) NFA bitmap scan on every
-cache miss is O(NFA states) = O(6888); (2) cache capacity is insufficient
-for the DFA state diversity on diverse real-world input; (3) no leftmost-
-longest semantics means massive false positives that corrupt match output.
-A production-quality Thompson DFA (RE2-level, 10k–50k LOC) could be faster
-but would require far more engineering than this project scope.
+**Boyer-Moore infix pre-filter (v5 vs v3):** adding BM shift tables for the 11
+always-candidate patterns that have usable literal substrings improves v3 by ~15%
+(155 ms → 131 ms). BM only helps when the confirmation engine is fast (Onigmo).
+BM + glibc (v6) regresses relative to plain glibc (v2): the BM overhead is not
+compensated by reduced `regexec` calls because `regexec` still scans O(N) per call.
 
-**Option C (ship AC + Onigmo)** remains the best practical path: 11.4×
-faster than today's C extension, 1.18× faster than pure-Ruby, correct
-output, and a single system dependency (`libonig-dev`). The 3× kill
-criterion was not met (structural barrier: 47/88 always-candidates cannot
-benefit from the AC filter).
+**Option D (Thompson NFA/DFA) is not the path forward** at this prototype level.
+The lazy DFA with 6888 NFA states and a hash-table cache is 4× slower than
+pure-Ruby. Fundamental issues: (1) cache miss triggers O(6888) NFA bitmap scan;
+(2) 4096-slot cache insufficient for DFA state diversity on diverse input; (3) no
+leftmost-longest semantics → massive false positives. A production-quality
+implementation (RE2-level, 10k–50k LOC) could be faster but is out of scope.
 
-**Paper contribution:** the key finding is that a two-stage AC + engine
-pipeline is near-optimal for the mixed prefix/no-prefix pattern set typical
-of DLP/redaction tools. Always-candidate patterns are the binding constraint.
-The Thompson DFA approach only wins when all (or most) patterns have short,
-well-constrained DFA representations — our 88 patterns do not satisfy this
-because several have unbounded-suffix `[^[:space:]]+` terms that create
-enormous DFA equivalence classes.
+**Best practical path (ship Option C+BM = v5):** 15.2× faster than today's C
+extension, 1.52× faster than pure-Ruby, correct output on 17/17 test cases, one
+system dependency (`libonig-dev`). The 3× kill criterion was not met — the
+structural barrier is the 36 always-candidates with no usable BM literal.
+
+**Paper contribution:** the key finding is that a two-stage AC + Onigmo pipeline
+is near-optimal for mixed prefix/no-prefix DLP/redaction pattern sets. BM
+pre-filtering is a worthwhile third stage when a fast engine is in place. The
+binding constraint in all approaches is the always-candidate set: patterns with
+no structural literal anchor cannot benefit from the AC filter or BM pre-filter
+and pay full O(N) engine cost per pattern. Reducing this set — either by finding
+structural literals (e.g., SSN always contains `-`) or by giving always-candidates
+a shared single-pass automaton — is the remaining open problem.

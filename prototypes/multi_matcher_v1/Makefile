@@ -71,6 +71,17 @@ matcher5.so: matcher5.c matcher5.h patterns_generated.h
 smoke5: matcher5
 	./matcher5
 
+# Prototype v6 — 88 patterns, AC + BM infix filter + glibc regexec (no Onigmo).
+matcher6: matcher6.c matcher6.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM6_MAIN -o $@ matcher6.c $(LDFLAGS)
+
+matcher6.so: matcher6.c matcher6.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher6.c $(LDFLAGS)
+
+smoke6: matcher6
+	./matcher6
+
 clean:
 	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so \
-	      matcher4 matcher4.so matcher5 matcher5.so patterns_generated.h
+	      matcher4 matcher4.so matcher5 matcher5.so matcher6 matcher6.so \
+	      patterns_generated.h
