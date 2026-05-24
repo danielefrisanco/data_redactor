@@ -98,19 +98,37 @@ puts "#define PATTERNS_GENERATED_H"
 puts
 puts "#define MM88_NUM_PATTERNS #{n}"
 puts
+# Hand-crafted BM infix literals for always-candidate patterns that have a
+# usable required literal somewhere inside the match.  Patterns with no usable
+# literal (pure-digit national IDs etc.) get nil = fall back to onig_search.
+#
+# For variable-offset literals the scan backtracks by max_prefix_len bytes
+# before calling onig_match — see matcher5.c Stage 2 logic.
+BM_INFIX = {
+  "aws_s3_presigned_url"          => "X-Amz-Signature=",  # distinctive, long
+  "microsoft_teams_webhook"        => ".webhook.office.com",
+  "slack_webhook_url"              => "hooks.slack.com",
+  "sentry_dsn"                     => ".ingest.sentry.io",
+  "hashicorp_terraform_api_token"  => ".atlasv1.",         # fixed at offset 14
+  "uri_with_password"              => "://",
+  "bearer_token"                   => "earer ",            # offset 1 from 'B/b'
+  "email"                          => "@",
+  "uuid_v4"                        => "-4",                # version byte at offset 13
+  "phone_e164"                     => "+",                 # must start with +
+  "launchdarkly_api_key"           => "-",                 # short but better than nothing
+}.freeze
+
 puts "typedef struct {"
 puts "    const char *name;"
 puts "    const char *regex;         /* POSIX ERE, from patterns.c pattern_strings */"
 puts "    const char *prefix;        /* required literal; NULL = always-candidate */"
 puts "    int         boundary_wrapped; /* 1 = wrap with (^|[^0-9A-Za-z])(...)([^0-9A-Za-z]|$) */"
 puts "    int         prefix_is_infix;  /* 1 = literal is not at regex start; AC fires but regexec scans */"
+puts "    const char *bm_literal;    /* BM infix literal for always-candidates; NULL = no filter */"
 puts "} mm88_pattern_def_t;"
 puts
 # Determine which prefixes are infix (not at the start of the regex string after unescaping)
 def regex_starts_with_literal?(regex_src, literal)
-  # Strip leading escape sequences to get the effective start chars
-  # Simple check: does the regex string start with the literal (possibly with backslash escapes)?
-  # Unescape `\.` -> `.` in the regex for comparison purposes
   regex_plain_start = regex_src.gsub(/\\(.)/, '\1')
   regex_plain_start.start_with?(literal)
 end
@@ -120,11 +138,10 @@ n.times do |i|
   comma = i < n - 1 ? "," : ""
   pref = prefixes[i]
   is_infix = pref && !regex_starts_with_literal?(strings[i], pref) ? 1 : 0
-  # Infix-prefixed patterns: pass prefix=NULL to AC trie (always-candidate),
-  # the prefix column is kept for documentation but unused by the trie.
   ac_prefix = is_infix == 1 ? nil : pref
-  puts "    /* #{i.to_s.rjust(2)}: #{names[i]}#{is_infix == 1 ? " [infix-prefix]" : ""} */"
-  puts "    { #{c_str(names[i])}, #{c_str(strings[i])}, #{c_str(ac_prefix)}, #{wrapped[i]}, #{is_infix} }#{comma}"
+  bm = ac_prefix.nil? ? BM_INFIX[names[i]] : nil  # only for always-candidates
+  puts "    /* #{i.to_s.rjust(2)}: #{names[i]}#{is_infix == 1 ? " [infix-prefix]" : ""}#{bm ? " [bm:#{bm}]" : ""} */"
+  puts "    { #{c_str(names[i])}, #{c_str(strings[i])}, #{c_str(ac_prefix)}, #{wrapped[i]}, #{is_infix}, #{c_str(bm)} }#{comma}"
 end
 puts "};"
 puts
