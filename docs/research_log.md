@@ -1017,6 +1017,39 @@ with renamed symbols (`ONIG_CFLAGS=-DONIG_EXTERN=static` or a symbol
 prefix), embedding it in the gem with no external dependency. This is
 how SQLite is vendored in many Ruby gems.
 
+### 11.7 Streaming / chunked input support
+
+`mm5_scan` takes a complete buffer and processes it in one shot. It does
+not support streaming input (data arriving in chunks). Three problems arise
+when chunks are processed independently:
+
+1. **AC trie cursor is reset per call.** A pattern prefix that straddles two
+   chunks (e.g., `AKIA` ending exactly at a chunk boundary) is missed.
+2. **Always-candidate `onig_search` sees only one chunk.** Any pattern that
+   straddles the boundary is not found in either chunk.
+3. **Boundary-wrapped patterns need the last byte of the previous chunk** as
+   the lookbehind character.
+
+**Standard fix — overlap buffer:** prepend the last `MAX_PATTERN_LEN` bytes of
+chunk N to chunk N+1 before calling `mm5_scan`. `MAX_PATTERN_LEN` is the
+longest possible match across all 88 patterns (~200 bytes for most; the
+Anthropic key and PEM patterns can exceed that). De-duplicate matches that
+fall inside the overlap region using the accumulated stream offset.
+
+**Cleaner fix — session context:** introduce a caller-owned `mm5_ctx_t` that
+carries the AC trie cursor and the overlap tail across calls:
+
+```c
+mm5_ctx_t *mm5_ctx_new(void);
+size_t     mm5_ctx_scan(mm5_ctx_t *ctx, const char *chunk, size_t len,
+                        mm5_match_t *out, size_t max);
+void       mm5_ctx_free(mm5_ctx_t *ctx);
+```
+
+Match offsets are reported relative to the total stream position (accumulated
+in the context). Estimated implementation: ~100–150 lines on top of v5.
+Not yet prototyped.
+
 ---
 
 ## 12. Conclusion
