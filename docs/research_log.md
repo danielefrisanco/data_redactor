@@ -1157,3 +1157,57 @@ always-candidates) with a well-understood technique and has a clear go/no-go
 threshold: if v7 ≥ 2× over pure-Ruby on the same 1MB payload, PCRE2 JIT is worth
 the portability trade-off. If v7 < 2×, Onigmo remains the right choice and the
 focus should shift to v9 (reducing always-candidates).
+
+---
+
+## 14. Publication Plan
+
+### 14.1 Paper shape
+
+The research has material for a **systems/experience report paper** (12–15 pages):
+
+- **Problem**: C extension 10× slower than pure-Ruby despite being C — root cause
+  diagnosed as glibc `regexec` lacking Boyer-Moore literal pre-filter.
+- **Contribution**: two-stage AC + fast-engine pipeline for mixed-prefix DLP pattern
+  sets; BM pre-filter as worthwhile third stage; characterisation of the always-candidate
+  binding constraint.
+- **Evidence**: six prototypes, reproducible benchmarks, root-cause profiling.
+- **Generalisation**: any system scanning 50–100 heterogeneous regex patterns against
+  text (log scrubbing, DLP, credential scanning) faces the same architectural trade-offs.
+
+### 14.2 Venue recommendations
+
+| Venue | Type | Acceptance rate | Fit | Notes |
+|---|---|---|---|---|
+| **Software: Practice and Experience** (Wiley) | Journal | ~30–40% | ★★★★★ | Explicit scope: "practical experience with new/established software". No travel. 6–12 months to decision. Best first target. |
+| **USENIX ATC** | Conference | ~18% | ★★★★ | Takes experience reports with clear engineering lessons. Competitive but achievable if generalisation is strong. |
+| **EuroSys** | Conference | ~15–18% | ★★★ | Good fit if framed as "C extension performance antipatterns in managed language runtimes." |
+| **ACM OOPSLA** | Conference | ~20–25% | ★★★ | Viable if a principled correctness/false-negative analysis is added. |
+| **USENIX HotOS** (workshop) | Workshop | ~30% | ★★★ | 5-page position paper. Good for getting the "BM filter is the decisive factor" insight out quickly. Low bar, fast feedback. |
+| **arXiv** (cs.PL + cs.DS) | Preprint | N/A | ★★★★★ | Post first — establishes priority immediately. Standard practice before any venue submission. |
+
+### 14.3 Key related work to cite
+
+- **Hyperscan** (Wang et al., USENIX NSDI 2019) — production multi-pattern SIMD matcher. Main "related work" to position against. Disqualified for our use case: x86-only.
+- **BLARE** (Patel et al., PACMMOD/SIGMOD 2023) — regex decomposition for DB query evaluation. Closest structural cousin: same "extract literal + confirm with engine" decomposition. Our always-candidate class = their patterns without extractable literals.
+- **HybridSA** (OOPSLA 2024) — GPU-accelerated Shift-And for multi-pattern matching. Confirms OOPSLA takes practical matching performance papers.
+- **RE#** (POPL 2025) — derivative-based regex with linear-time guarantees. Theory-heavy but same domain.
+- **Zherczeg PCRE JIT paper** — original PCRE JIT design. Relevant for §11.2 (PCRE2 JIT comparison).
+- **Aho & Corasick (1975)**, **Boyer & Moore (1977)**, **Cox (2007)** — foundational algorithms.
+
+### 14.4 What is still needed before submission
+
+1. **Benchmark rigor** — document hardware (CPU model, cache sizes), OS, Ruby/glibc/libonig versions.
+   Add stddev across runs (currently single-run numbers). Add a microbenchmark isolating AC
+   filter overhead from confirmation overhead.
+2. **Profiling evidence** — perf/callgrind showing where cycles go in v2 (glibc) vs v3 (Onigmo).
+   This is the supporting evidence for "BM literal pre-filter is the decisive factor."
+3. **Reproducibility artifact** — package prototypes + benchmark scripts in a self-contained
+   Makefile or Docker image. Most systems venues now require or strongly encourage this.
+4. **Paper writing** — estimated 4–8 weeks at 10–15 h/week given the research log as source.
+
+### 14.5 Recommended path
+
+1. Post preprint to arXiv (cs.PL + cs.DS) once benchmarks are rigorous.
+2. Submit to **Software: Practice and Experience** as primary venue.
+3. If SPE reviewers push back on novelty, revise and retarget **USENIX ATC**.
