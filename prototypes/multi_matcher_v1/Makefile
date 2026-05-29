@@ -10,9 +10,12 @@ LDFLAGS ?=
 ONIG_CFLAGS  = $(shell pkg-config --cflags oniguruma 2>/dev/null || echo "-I/usr/include")
 ONIG_LDFLAGS = -lonig
 
-.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 generate
+PCRE2_CFLAGS  = -DPCRE2_CODE_UNIT_WIDTH=8 $(shell pkg-config --cflags libpcre2-8 2>/dev/null)
+PCRE2_LDFLAGS = -lpcre2-8
 
-all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so
+.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 generate
+
+all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so
 
 # Option B generated header (always regenerate from gem source).
 generate: gen_patterns.rb
@@ -81,7 +84,18 @@ matcher6.so: matcher6.c matcher6.h patterns_generated.h
 smoke6: matcher6
 	./matcher6
 
+# Prototype v7 — 88 patterns, AC + BM + PCRE2 (interpreter and JIT).
+matcher7: matcher7.c matcher7.h patterns_generated.h
+	$(CC) $(CFLAGS) $(PCRE2_CFLAGS) -DMM7_MAIN -o $@ matcher7.c $(LDFLAGS) $(PCRE2_LDFLAGS)
+
+matcher7.so: matcher7.c matcher7.h patterns_generated.h
+	$(CC) $(CFLAGS) $(PCRE2_CFLAGS) -shared -o $@ matcher7.c $(LDFLAGS) $(PCRE2_LDFLAGS)
+
+smoke7: matcher7
+	./matcher7
+
 clean:
 	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so \
 	      matcher4 matcher4.so matcher5 matcher5.so matcher6 matcher6.so \
+	      matcher7 matcher7.so \
 	      patterns_generated.h
