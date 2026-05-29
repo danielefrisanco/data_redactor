@@ -974,10 +974,53 @@ required. The cache flush rate on 1MB input is high due to pattern diversity.
 
 ### 11.2 PCRE2 JIT as an alternative to Onigmo
 
-PCRE2 with JIT compilation emits native machine code for each pattern.
-For always-candidate patterns, PCRE2 JIT + AC filter could outperform
-Onigmo (no bytecode interpretation overhead). Requires `libpcre2-dev`.
-Not yet prototyped.
+PCRE2 with JIT compilation emits native machine code for each pattern at
+`pcre2_jit_compile()` time. Unlike Onigmo (which interprets a bytecode at
+match time), subsequent matches execute compiled native code directly —
+no interpreter loop, no bytecode dispatch.
+
+**Benchmarked speedup vs Oniguruma/Onigmo** (from published sources):
+
+| Pattern class | PCRE2 JIT vs Oniguruma | Source |
+|---|---|---|
+| `\d`, `\w` character-class scan | ~2–3× faster | RecursiveRegexpRaptor |
+| `\d{11}`, `\d{3}-\d{2}-\d{4}` (quantified) | ~3–5× faster (estimated) | Zherczeg PCRE JIT paper (6.36× avg vs interpreter) |
+| Email (`[\w.+-]+@[\w.-]+`) | ~5–10× faster | rust-lang/regex#604 vs Oniguruma |
+| IPv4 (`(\d{1,3}\.){3}\d{1,3}`) | ~2–3× faster | RecursiveRegexpRaptor + OpenResty |
+| Aggregate (18 diverse patterns) | ~2.4× faster | Rust Leipzig benchmark |
+
+PCRE2 JIT vs PCRE2 interpreter (no JIT): 3–8× for typical patterns, up
+to 25× for complex alternations (Zherczeg paper: 6.36× average across 5
+architectures).
+
+**For our pipeline:** the speedup would apply primarily to Group B
+always-candidates (`\d{11}`, SSN, credit card, IPv4) — the 36 patterns
+that get no benefit from the AC filter or BM pre-filter and pay full O(N)
+confirmation cost at every position. For prefix-filtered patterns the AC
+filter already limits how often the engine is called, so the per-call
+speedup is diluted.
+
+**One caveat:** PCRE2 JIT has per-call JIT stack setup overhead. OpenResty
+benchmarks show JIT can be *slower* than the PCRE2 interpreter for trivially
+simple patterns on very small inputs. Not a risk for our workload (~1MB), but
+worth being aware of for the streaming/small-chunk case (§11.7).
+
+**Portability constraints** (see §5 above for full discussion): JIT requires
+`libpcre2` compiled with `--enable-jit` and `mmap(PROT_EXEC)` at runtime.
+Falls back silently to the interpreter on Alpine Linux, minimal distros, and
+sandboxed containers with W^X enforcement. No JIT backend exists for 32-bit
+x86, MIPS, RISC-V, or WebAssembly.
+
+**Conclusion:** PCRE2 JIT is a genuine alternative to Onigmo for Stage 2
+confirmation. It would likely reduce Group B always-candidate cost by 2–5×,
+potentially pushing the overall pipeline from ~1.52× (v5) toward 2–3× over
+pure-Ruby. It has not been prototyped yet.
+
+**TODO — prototype v7:** AC + BM + PCRE2 JIT (same architecture as v5,
+swap `onig_search`/`onig_match` for `pcre2_jit_match`). Link against
+`libpcre2-dev`. Measure head-to-head with v5 on the same 1MB payload.
+If Group B patterns are confirmed 2–5× faster, benchmark total pipeline
+improvement. Requires `libpcre2-dev` (`apt install libpcre2-dev`).
 
 ### 11.3 SIMD acceleration for the AC scan loop
 
@@ -1096,3 +1139,21 @@ no structural literal anchor cannot benefit from the AC filter or BM pre-filter
 and pay full O(N) engine cost per pattern. Reducing this set — either by finding
 structural literals (e.g., SSN always contains `-`) or by giving always-candidates
 a shared single-pass automaton — is the remaining open problem.
+
+---
+
+## 13. Prototype TODO List
+
+Remaining prototypes worth building to answer open questions, in priority order:
+
+| # | Prototype | What it answers | Key dependency |
+|---|---|---|---|
+| **v7** | AC + BM + PCRE2 JIT | Does PCRE2 JIT close the gap for Group B always-candidates (§11.2)? Can we reach 2–3× over pure-Ruby? | `libpcre2-dev` (`apt install libpcre2-dev`) |
+| **v8** | v5 + streaming context (`mm5_ctx_t`) | Does the sliding-window overlap buffer correctly handle cross-chunk matches? What is the overhead vs single-buffer v5? | None (pure C, extends v5) |
+| **v9** | v5 + reduced always-candidate set | If SSN `-` and similar structural literals are exploited to move Group B patterns into the AC filter or BM Group A, how much does the pipeline improve? | Requires pattern analysis + `gen_patterns.rb` update |
+
+**v7 is the highest priority** — it directly targets the binding constraint (Group B
+always-candidates) with a well-understood technique and has a clear go/no-go
+threshold: if v7 ≥ 2× over pure-Ruby on the same 1MB payload, PCRE2 JIT is worth
+the portability trade-off. If v7 < 2×, Onigmo remains the right choice and the
+focus should shift to v9 (reducing always-candidates).
