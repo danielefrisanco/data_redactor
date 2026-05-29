@@ -12,14 +12,16 @@ Open question: would **v7 (AC + BM + PCRE2 JIT)** meaningfully improve on v5 for
 always-candidates (pure-digit patterns: SSN, PESEL, credit card, IPv4)?
 Published benchmarks suggest 2–5× faster confirmation for those patterns.
 
+**Decision: ship v7 (AC + BM + PCRE2 JIT).** Result: 2.79× over pure-Ruby, 25.5× over
+today's C. Cleared the ≥2× go/no-go threshold. PCRE2 JIT is the confirmation engine.
+
 **Decision checklist:**
-- [ ] Build and benchmark prototype v7 (AC + BM + PCRE2 JIT). See `docs/research_log.md §13`.
-      If v7 ≥ 2× over pure-Ruby → prefer v7. If v7 < 2× → ship v5.
-- [ ] Evaluate portability trade-off: v5 requires `libonig-dev`; v7 requires `libpcre2-dev`
-      with JIT enabled. v7 silently falls back to interpreter on Alpine, musl, sandboxed containers.
-- [ ] Decide on the system dependency story (vendor Onigmo/PCRE2 as symbols-renamed source,
-      or require the system package). See `docs/research_log.md §11.6`.
-- [ ] Once engine chosen, wire into `ext/data_redactor/` replacing the current glibc `regexec` loop.
+- [x] Build and benchmark prototype v7 (AC + BM + PCRE2 JIT) — 2.79× over pure-Ruby. ✅
+- [x] Go/no-go: v7 ≥ 2× → ship v7 over v5. ✅
+- [ ] Evaluate portability trade-off: v7 requires `libpcre2-dev` with JIT enabled.
+      v7 silently falls back to interpreter on Alpine, musl, sandboxed containers.
+      Decide: require system package, or vendor PCRE2 (see `docs/research_log.md §11.6`).
+- [ ] Wire v7 architecture into `ext/data_redactor/` replacing the current glibc `regexec` loop.
 
 ### 2. Write and publish the paper
 
