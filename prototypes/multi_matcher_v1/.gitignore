@@ -15,4 +15,6 @@ matcher7.so
 matcher7_plain
 matcher7_plain.so
 matcher7_plain_onig.so
+bench_malloc
+bench_bm_inner
 patterns_generated.h

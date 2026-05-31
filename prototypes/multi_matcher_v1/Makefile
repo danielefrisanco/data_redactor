@@ -108,8 +108,24 @@ smoke7_plain: matcher7_plain
 matcher7_plain_onig.so: matcher7_plain_onig.c matcher7_plain_onig.h patterns_generated.h
 	$(CC) $(CFLAGS) $(ONIG_CFLAGS) -shared -o $@ matcher7_plain_onig.c $(LDFLAGS) $(ONIG_LDFLAGS)
 
+# Standalone micro-benchmarks (no .so — direct C executables).
+bench_malloc: bench_malloc.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c
+	$(CC) $(CFLAGS) -I../../ext/data_redactor \
+	    bench_malloc.c \
+	    ../../ext/data_redactor/patterns.c \
+	    ../../ext/data_redactor/placeholder.c \
+	    -o bench_malloc
+
+bench_bm_inner: bench_bm_inner.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c
+	$(CC) $(CFLAGS) -I../../ext/data_redactor \
+	    bench_bm_inner.c \
+	    ../../ext/data_redactor/patterns.c \
+	    ../../ext/data_redactor/placeholder.c \
+	    -o bench_bm_inner
+
 clean:
 	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so \
 	      matcher4 matcher4.so matcher5 matcher5.so matcher6 matcher6.so \
 	      matcher7 matcher7.so \
+	      bench_malloc bench_bm_inner \
 	      patterns_generated.h
