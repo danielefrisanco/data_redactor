@@ -94,6 +94,20 @@ matcher7.so: matcher7.c matcher7.h patterns_generated.h
 smoke7: matcher7
 	./matcher7
 
+# Prototype v7_plain — 88 patterns, plain PCRE2 sequential (no AC, no BM).
+matcher7_plain: matcher7_plain.c matcher7_plain.h patterns_generated.h
+	$(CC) $(CFLAGS) $(PCRE2_CFLAGS) -DMM7P_MAIN -o $@ matcher7_plain.c $(LDFLAGS) $(PCRE2_LDFLAGS)
+
+matcher7_plain.so: matcher7_plain.c matcher7_plain.h patterns_generated.h
+	$(CC) $(CFLAGS) $(PCRE2_CFLAGS) -shared -o $@ matcher7_plain.c $(LDFLAGS) $(PCRE2_LDFLAGS)
+
+smoke7_plain: matcher7_plain
+	./matcher7_plain
+
+# Prototype plain Onigmo — 88 patterns, plain Onigmo sequential (no AC, no BM).
+matcher7_plain_onig.so: matcher7_plain_onig.c matcher7_plain_onig.h patterns_generated.h
+	$(CC) $(CFLAGS) $(ONIG_CFLAGS) -shared -o $@ matcher7_plain_onig.c $(LDFLAGS) $(ONIG_LDFLAGS)
+
 clean:
 	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so \
 	      matcher4 matcher4.so matcher5 matcher5.so matcher6 matcher6.so \

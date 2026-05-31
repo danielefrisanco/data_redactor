@@ -828,28 +828,40 @@ All 17 test cases pass for both v2 and v3.
 
 ### 8.1 Full benchmark table
 
-| Prototype | Engine | Patterns | ms/iter | vs pure-Ruby | vs today's C |
-|---|---|---|---|---|---|
-| v1 | AC + glibc regexec | 10 | 114.9 | 0.60× (slower) | 2.44× (faster) |
-| v2 | AC + glibc regexec | 88 | ~1178 | ~0.17× | ~1.7× |
-| v3 | AC + Onigmo | 88 | 155.2 | 1.29× | 12.9× |
-| v4 | Thompson NFA + lazy DFA | 88 | 791–818 | 0.22× (slower) | 2.1× |
-| v5 | AC + Onigmo + BM | 88 | 108.0 | 1.34× | 12.7× |
-| v6 | AC + BM + glibc | 88 | 1639.5 | 0.12× (slower) | 1.2× |
-| v7 PCRE2 no-JIT | AC + BM + PCRE2 | 88 | 298.2 | 0.49× (slower) | 4.6× |
-| **v7 PCRE2 JIT** | **AC + BM + PCRE2 JIT** | **88** | **52.7** | **2.79×** | **25.5×** |
+All engines from v5 onward measured on the same machine, same day, same payload
+(fixed seed 42, `bench7_compare.rb`). v1–v4 figures are from earlier separate runs.
 
-Pure-Ruby gsub: 69.4 ms (10 patterns), 144.7 ms (88 patterns, v7 run).
-DataRedactor today: 280.7 ms (10 patterns), 1365.4 ms (88 patterns, v7 run).
+| Engine | Architecture | ms/iter | vs pure-Ruby | vs today's C |
+|---|---|---|---|---|
+| DataRedactor today | glibc regexec sequential | 1244 | 0.11× | 1.0× |
+| Pure-Ruby gsub | Onigmo via Ruby | 141 | 1.0× | — |
+| Plain Onigmo sequential | Onigmo, no AC, no BM | 134 | **1.05×** | 9.3× |
+| v3: AC + Onigmo | AC trie + Onigmo | 155 | 0.91× | 8.0× |
+| v5: AC + Onigmo + BM | AC + BM + Onigmo | 108 | 1.31× | 11.5× |
+| Plain PCRE2 no-JIT | PCRE2 interpreter sequential | 326 | 0.43× | 3.8× |
+| v7: AC + BM + PCRE2 no-JIT | AC + BM + PCRE2 interpreter | 261 | 0.54× | 4.8× |
+| v7: AC + BM + PCRE2 JIT | AC + BM + PCRE2 JIT | 44 | 3.22× | 28.3× |
+| **Plain PCRE2 JIT** | **PCRE2 JIT sequential** | **35.5** | **3.98×** | **35.0×** |
 
-**Benchmark methodology note:** each prototype was benchmarked in a separate
-script run on the same machine. Baselines (pure-Ruby, DataRedactor) are re-measured
-in each run to account for day-to-day variance. v5 and v7 were run on the same day;
-v5 result shown is from its own same-day run (108.0 ms), not the earlier 131 ms figure.
-For publication, a single script measuring all engines on the same payload seed is needed.
+v1 (AC+glibc, 10 patterns): 114.9 ms, 0.60×, 2.44×.
+v4 (Thompson NFA walk, upper bound): 791–818 ms, 0.22×, 2.1×.
+v6 (AC+BM+glibc): 1639 ms, 0.12×, 1.2×.
 
 **v4 note:** the 791–818 ms figure is the `mm4_walk` upper-bound measurement
 (single-pass DFA, no restart). A correct `mm4_scan` would be slower.
+
+**Critical finding — AC+BM pipeline overhead on JIT:**
+- Plain PCRE2 JIT: 35.5 ms
+- AC+BM+PCRE2 JIT: 43.8 ms
+- Pipeline adds **1.23× overhead** when the engine is JIT. The AC trie scan and BM
+  logic cost more than the confirmations they prevent, because JIT confirmation is
+  so cheap.
+
+**Critical finding — plain Onigmo ≈ pure-Ruby:**
+- Plain Onigmo sequential: 134 ms (1.05× over pure-Ruby)
+- Onigmo already has an internal BM pre-filter per pattern. Running 88 patterns
+  sequentially is essentially free compared to glibc. The AC+BM pipeline (v5: 108 ms)
+  adds only ~20% on top of plain Onigmo — it helps, but modestly.
 
 ### 8.2 AC trie scale
 
@@ -874,26 +886,23 @@ These 47 patterns pay full Onigmo scan cost at every input position.
 They are the binding constraint on performance — the AC filter cannot
 help them.
 
-### 8.4 Why the 3× criterion was not met
+### 8.4 Why the 3× criterion was not met with Onigmo — and how PCRE2 JIT cleared it
 
-The kill criterion was ≥3× faster than pure-Ruby gsub. Best achieved: 1.52×
-(v5, AC + Onigmo + BM).
+With Onigmo-based architectures (v3, v5), the best result was 1.34× over pure-Ruby.
+The structural barrier: Onigmo already has its own internal BM pre-filter per pattern.
+Plain sequential Onigmo (no AC, no BM in our code) runs at 134 ms — nearly identical
+to pure-Ruby (141 ms). The AC+BM pipeline added only ~20% improvement on top of that.
+There was no way to reach 3× by optimising around Onigmo: the engine was already
+doing the work.
 
-The gap is structural:
-1. 47/88 always-candidates bypass the AC filter entirely.
-2. For always-candidates without a BM literal (Group B, ~36 patterns), `onig_search`
-   over the full input gives the same cost as pure-Ruby's `gsub` — same engine,
-   same input.
-3. For prefix-filtered patterns (41/88), the AC filter skips most of
-   the input and `onig_match` confirms only at candidate positions.
-   These patterns do beat pure-Ruby per-pattern.
-4. For Group A always-candidates (11 patterns with BM literals), BM
-   pre-filter reduces `onig_search` calls to near-zero except near hits.
-5. The 41/88 filtered + 11 BM-filtered speedup is diluted by the 36 unfiltered.
+PCRE2 JIT breaks this ceiling by reducing per-call cost rather than call count:
+- Plain PCRE2 JIT: 35.5 ms → **3.98× over pure-Ruby**
+- The JIT speedup over PCRE2 interpreter is 9.18× — native code vs bytecode
+- The AC+BM pipeline adds 1.23× overhead on top of plain JIT (net negative)
 
-To reach 3×: reduce the always-candidate set size (find structural literals for
-Group B patterns), or give them a shared single-pass automaton competitive with
-Onigmo (requires RE2-level engineering, see §11.1).
+**Revised conclusion:** the 3× criterion is met by plain PCRE2 JIT sequential at
+3.98×. No shared AC trie or BM pre-filter is needed — or beneficial — when the
+confirmation engine is JIT-compiled.
 
 ---
 
@@ -1159,53 +1168,56 @@ Not yet prototyped.
 
 ## 12. Conclusion
 
-Seven prototypes were built and benchmarked. The final results:
+All engines measured head-to-head, same payload, fixed seed 42 (`bench7_compare.rb`).
 
-| Prototype | vs pure-Ruby | vs today's C | Status |
-|---|---|---|---|
-| v1: AC + glibc (10 pat) | 0.60× | 2.44× | Hypothesis confirmed |
-| v2: AC + glibc (88 pat) | 0.17× | ~1.7× | glibc too slow |
-| v3: AC + Onigmo (88 pat) | 1.29× | 12.9× | Beats pure-Ruby |
-| v4: Thompson NFA + lazy DFA | 0.22× | 2.1× | Upper bound only; not competitive |
-| v5: AC + Onigmo + BM (88 pat) | 1.34× | 12.7× | Good; not good enough |
-| v6: AC + BM + glibc (88 pat) | 0.12× | 1.2× | BM + glibc regresses |
-| v7: AC + BM + PCRE2 no-JIT | 0.49× | 4.6× | Interpreter ≈ glibc |
-| **v7: AC + BM + PCRE2 JIT** | **2.79×** | **25.5×** | **Winner — ship this** |
+| Engine | ms/iter | vs pure-Ruby | vs today's C | Status |
+|---|---|---|---|---|
+| DataRedactor today (glibc) | 1244 | 0.11× | 1.0× | Current state |
+| Plain Onigmo sequential | 134 | 1.05× | 9.3× | ≈ pure-Ruby |
+| v5: AC + Onigmo + BM | 108 | 1.31× | 11.5× | Best Onigmo result |
+| v7: AC + BM + PCRE2 JIT | 44 | 3.22× | 28.3× | Pipeline adds overhead |
+| **Plain PCRE2 JIT sequential** | **35.5** | **3.98×** | **35.0×** | **Winner** |
 
-**The core hypothesis is confirmed and exceeded:** AC trie + PCRE2 JIT + BM
-pre-filter achieves 2.79× over pure-Ruby and 25.5× over today's C extension.
-The ≥2× go/no-go criterion is met comfortably.
+**The decisive factor is PCRE2 JIT, not the AC+BM pipeline.**
 
-**Why PCRE2 JIT wins over Onigmo (v7 vs v5):** Onigmo's BM pre-filter reduces
-*call count* for Group A always-candidates. PCRE2 JIT reduces *per-call cost* for
-all 88 patterns. For our workload the per-call speedup (5.66× JIT vs interpreter)
-dominates — even patterns with no BM literal (Group B) benefit from JIT, whereas
-Onigmo can only help Group A. JIT is the more general optimisation.
+Plain sequential PCRE2 JIT — 88 patterns, no shared trie, no BM filter, just
+JIT-compiled patterns called in a loop — achieves **3.98× over pure-Ruby and
+35× over today's C extension**. It is both the fastest architecture and the
+simplest.
 
-**PCRE2 interpreter ≈ glibc:** without JIT, PCRE2 and glibc regexec behave
-similarly (both ~0.5× pure-Ruby). The engine characteristic — no BM literal
-pre-filter, full NFA evaluation per position — is the bottleneck regardless of
-which POSIX-compatible library implements it.
+**Why the AC+BM pipeline hurts JIT:** the AC trie scan (one table lookup per
+byte) and BM logic add overhead that exceeds the savings from reduced
+`pcre2_jit_match` calls. JIT is so fast (~35 ns/call on a non-matching pattern)
+that calling it is cheaper than filtering. The pipeline adds 1.23× overhead —
+net negative.
 
-**BM pre-filter remains worthwhile:** the filter still reduces `pcre2_jit_match`
-calls for Group A patterns, contributing to v7's margin over a hypothetical
-plain AC + PCRE2 JIT without BM.
+**Why plain Onigmo ≈ pure-Ruby:** Onigmo already has an internal BM pre-filter
+compiled into each pattern at `onig_new` time. Running 88 Onigmo patterns
+sequentially gives essentially the same throughput as 88 Ruby `gsub` calls.
+The AC+BM pipeline (v5) added only ~20% improvement over plain Onigmo (108 vs
+134 ms) — the engine was already doing the work.
 
-**Option D (Thompson NFA/DFA) is not the path forward** at this prototype level.
-The lazy DFA walk (791–818 ms) is slower than every other approach. RE2-level
-engineering (10k–50k LOC) would be required to make it competitive.
+**PCRE2 interpreter ≈ glibc:** without JIT, PCRE2 and glibc both run at
+~0.4–0.5× pure-Ruby. Both lack an internal BM pre-filter and pay full NFA
+evaluation cost at every position. The API differs; the performance does not.
 
-**Best practical path: ship v7 (AC + BM + PCRE2 JIT).** One system dependency
-(`libpcre2-dev`, widely available). JIT silently degrades to interpreter on
-platforms where it is unavailable. 17/17 correctness cases pass.
+**Option D (Thompson NFA/DFA)** is not competitive — 791–818 ms upper bound.
 
-**Paper contribution:** the key finding is that PCRE2 JIT combined with an AC
-trie prefix filter and BM infix pre-filter achieves near-optimal performance for
-mixed-prefix DLP/redaction pattern sets. The per-call JIT speedup is the decisive
-factor — more impactful than reducing call count via AC or BM filtering alone.
-The always-candidate binding constraint remains: Group B patterns (pure-digit
-national IDs) have no structural literal and receive only the JIT speedup, not
-the call-reduction benefit of the AC or BM stages.
+**Architecture to ship: plain PCRE2 JIT sequential.**
+- 88 `pcre2_compile` + `pcre2_jit_compile` calls at init
+- Inner scan loop: same structure as today's glibc extension, `pcre2_jit_match`
+  instead of `regexec`
+- One dependency: `libpcre2-dev` (JIT degrades silently to interpreter if unavailable)
+- No AC trie, no BM tables — simpler code, better results
+
+**Paper contribution:** the central finding inverts the original hypothesis.
+The research started from "AC+BM pipeline is the key optimisation." The result
+shows that **PCRE2 JIT alone outperforms the full pipeline** — per-call cost
+reduction from native code compilation is more impactful than call-count
+reduction from filtering. The AC+BM pipeline is a worthwhile optimisation *only
+when the confirmation engine is slow* (Onigmo, glibc). When JIT is available it
+obsoletes the pipeline entirely. This is a cleaner and more surprising
+contribution than originally anticipated.
 
 ---
 
@@ -1215,17 +1227,14 @@ Remaining prototypes worth building to answer open questions, in priority order:
 
 | # | Prototype | What it answers | Key dependency | Status |
 |---|---|---|---|---|
-| **v7** | AC + BM + PCRE2 JIT | Does PCRE2 JIT close the gap for Group B always-candidates? | `libpcre2-dev` | ✅ DONE — 2.79× over pure-Ruby. Ship this. |
-| **v8** | v7 + streaming context (`mm7_ctx_t`) | Does the overlap buffer correctly handle cross-chunk matches? Overhead vs single-buffer? | None (extends v7) | Not yet started |
-| **v9** | v7 + unified bench script | Run all engines on the same payload seed for publication-quality comparison | None | Not yet started |
+| **v7** | AC + BM + PCRE2 JIT | Does PCRE2 JIT close the gap? | `libpcre2-dev` | ✅ DONE — but pipeline adds overhead vs plain JIT |
+| **plain PCRE2 JIT** | Sequential PCRE2 JIT, no AC, no BM | Is plain JIT faster than the pipeline? | `libpcre2-dev` | ✅ DONE — 3.98×, fastest result |
+| **plain Onigmo** | Sequential Onigmo, no AC, no BM | Does AC+BM help Onigmo? | `libonig-dev` | ✅ DONE — 1.05×, ≈ pure-Ruby |
+| **v8** | Plain PCRE2 JIT + streaming context | Cross-chunk match correctness + overhead | None | Not yet started |
 
-**v7 is complete.** It cleared the ≥2× threshold at 2.79×. PCRE2 JIT is the engine to ship.
-
-**Next priority: v9** — a single benchmark script that runs v3/v5/v7-JIT on the exact
-same 1MB payload with the same random seed, for the publication-quality comparison table
-required in §14.4 (benchmark rigor).
-
-**v8** (streaming) is needed before the gem ships the new engine if any caller uses chunked input.
+**Research is complete.** Plain PCRE2 JIT sequential is the architecture to ship.
+The unified comparison script (`bench7_compare.rb`, fixed seed 42) is the
+publication-quality benchmark table.
 
 ---
 

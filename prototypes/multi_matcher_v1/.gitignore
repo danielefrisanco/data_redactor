@@ -12,4 +12,7 @@ matcher6
 matcher6.so
 matcher7
 matcher7.so
+matcher7_plain
+matcher7_plain.so
+matcher7_plain_onig.so
 patterns_generated.h
