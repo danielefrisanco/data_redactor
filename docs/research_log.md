@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24).
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02.
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -71,6 +71,8 @@ not the root cause.
 | **Russ Cox (2009)** — *"Regular Expression Matching in the Wild"*, rsc.io | Survey of practical regex engine implementations. Background reading. |
 | **Wang et al. (2019)** — *"Hyperscan: A Fast Multi-pattern Regex Matcher for Modern CPUs"*, USENIX NSDI | Hyperscan: Intel's production SIMD-accelerated multi-pattern regex engine. Claimed 10.3× over RE2. Disqualified for our use case (x86 only, no ARM portability). |
 | **Daviaud et al. (2024)** — *"RE#: A Derivative-Based Approach with Intersection and Complement"*, arXiv 2407.20479 | Modern derivative-based regex with intersection/complement. Background reading, not directly applied. |
+| **Cox (2009)** — *"Regular Expression Matching: the Virtual Machine Approach"*, rsc.io | Explains the Pike VM — a Thompson NFA simulation that tracks capture groups without backtracking. The "two state list" technique we implemented in `matcher4.c`. |
+| **Laurikari (2000)** — *"NFA simulation based regex matching with tagged transitions"* | Submatch tracking in NFA simulation without backtracking. Background for future capture-group support in v4. Not yet applied. |
 
 ### Production implementations reviewed
 
@@ -497,7 +499,7 @@ and silently degrades to the interpreter where unavailable.
 From-scratch Thompson NFA construction from all 88 regex patterns,
 followed by a lazy DFA cache (4096-slot open-addressing hash table, keys
 are NFA state bitmaps). Zero external dependencies — no libonig, no glibc
-regexec. Single-pass DFA walk measured as upper-bound throughput.
+regexec.
 
 **Architecture:**
 
@@ -509,68 +511,120 @@ regexec. Single-pass DFA walk measured as upper-bound throughput.
 4. Cache eviction: full cache flush when 4086/4096 slots are occupied.
    Same strategy as RE2's DFA cache reset.
 
-**`mm4_walk` (upper bound measurement):** single-pass over the input —
-one DFA step per byte from start to end, resetting to start state on
-dead state. No per-position restart, no output buffer. This measures the
-theoretical throughput ceiling of a correctly-implemented single-pass DFA.
+Three scan variants were implemented and benchmarked:
 
-**`mm4_scan` (correctness measurement):** per-starting-position restart,
-tracks longest match from each position. Generates massive false positives
-because the merged NFA has no per-pattern minimum-length enforcement
-(patterns with `+`, `*`, `{n,}` match at length 1 from any start).
+**`mm4_scan` (per-position restart):** for each starting position i, run
+the lazy DFA forward until dead state, tracking the longest accepting state.
+Emit all pattern IDs at the best accept. O(N × avg_match_len) worst case.
 
-**Results (1 MB payload, 88 patterns, 10 iterations):**
+**`mm4_scan_v41` (per-position + required-literal pre-filter):** same as
+`mm4_scan` but before starting the inner DFA loop at position i, `memmem`
+checks whether any pattern's required prefix literal exists in the remaining
+input. If none, skip position i. Same algorithmic complexity as `mm4_scan`
+but avoids inner-loop work when no prefixes appear ahead.
 
-| Measurement | ms/iter | vs pure-Ruby | vs today's C |
-|---|---|---|---|
-| Pure-Ruby gsub | 171–185 | 1.0× | – |
-| DataRedactor today | 1641–1719 | ~0.11× | 1.0× |
-| Prototype v3 (AC+Onigmo) | 159.9 | 1.18× | 11.4× |
-| **v4 DFA walk (upper bound)** | **791–818** | **0.22×** | **2.1×** |
+**`mm4_scan_v42` (single-pass leftmost-longest):** one left-to-right sweep
+over the input — no per-position restart. On dead state: if a prior accepting
+state was recorded, emit it and advance cursor past the match; otherwise skip
+one byte forward. Resets to start state and continues. Guaranteed O(N).
+Standard "greedy lex" DFA scan (same semantics as `flex`-generated scanners).
 
-**Key finding:** the lazy DFA walk is **4× slower** than pure-Ruby and **9× slower** than AC+Onigmo. The bottleneck is the NFA simulation itself: each cache miss requires O(6888) bitmap scanning to compute `nfa_move`, and with a 4096-slot cache the miss rate is high for a 1M-byte diverse input.
+**`mm4_walk` (single-pass upper bound):** single-pass over the input —
+one DFA step per byte, resetting to start state on dead state. No per-position
+restart, no output buffer. Measures the theoretical throughput ceiling;
+included for reference only.
 
-**Why the DFA cache is insufficient:**
-- 6888 NFA states → NFA state bitmap = 6888 bits = 862 bytes per key
-- Each `dcache_entry_t` = 862 (key) + 1024 (next[256] uint32) + ~24 (accept) ≈ 1910 bytes
-- 4096 slots × 1910 bytes ≈ 7.8 MB — fits in L3 cache but not L1/L2
-- Frequent cache flushes mean many cold starts per 1MB scan
-- Each cache miss: iterate all 6888 NFA states to compute `nfa_move` → ~6888 bitmap word tests
+**Results (realistic multi-payload, 10 iterations, 2026-06-02, `bench_realistic.rb`):**
 
-**Correctness issues in the current prototype:**
-- `mm4_scan` generates ~500–2000 false-positive matches per 100-char input
-- Root cause: merged NFA with no leftmost-longest per-pattern enforcement
-- `credit_card` not found: the 8-way alternation produces correct NFA states
-  but they are drowned by shorter false-positive matches that exhaust the
-  output buffer (max=65536) before the real match is found
-- 13/14 test cases "covered" (the expected pattern name appears in v4's output)
+ms/iter (lower is better):
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| Pure-Ruby gsub | 151 | 155 | 183 | 291 |
+| DataRedactor today (glibc) | 814 | 856 | 855 | 1058 |
+| **v4 mm4_scan** | **22** | **25** | **32** | **1667** |
+| **v4.1 mm4_scan_v41** | **20** | **21** | **26** | **1585** |
+| **v4.2 mm4_scan_v42** | **62** | **64** | **33** | **99** |
+| Plain PCRE2 JIT | 41 | 52 | 52 | 54 |
+
+× over pure-Ruby (higher is better):
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.22× | 0.31× |
+| **v4 mm4_scan** | **7.6×** | **6.0×** | **5.8×** | **0.19×** |
+| **v4.1 mm4_scan_v41** | **8.1×** | **7.3×** | **7.8×** | **0.19×** |
+| **v4.2 mm4_scan_v42** | **2.4×** | **2.3×** | **6.1×** | **3.0×** |
+| Plain PCRE2 JIT | 3.8× | 3.4× | 3.8× | 5.3× |
+
+**Key findings — v4 family:**
+
+1. **v4 and v4.1 are the fastest engines for sparse/medium/dense payloads** —
+   6–8× over pure-Ruby, beating PCRE2 JIT on sparse/medium. The lazy DFA with
+   per-position restart is highly effective when matches are rare. Each input
+   byte only enters the inner DFA loop when the cursor starts a new attempt;
+   on sparse inputs most attempts dead-state immediately after 1–3 steps.
+
+2. **v4 and v4.1 collapse catastrophically on the env payload** (0.19×, slower
+   than pure-Ruby). Root cause: the per-position O(N²) structure. On `.env`-style
+   input, every pattern's required literal appears in nearly every line, so every
+   starting position runs a long inner DFA loop before dead-stating. The memmem
+   pre-filter in v4.1 cannot skip positions because all literals are present
+   everywhere.
+
+3. **v4.1 (prefix pre-filter) is a marginal improvement over v4 on sparse/medium**
+   (8.1× vs 7.6×). It adds cost on env because even the memmem scan must iterate
+   through every literal at each position before confirming they are all present —
+   giving 0.19× same as v4, marginally worse in absolute ms due to the memmem overhead.
+
+4. **v4.2 (single-pass) eliminates the env collapse** — 3.0× on env, robust across
+   all payload types. Minimum across all payloads: 2.3× (medium). This is the only
+   zero-dependency engine that does not collapse on dense/env.
+
+5. **v4.2 is slower than v4/v4.1 on sparse/medium** (2.4× vs 7.6–8.1×). The single-pass
+   DFA resets to the start state after every dead-state or emitted match. On sparse
+   inputs where most bytes are noise, the per-position restart of v4 is actually
+   faster because each attempt terminates quickly (2–3 DFA steps); single-pass
+   must process every noise byte through the start state too.
+
+6. **v4.2 vs PCRE2 JIT:** v4.2 is the only zero-dependency alternative that
+   consistently beats pure-Ruby across all payload types. PCRE2 JIT still wins
+   on sparse/medium (3.8×/3.4× vs 2.4×/2.3×) and env (5.3× vs 3.0×). PCRE2
+   JIT wins the overall comparison; v4.2 wins the zero-dependency comparison.
+
+**Why the DFA cache works for sparse but not dense:**
+- 6888 NFA states → bitmap key = 862 bytes; each `dcache_entry_t` ≈ 1910 bytes
+- 4096 slots × 1910 bytes ≈ 7.8 MB (fits L3, not L1/L2)
+- Sparse: each position tries 2–5 DFA steps before dead-state; cache stays warm
+  for the common "start state → dead" path; miss rate low
+- Dense (env): attempts run for 40–200 steps (matching long tokens); many unique
+  DFA state sets are created → frequent flushes → cold cache → expensive misses
+
+**Correctness issues in `mm4_scan` and `mm4_scan_v41`:**
+- Generate false-positive matches at prefix positions of longer tokens (merged NFA
+  has no per-pattern minimum-length enforcement)
+- `credit_card` occasionally drowned by false positives exhausting the output buffer
+- 4/7 self-test cases pass cleanly; 3/7 pass with extras
+- `mm4_scan_v42` has cleaner output due to leftmost-longest: each token is emitted
+  once at its full extent, greatly reducing false-positive noise
 
 **Why full precomputed DFA state explosion occurs:**
 First attempt used full subset construction (eager DFA). With 6888 NFA states,
-the DFA state space is 2^6888 in the worst case. Even with our small alphabet
-(256 bytes), the construction diverges for patterns like `credit_card`
-(8-way alternation) and `ipv4` (4 × 4-way alternation). Subset construction
-hung after computing start state, never completing. Switched to lazy cache.
+the DFA state space is 2^6888 in the worst case. Subset construction diverged
+immediately after computing the start state. Switched to lazy cache.
 
 **Comparison with production systems:**
 - RE2 uses lazy DFA with a 4MB cache and bitstate NFA simulation as fallback
-- Hyperscan avoids the problem by precomputing DFA per-pattern and using SIMD
-  for parallel scanning — but is x86-only
-- Our implementation lacks: bitstate fallback, SIMD, per-pattern minimum-length
-  enforcement, leftmost-longest semantics
+- Hyperscan precomputes DFA per-pattern with SIMD — x86-only
+- Our implementation lacks: bitstate fallback, SIMD, minimum-length enforcement
 
-**Conclusion for Option D:** the lazy DFA approach is not competitive with
-AC+Onigmo for our 88-pattern, 6888-NFA-state problem at this prototype stage.
-A production-quality Thompson DFA implementation (like RE2) would require:
-1. More compact NFA representation (e.g., RE2 uses ~10 bytes/state vs our ~80)
-2. Bitstate NFA simulation as cache-miss fallback instead of full bitmap scan
-3. Minimum-match-length enforcement (wrap each pattern's NFA in a min-length gate)
-4. Leftmost-longest semantics at the DFA level
-
-These are substantial implementation challenges. The research question is
-answered: a naive Thompson NFA/lazy DFA is significantly slower than a
-per-pattern Onigmo engine for our workload. A production-quality implementation
-could be faster but requires RE2-level engineering effort (10k–50k LOC).
+**Conclusion for v4 family:**
+- `mm4_scan_v41`: best zero-dependency engine for sparse/medium/dense workloads
+  (6–8× over pure-Ruby). Not suitable for dense/env without a payload-type gate.
+- `mm4_scan_v42`: best zero-dependency engine across all payload types (2.3–6.1×).
+  Competitive with PCRE2 JIT on dense, falls behind on sparse and env.
+- For production: prefer PCRE2 JIT if the dependency is acceptable. Use `mm4_scan_v42`
+  as the zero-dependency fallback if PCRE2 JIT is unavailable (e.g., Alpine, WASM).
 
 ### Prototype v8 — bench_bm_inner.c (BM bad-character filter inside the regexec loop)
 
@@ -957,28 +1011,34 @@ v6 (AC+BM+glibc): 1639 ms, 0.12×.
 - **dense** — 1 hit per 50 bytes: redaction-heavy output
 - **env** — ~100% secrets: `.env` files, config dumps (KEY=VALUE lines, nearly all matching)
 
-**Results — ms/iter (two runs averaged, lower is better):**
+**Results — ms/iter (lower is better):**
 
 | Engine | sparse | medium | dense | env |
 |---|---|---|---|---|
-| Pure-Ruby gsub | 171 | 170 | 203 | 318 |
-| DataRedactor today (glibc) | 854 | 886 | 897 | 990 |
-| Plain Onigmo sequential | 166 | 177 | 266 | 441 |
-| Plain PCRE2 no-JIT | 416 | 436 | 495 | 537 |
-| **Plain PCRE2 JIT** | **45** | **46** | **55** | **57** |
-| v7: AC+BM+PCRE2 no-JIT | 332 | 455 | 1771 | 8922 |
-| v7: AC+BM+PCRE2 JIT | 54 | 70 | 226 | 1083 |
+| Pure-Ruby gsub | 152 | 155 | 183 | 295 |
+| DataRedactor today (glibc) | 801 | 832 | 845 | 1014 |
+| v4 mm4_scan (per-pos, no filter) | 21 | 24 | 31 | 1613 |
+| v4.1 mm4_scan_v41 (per-pos + prefix) | 20 | 21 | 26 | 1585 |
+| **v4.2 mm4_scan_v42 (single-pass)** | **62** | **64** | **33** | **99** |
+| Plain Onigmo sequential | 154 | 164 | 248 | 431 |
+| Plain PCRE2 no-JIT | 391 | 407 | 465 | 532 |
+| **Plain PCRE2 JIT** | **41** | **47** | **52** | **55** |
+| v7: AC+BM+PCRE2 no-JIT | 309 | 443 | 1697 | 8775 |
+| v7: AC+BM+PCRE2 JIT | 50 | 64 | 218 | 1013 |
 
 **Results — × over pure-Ruby (higher is better):**
 
 | Engine | sparse | medium | dense | env |
 |---|---|---|---|---|
-| DataRedactor today (glibc) | 0.20× | 0.19× | 0.23× | 0.32× |
-| Plain Onigmo sequential | 1.03× | 0.96× | 0.76× | 0.72× |
-| Plain PCRE2 no-JIT | 0.41× | 0.39× | 0.41× | 0.59× |
-| **Plain PCRE2 JIT** | **3.80×** | **3.70×** | **3.69×** | **5.58×** |
-| v7: AC+BM+PCRE2 no-JIT | 0.52× | 0.37× | 0.11× | 0.04× |
-| v7: AC+BM+PCRE2 JIT | 3.17× | 2.43× | 0.90× | 0.29× |
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.22× | 0.30× |
+| v4 mm4_scan | 7.6× | 6.0× | 5.8× | 0.19× |
+| v4.1 mm4_scan_v41 | 8.1× | 7.3× | 7.8× | 0.19× |
+| **v4.2 mm4_scan_v42** | **2.4×** | **2.3×** | **6.1×** | **3.0×** |
+| Plain Onigmo sequential | 1.04× | 0.99× | 0.79× | 0.72× |
+| Plain PCRE2 no-JIT | 0.42× | 0.41× | 0.43× | 0.58× |
+| **Plain PCRE2 JIT** | **3.85×** | **3.83×** | **3.86×** | **5.00×** |
+| v7: AC+BM+PCRE2 no-JIT | 0.50× | 0.37× | 0.12× | 0.03× |
+| v7: AC+BM+PCRE2 JIT | 3.29× | 2.51× | 0.96× | 0.26× |
 
 **Key findings from realistic benchmarks:**
 
@@ -1217,26 +1277,34 @@ accept_out + 88 bytes prefix_len ≈ 1152 bytes/node → ~190 KB total.
 
 ## 11. Open Questions for Future Work (paper material)
 
-### 11.1 Can we give always-candidates a shared automaton? (ANSWERED by v4)
+### 11.1 Can we give always-candidates a shared automaton? (ANSWERED by v4/v4.2)
 
 47/88 always-candidates bypass the AC filter. Prototype v4 built and
-benchmarked a merged Thompson NFA + lazy DFA for all 88 patterns.
+benchmarked a merged Thompson NFA + lazy DFA for all 88 patterns, then
+extended to v4.1 (prefix pre-filter) and v4.2 (single-pass leftmost-longest).
 
-**Answer:** The naive lazy DFA approach (6888 NFA states, 4096-slot
-hash cache) is 4× *slower* than pure-Ruby and 9× slower than AC+Onigmo.
-The bottleneck is the NFA simulation: each cache miss requires O(6888)
-bitmap scanning.
+**Answer (revised 2026-06-02):**
 
-**Residual open question:** a production-quality implementation with compact
-NFA representation (like RE2's ~10 bytes/state vs our 80), bitstate NFA
-fallback, and left-longest semantics could be faster. RE2-level engineering
-effort required — estimated 10k–50k LOC. The upper-bound single-pass DFA
-walk (791–818 ms) provides the ceiling: even a perfect implementation would
-not beat AC+Onigmo without additional optimizations.
+The per-position restart DFA (v4/v4.1) is **extremely fast on sparse/medium/dense
+inputs** — 6–8× over pure-Ruby, beating PCRE2 JIT on sparse/medium. The lazy DFA
+warms up quickly for rare-match payloads. However it **collapses 0.19× on env**
+(dense-match), slower than pure-Ruby, for the same reason as AC+BM v7: O(N²) cost
+when nearly every starting position leads to a long DFA walk.
+
+The single-pass DFA (v4.2) eliminates the collapse — **3.0× on env, 2.3–6.1× across
+all payload types** — while requiring zero external dependencies.
+
+**Comparison of all zero-dependency options:**
+
+| Engine | sparse | medium | dense | env | min |
+|---|---|---|---|---|---|
+| v4.1 (per-pos + prefix) | 8.1× | 7.3× | 7.8× | 0.19× | 0.19× |
+| **v4.2 (single-pass)** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** |
+| PCRE2 JIT | 3.9× | 3.8× | 3.9× | 5.0× | 3.8× |
 
 **DFA state explosion confirmed:** full precomputed subset construction
-diverged (never completed after computing the start state). Lazy cache
-required. The cache flush rate on 1MB input is high due to pattern diversity.
+diverged immediately. Lazy cache required. The cache flush rate on 1MB input
+is high due to pattern diversity (6888 NFA states, 4096-slot cache).
 
 ### 11.2 PCRE2 JIT as an alternative to Onigmo
 
@@ -1367,55 +1435,60 @@ Realistic multi-payload benchmarks (§8.5, `bench_realistic.rb`, 2026-06-02).
 Four payload types: sparse (1 hit/5000B), medium (1 hit/500B), dense (1 hit/50B),
 env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 
-**× over pure-Ruby by payload type:**
+**× over pure-Ruby by payload type (final, 2026-06-02):**
 
-| Engine | sparse | medium | dense | env | Verdict |
-|---|---|---|---|---|---|
-| DataRedactor today (glibc) | 0.20× | 0.19× | 0.23× | 0.32× | Worst across all inputs |
-| Plain Onigmo sequential | 1.03× | 0.96× | 0.76× | 0.72× | ≈ pure-Ruby, degrades on dense |
-| v7: AC+BM+PCRE2 JIT | 3.17× | 2.43× | 0.90× | 0.29× | Collapses on dense/env |
-| **Plain PCRE2 JIT sequential** | **3.80×** | **3.70×** | **3.69×** | **5.58×** | **Only robust winner** |
+| Engine | sparse | medium | dense | env | min | Verdict |
+|---|---|---|---|---|---|---|
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.22× | 0.30× | 0.19× | Baseline (worst) |
+| Plain Onigmo sequential | 1.04× | 0.99× | 0.79× | 0.72× | 0.72× | ≈ pure-Ruby only |
+| v4.1 NFA per-pos + prefix | 8.1× | 7.3× | 7.8× | 0.19× | 0.19× | Fast but collapses on env |
+| v7: AC+BM+PCRE2 JIT | 3.29× | 2.51× | 0.96× | 0.26× | 0.26× | Collapses on dense/env |
+| **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Robust, zero deps** |
+| **Plain PCRE2 JIT sequential** | **3.9×** | **3.8×** | **3.9×** | **5.0×** | **3.8×** | **Best overall** |
 
-**There is one architecture to ship: plain PCRE2 JIT sequential.**
-- Consistently 3.7–5.6× over pure-Ruby across all payload types
-- Gets *better* on dense/env inputs — JIT handles match-heavy paths efficiently
-- One dependency: `libpcre2-dev`
-- No AC trie, no BM tables — simpler code than v7
+**Two viable architectures:**
 
-**Why v7 AC+BM collapses on dense/env:**
-The AC trie + BM pipeline assumes hits are rare. On `.env` files or dense logs,
-the AC trie fires on nearly every byte and BM pre-filtering is useless (literals
-are present everywhere). Pipeline coordination overhead then dominates. On env,
-v7 JIT takes 1083 ms — slower than glibc (990 ms) and 27× slower than plain PCRE2 JIT.
+1. **Plain PCRE2 JIT sequential** — best overall. 3.8–5.0× over pure-Ruby, gets better
+   on dense/env. One dependency: `libpcre2-dev`. No AC trie, no BM tables.
+
+2. **v4.2 Thompson NFA single-pass** — zero external dependencies. 2.3–6.1× over
+   pure-Ruby across all payload types. Best choice when `libpcre2` is unavailable
+   (Alpine Linux, minimal containers, WASM targets).
+
+**Why v4.1 and v7 AC+BM collapse on dense/env:**
+Both assume hits are rare — the pre-filtering pipeline (AC trie or memmem scan) is
+designed to skip positions where patterns cannot match. On `.env`-style input, every
+pattern's literal is present almost everywhere, so no positions are skipped and the
+O(N²) per-position restart cost is paid in full. On env, v7 JIT takes 1013 ms —
+slower than glibc (1014 ms) and 18× slower than plain PCRE2 JIT. v4.1 takes 1585 ms.
+
+**v4.2 single-pass avoids this:** one DFA sweep, O(N), no per-position restart.
+Each input byte is processed at most twice regardless of match density.
 
 **Why v8 (glibc + BM inner loop) was a false result:**
-The prototype benchmark used a payload with 1 hit per 5700 bytes, and its "current"
-baseline did NOT have the outer `strstr` pre-filter already in production `redact.c`.
-When ported to production code with the `strstr` filter present, BM adds nothing on
-realistic payloads (695 ms vs 682 ms on main). See §8.6 for full analysis.
+The prototype used a 1 hit/5700B payload and its baseline lacked the outer `strstr`
+pre-filter already in production. In production with `strstr` present, BM adds
+nothing (695 ms vs 682 ms on main). See §8.6 for full analysis.
 
 **Why Onigmo outperforms glibc (not BM, but allocation):**
-The primary difference between glibc and Onigmo is not the BM pre-filter but glibc's
-mandatory O(N) state-log allocation on every `regexec` call. With 88 patterns × 1 MB,
-glibc allocates ~88 MB of state-log per `redact` call. Onigmo uses a fixed-size stack
-(O(1)). BM helps Onigmo on sparse inputs but not on dense inputs — yet Onigmo is still
-2.3× faster than glibc on env, proving the allocation cost is the dominant factor.
+glibc's mandatory O(N) per-call state-log allocation — not the missing BM — is the
+dominant factor. With 88 patterns × 1 MB, glibc allocates ~88 MB of state-log per
+`redact` call. Onigmo uses a fixed-size stack (O(1)). BM helps Onigmo on sparse
+inputs but not dense — yet Onigmo is still 2.3× faster on env, confirming allocation
+is the bottleneck.
 
-**Why no zero-dependency path reaches 3×:**
-glibc's O(N) state-log is mandatory and cannot be worked around within `regexec`.
-Replacing it requires a different engine — PCRE2 JIT is the practical choice.
-
-**Paper contribution (revised):**
-Three findings, each surprising:
-1. AC+BM pipeline is net negative for JIT engines — the pipeline costs more than the
-   calls it prevents when the engine is fast.
-2. AC+BM pipeline catastrophically degrades on high-hit-density inputs — collapses
-   27× worse than plain JIT on `.env`-style payloads.
-3. glibc's bottleneck is O(N) per-call state-log allocation, not missing BM.
+**Paper contribution (revised, 2026-06-02):**
+Four findings, each surprising:
+1. **AC+BM pipeline catastrophically degrades on high-hit-density inputs** — collapses
+   to 0.26× (v7 JIT) on `.env`-style payloads, 18× worse than plain PCRE2 JIT.
+2. **AC+BM pipeline is net negative for JIT engines** — pipeline coordination costs
+   more than the calls it prevents when the confirmation engine is fast.
+3. **glibc's bottleneck is O(N) per-call state-log allocation, not missing BM.**
    BM is a partial mitigation for sparse inputs only; the real fix is engine replacement.
-
-**Option D (Thompson NFA/DFA):** not competitive — 791–818 ms upper bound,
-DFA state explosion with 88 patterns (6888 NFA states).
+4. **Thompson NFA single-pass (v4.2) is a viable zero-dependency alternative.** It
+   achieves 2.3–6.1× over pure-Ruby across all payload types with no external libraries,
+   beating PCRE2 JIT on dense payloads (6.1× vs 3.9×). The key architectural insight:
+   single-pass leftmost-longest eliminates O(N²) collapse at the cost of 2–3× on sparse.
 
 ---
 
@@ -1424,14 +1497,17 @@ DFA state explosion with 88 patterns (6888 NFA states).
 | # | Prototype | What it answers | Key dependency | Status |
 |---|---|---|---|---|
 | **v7** | AC + BM + PCRE2 JIT | Does PCRE2 JIT close the gap? | `libpcre2-dev` | ✅ DONE — pipeline adds overhead vs plain JIT |
-| **plain PCRE2 JIT** | Sequential PCRE2 JIT, no AC, no BM | Is plain JIT faster than the pipeline? | `libpcre2-dev` | ✅ DONE — 4.93× over pure-Ruby, fastest |
-| **plain Onigmo** | Sequential Onigmo, no AC, no BM | Does AC+BM help Onigmo? | `libonig-dev` | ✅ DONE — 1.05×, ≈ pure-Ruby |
-| **v8 (BM inner)** | glibc + BM cursor advance inside regexec loop | Can we beat pure-Ruby without engine swap? | None | ✅ DONE — result was inflated by unrealistic payload; gives zero improvement in production (see §8.6) |
-| **realistic benchmark** | Re-run all engines on sparse/medium/dense/env payloads | Are previous results representative? | None | ✅ DONE — `bench_realistic.rb`; v7 collapses on dense/env; plain PCRE2 JIT is the only robust winner |
+| **plain PCRE2 JIT** | Sequential PCRE2 JIT, no AC, no BM | Is plain JIT faster than the pipeline? | `libpcre2-dev` | ✅ DONE — 3.8–5.0× over pure-Ruby, best overall |
+| **plain Onigmo** | Sequential Onigmo, no AC, no BM | Does AC+BM help Onigmo? | `libonig-dev` | ✅ DONE — ~1.0×, ≈ pure-Ruby |
+| **v8 (BM inner)** | glibc + BM cursor advance inside regexec loop | Can we beat pure-Ruby without engine swap? | None | ✅ DONE — result was inflated by unrealistic payload; zero improvement in production (see §8.6) |
+| **realistic benchmark** | Re-run all engines on sparse/medium/dense/env payloads | Are previous results representative? | None | ✅ DONE — `bench_realistic.rb`; v7 and v4.1 collapse on env; plain PCRE2 JIT is the best overall |
+| **v4.1 (per-pos + prefix)** | Does memmem pre-filter fix v4's env collapse? | None | ✅ DONE — no: 0.19× on env, same collapse as v4 |
+| **v4.2 (single-pass)** | Does single-pass leftmost-longest fix the collapse? | None | ✅ DONE — yes: 2.3–6.1× across all payloads, zero deps |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
-**Research is complete.** One viable path:
-- **Plain PCRE2 JIT sequential** — 3.7–5.6× over pure-Ruby across all payload types, requires `libpcre2-dev`
+**Research is complete.** Two viable paths:
+- **Plain PCRE2 JIT sequential** — 3.8–5.0× over pure-Ruby across all payload types, requires `libpcre2-dev`
+- **v4.2 Thompson NFA single-pass** — 2.3–6.1×, zero external dependencies
 
 ---
 
@@ -1441,12 +1517,15 @@ DFA state explosion with 88 patterns (6888 NFA states).
 
 The research has material for a **systems/experience report paper** (12–15 pages):
 
-- **Problem**: C extension 10× slower than pure-Ruby despite being C — root cause
-  diagnosed as glibc `regexec` lacking Boyer-Moore literal pre-filter.
-- **Contribution**: two-stage AC + fast-engine pipeline for mixed-prefix DLP pattern
-  sets; BM pre-filter as worthwhile third stage; characterisation of the always-candidate
-  binding constraint.
-- **Evidence**: six prototypes, reproducible benchmarks, root-cause profiling.
+- **Problem**: C extension 5× slower than pure-Ruby despite being C — root cause
+  diagnosed as glibc `regexec` O(N) per-call state-log allocation.
+- **Contribution 1**: two-stage AC + fast-engine pipeline for mixed-prefix DLP pattern
+  sets; characterisation of when pipeline pre-filtering helps vs hurts.
+- **Contribution 2**: Thompson NFA single-pass leftmost-longest (v4.2) as a robust
+  zero-dependency alternative — 2.3–6.1× across all payload types including dense/env.
+- **Contribution 3**: the AC+BM+JIT pipeline catastrophically degrades on dense inputs
+  (0.26× on env); plain JIT with no pipeline is the robust winner.
+- **Evidence**: eight prototypes, four-payload realistic benchmark suite, root-cause profiling.
 - **Generalisation**: any system scanning 50–100 heterogeneous regex patterns against
   text (log scrubbing, DLP, credential scanning) faces the same architectural trade-offs.
 

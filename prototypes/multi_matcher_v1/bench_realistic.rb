@@ -12,7 +12,7 @@
 # All engines run on the identical payload bytes (same Random seed per type).
 #
 # Usage:
-#   make matcher7.so matcher7_plain.so matcher7_plain_onig.so bench_bm_inner
+#   make matcher4.so matcher7.so matcher7_plain.so matcher7_plain_onig.so
 #   bundle exec ruby bench_realistic.rb
 
 require "fiddle"
@@ -22,16 +22,37 @@ PROTOTYPE_DIR = __dir__
 GEM_LIB = File.expand_path("../../lib/data_redactor", PROTOTYPE_DIR)
 require GEM_LIB
 
-MATCH_STRIDE = 24  # sizeof(mm7_match_t)
+MATCH_STRIDE = 24  # sizeof(mm4_match_t) = sizeof(mm7_match_t)
 
 # ---------- Load .so files --------------------------------------------------
 
+MM4_HANDLE   = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher4.so"),
+                                   Fiddle::Handle::RTLD_NOW)
 MM7P_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher7_plain.so"),
                                    Fiddle::Handle::RTLD_NOW)
 MM7_HANDLE   = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher7.so"),
                                    Fiddle::Handle::RTLD_NOW)
 MM7PO_HANDLE = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher7_plain_onig.so"),
                                    Fiddle::Handle::RTLD_NOW | 8)  # RTLD_DEEPBIND
+
+module MM4
+  Init  = Fiddle::Function.new(MM4_HANDLE["mm4_init"],      [], Fiddle::TYPE_VOID)
+  Free  = Fiddle::Function.new(MM4_HANDLE["mm4_free"],      [], Fiddle::TYPE_VOID)
+  Scan  = Fiddle::Function.new(MM4_HANDLE["mm4_scan"],
+            [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+             Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  Scan41 = Fiddle::Function.new(MM4_HANDLE["mm4_scan_v41"],
+            [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+             Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  Scan42 = Fiddle::Function.new(MM4_HANDLE["mm4_scan_v42"],
+            [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+             Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  def self.init              = Init.call
+  def self.free              = Free.call
+  def self.scan(inp, buf)    = Scan.call(inp, inp.bytesize, buf, 65536)
+  def self.scan41(inp, buf)  = Scan41.call(inp, inp.bytesize, buf, 65536)
+  def self.scan42(inp, buf)  = Scan42.call(inp, inp.bytesize, buf, 65536)
+end
 
 module MM7P
   Init = Fiddle::Function.new(MM7P_HANDLE["mm7p_init"], [Fiddle::TYPE_INT], Fiddle::TYPE_VOID)
@@ -138,6 +159,7 @@ end
 ITERS = 10
 buf   = Fiddle::Pointer.malloc(MATCH_STRIDE * 65536)
 
+MM4.init;      MM4.free   # warm up NFA compile + DFA cache alloc
 MM7P.init(0);  MM7P.free  # warm up JIT compile
 MM7P.init(1);  MM7P.free
 MM7.init(0);   MM7.free
@@ -147,16 +169,22 @@ MM7PO.init;    MM7PO.free
 puts "Realistic payload benchmark — #{ITERS} iterations per engine per payload"
 puts "All payloads: ~1 MB, fixed seed 42"
 puts
-puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "", "Ruby", "C-today", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT"
+puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
+  "", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT"
 ]
-puts "-" * 90
+puts "-" * 115
 
 PAYLOADS.each do |name, payload|
   t = {}
 
   t[:ruby] = Benchmark.realtime { ITERS.times { pure_ruby_redact(payload) } }
   t[:c]    = Benchmark.realtime { ITERS.times { DataRedactor.redact(payload) } }
+
+  MM4.init
+  t[:v4]   = Benchmark.realtime { ITERS.times { MM4.scan(payload, buf) } }
+  t[:v41]  = Benchmark.realtime { ITERS.times { MM4.scan41(payload, buf) } }
+  t[:v42]  = Benchmark.realtime { ITERS.times { MM4.scan42(payload, buf) } }
+  MM4.free
 
   MM7PO.init
   t[:onig] = Benchmark.realtime { ITERS.times { MM7PO.scan(payload, buf) } }
@@ -179,26 +207,32 @@ PAYLOADS.each do |name, payload|
   MM7.free
 
   ms = t.transform_values { |v| (v / ITERS * 1000).round(1) }
-  base = ms[:ruby]
 
-  puts "%-26s  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f" % [
+  puts "%-26s  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f" % [
     name,
-    ms[:ruby], ms[:c], ms[:onig], ms[:pcre2], ms[:pcre2jit], ms[:v7nojit], ms[:v7jit]
+    ms[:ruby], ms[:c], ms[:v4], ms[:v41], ms[:v42],
+    ms[:onig], ms[:pcre2], ms[:pcre2jit], ms[:v7nojit], ms[:v7jit]
   ]
 end
 
 puts
 puts "All times in ms/iter. Lower is better."
 puts
-puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "× over pure-Ruby", "Ruby", "C-today", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT"
+puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
+  "× over pure-Ruby", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT"
 ]
-puts "-" * 90
+puts "-" * 115
 
 PAYLOADS.each do |name, payload|
   t = {}
   t[:ruby] = Benchmark.realtime { ITERS.times { pure_ruby_redact(payload) } }
   t[:c]    = Benchmark.realtime { ITERS.times { DataRedactor.redact(payload) } }
+
+  MM4.init
+  t[:v4]  = Benchmark.realtime { ITERS.times { MM4.scan(payload, buf) } }
+  t[:v41] = Benchmark.realtime { ITERS.times { MM4.scan41(payload, buf) } }
+  t[:v42] = Benchmark.realtime { ITERS.times { MM4.scan42(payload, buf) } }
+  MM4.free
 
   MM7PO.init
   t[:onig] = Benchmark.realtime { ITERS.times { MM7PO.scan(payload, buf) } }
@@ -223,9 +257,10 @@ PAYLOADS.each do |name, payload|
   base = t[:ruby]
   ratios = t.transform_values { |v| (base / v).round(2) }
 
-  puts "%-26s  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f" % [
+  puts "%-26s  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f" % [
     name,
-    ratios[:ruby], ratios[:c], ratios[:onig], ratios[:pcre2], ratios[:pcre2jit],
+    ratios[:ruby], ratios[:c], ratios[:v4], ratios[:v41], ratios[:v42],
+    ratios[:onig], ratios[:pcre2], ratios[:pcre2jit],
     ratios[:v7nojit], ratios[:v7jit]
   ]
 end
