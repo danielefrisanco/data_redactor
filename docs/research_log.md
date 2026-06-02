@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02.
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02.
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -600,13 +600,91 @@ ms/iter (lower is better):
 - Dense (env): attempts run for 40–200 steps (matching long tokens); many unique
   DFA state sets are created → frequent flushes → cold cache → expensive misses
 
+**Correctness issues — merged NFA architecture (analysis 2026-06-02):**
+
+The merged NFA has a fundamental correctness problem that cannot be fixed with
+post-hoc filters. Investigation proceeded in three phases:
+
+*Phase 1 — initial observation:* `mm4_scan_v42` emitted 20–25 spurious pattern
+IDs per match on any input; plain text `"plain text nothing here"` returned 23
+false positives. Root cause identified as missing per-pattern minimum-length
+enforcement.
+
+*Phase 2 — min-length filter:* Added `ast_min_len()` recursive computation over
+the AST before NFA construction; stored as `g_pat_min_len[88]`. Applied at emit
+time: only emit pattern `p` if span ≥ `g_pat_min_len[p]`. Result: plain text
+dropped from 23 false positives to 0. 5/11 correctness cases passed. Performance
+unaffected (filter runs at accept time only, not per byte).
+
+*Phase 3 — prefix/BM literal filter (attempted, reverted):* Added `memcmp` check
+for non-infix prefix at span start, and `memmem` check for BM literals. When all
+patterns at a DFA accepting state were filtered out, two approaches were tried:
+(a) advance past `best_end` unconditionally — performance dropped 15× because the
+    DFA finds many spurious accepting states and wastes time on memmem calls on
+    long spans; on 1MB dense payload, every word triggers memmem for multiple patterns.
+(b) skip one byte and retry when all bits are filtered — this destroyed the O(N)
+    guarantee, causing 50× slowdown (sparse went from 2.35× to 0.02×).
+Both approaches are incompatible with the O(N) scan. The prefix/BM filters were
+reverted. Only the min-length filter remains in the codebase.
+
+*Root cause of remaining failures (unfixable):*
+
+The merged NFA has no per-pattern "activation" mechanism. All 88 pattern NFAs
+share a common start state. At any position, the DFA is simultaneously following
+all 88 patterns' sub-automata. Patterns with `[A-Za-z]+`, `[A-Za-z0-9]+`,
+`[^[:space:]]+` etc. — including `mongodb_connection_string`, `uri_with_password`,
+`bearer_token`, `aws_s3_presigned_url` — have very short minimum lengths (12–20
+chars) and their NFA accept bits appear in DFA states reachable from any alphanumeric
+starting byte. In the v42 single-pass scan:
+
+- Starting from position 0, the DFA immediately follows the `mongodb_connection_string`
+  and `uri_with_password` paths alongside the correct pattern
+- On a 20+ byte token, the DFA reaches an accept state with accept bits set for
+  multiple patterns including many spurious ones
+- The prefix filter removes spurious patterns, but also removes cases where the
+  *correct* pattern's match window was consumed (v42 committed `[0, L)` to a
+  `mongodb` span, then advanced cursor to `L`, missing the correct pattern's start)
+
+*Concrete examples:*
+
+- `"eyJhbGci...SflK..."` (JWT): DFA reaches accept with `aws_s3_presigned_url`,
+  `mongodb_connection_string`, `bearer_token` bits set at span 0..92. `jwt` bit NOT
+  set because the merged DFA's accept state for `jwt` requires having consumed
+  `eyJ{10+}.eyJ{10+}.{1+}` — but the DFA entered an unrelated accept state earlier
+  (at a longer span that satisfies `mongodb`'s min-length but not `jwt`'s full regex).
+
+- `"user@example.com"`: The `email` accept bit only appears in `mm4_scan` when
+  starting from position 8 (`@example.com` onwards). The v42 single-pass starts at
+  position 0 where `uri_with_password` and `mongodb_connection_string` match
+  `user@example.com` as a whole (min-len passes, but no prefix so they get filtered).
+  The v42 scan then skips the entire span and misses the `email` match.
+
+*Why this is unfixable without per-pattern isolation:*
+
+The merged DFA state is a set of NFA states from all 88 patterns simultaneously.
+There is no way to distinguish "I am at an accepting state for pattern X" from
+"I am at a state where X's accept bit coincidentally appears due to NFA state overlap
+with the path I actually followed." This is the fundamental cost of the NFA merge —
+pattern semantics are lost in the combined DFA.
+
+A correct implementation would require either:
+1. Separate per-pattern DFAs (no merge) — O(N×P) cost, same as current glibc approach
+2. Submatch tracking per pattern ID through the merged DFA — equivalent to running
+   P parallel simulations, O(N×P) again
+3. After v42 finds a span, verify each candidate pattern with a quick per-span
+   per-pattern NFA simulation — adds O(P) per match, acceptable only if matches
+   are rare (not env payloads)
+
+None of these preserve the O(N) single-pass property that makes v4.2 fast. The
+benchmarked 2.3–6.1× performance is real, but correctness is 4/13 (31%) on a
+representative test set of 13 patterns.
+
 **Correctness issues in `mm4_scan` and `mm4_scan_v41`:**
-- Generate false-positive matches at prefix positions of longer tokens (merged NFA
-  has no per-pattern minimum-length enforcement)
-- `credit_card` occasionally drowned by false positives exhausting the output buffer
-- 4/7 self-test cases pass cleanly; 3/7 pass with extras
-- `mm4_scan_v42` has cleaner output due to leftmost-longest: each token is emitted
-  once at its full extent, greatly reducing false-positive noise
+- Generate false-positive matches at prefix positions of longer tokens
+- With min-length filter applied: false positive count reduced but structural
+  overlap issue (same root cause as v42) remains
+- Per-position restart makes the problem worse: every starting position finds
+  every pattern that can match from that byte
 
 **Why full precomputed DFA state explosion occurs:**
 First attempt used full subset construction (eager DFA). With 6888 NFA states,
@@ -616,15 +694,18 @@ immediately after computing the start state. Switched to lazy cache.
 **Comparison with production systems:**
 - RE2 uses lazy DFA with a 4MB cache and bitstate NFA simulation as fallback
 - Hyperscan precomputes DFA per-pattern with SIMD — x86-only
-- Our implementation lacks: bitstate fallback, SIMD, minimum-length enforcement
+- Our implementation lacks: bitstate fallback, SIMD, per-pattern activation
 
 **Conclusion for v4 family:**
-- `mm4_scan_v41`: best zero-dependency engine for sparse/medium/dense workloads
-  (6–8× over pure-Ruby). Not suitable for dense/env without a payload-type gate.
-- `mm4_scan_v42`: best zero-dependency engine across all payload types (2.3–6.1×).
-  Competitive with PCRE2 JIT on dense, falls behind on sparse and env.
-- For production: prefer PCRE2 JIT if the dependency is acceptable. Use `mm4_scan_v42`
-  as the zero-dependency fallback if PCRE2 JIT is unavailable (e.g., Alpine, WASM).
+- `mm4_scan_v41`: best zero-dependency engine for sparse/medium/dense payloads
+  (6–8× over pure-Ruby) but **not production-ready** — correctness 4/13 (31%).
+- `mm4_scan_v42`: fast across all payload types (2.3–6.1×) but **not production-ready**
+  for the same reason. The merged NFA architecture cannot produce correct per-pattern
+  matches when patterns have overlapping character alphabets.
+- **The v4 family is suitable for research/benchmarking only.** The per-pattern NFA
+  architecture (v7/PCRE2 JIT) is required for production correctness.
+- For production: PCRE2 JIT is the correct path. The v4 performance results are
+  interesting as a research datapoint but the architecture is not viable for the gem.
 
 ### Prototype v8 — bench_bm_inner.c (BM bad-character filter inside the regexec loop)
 
@@ -1283,7 +1364,7 @@ accept_out + 88 bytes prefix_len ≈ 1152 bytes/node → ~190 KB total.
 benchmarked a merged Thompson NFA + lazy DFA for all 88 patterns, then
 extended to v4.1 (prefix pre-filter) and v4.2 (single-pass leftmost-longest).
 
-**Answer (revised 2026-06-02):**
+**Answer (revised 2026-06-02, correctness analysis added 2026-06-02):**
 
 The per-position restart DFA (v4/v4.1) is **extremely fast on sparse/medium/dense
 inputs** — 6–8× over pure-Ruby, beating PCRE2 JIT on sparse/medium. The lazy DFA
@@ -1293,6 +1374,15 @@ when nearly every starting position leads to a long DFA walk.
 
 The single-pass DFA (v4.2) eliminates the collapse — **3.0× on env, 2.3–6.1× across
 all payload types** — while requiring zero external dependencies.
+
+**Critical finding (correctness analysis 2026-06-02):** The merged NFA architecture
+is not production-ready. Correctness testing with min-length + prefix filters gave
+4/13 (31%) on a representative test set. Root cause: the merged DFA cannot isolate
+per-pattern semantics when patterns share overlapping character alphabets. See §5
+correctness section for full analysis. **v4.2 benchmarks remain valid as research
+datapoints; the architecture is not viable for the gem.** Only a partial subset of
+patterns with mutually exclusive character alphabets could safely use a merged NFA
+(see §11.1 addendum on selective merging).
 
 **Comparison of all zero-dependency options:**
 
@@ -1305,6 +1395,35 @@ all payload types** — while requiring zero external dependencies.
 **DFA state explosion confirmed:** full precomputed subset construction
 diverged immediately. Lazy cache required. The cache flush rate on 1MB input
 is high due to pattern diversity (6888 NFA states, 4096-slot cache).
+
+**§11.1 Addendum — Selective NFA merging (not yet prototyped):**
+
+The full-merge approach is unsound. A selective-merge strategy merges only
+pattern subgroups whose character alphabets are mutually exclusive at every
+accepting position. Candidate groups:
+
+- **IBANs (20 patterns):** All start with a unique 2-letter country code
+  (`DE`, `HU`, `PL`, etc.) — no two IBANs share the same prefix. A merged IBAN
+  NFA would branch immediately on byte 0–1 and each branch leads to exactly one
+  pattern. Zero alphabet overlap between branches after the country-code split.
+  Could reduce 20 separate NFA calls to 1 DFA sweep.
+
+- **`https://` URL patterns (4–6 patterns):** `aws_s3_presigned_url`,
+  `slack_webhook_url`, `sentry_dsn`, `microsoft_teams_webhook` all start with
+  `https://`. After consuming that literal, they diverge at the next host
+  component. Merged NFA would run 1 DFA pass instead of 6 per `https://` hit.
+
+- **Pure-digit boundary-wrapped patterns:** `us_ssn`, `us_itin`, `canadian_sin`,
+  `korean_rrn`, `danish_cpr`, `swiss_ahv`, `swedish_personnummer`, etc. These only
+  consume `[0-9]` and `-`/`.`/` ` separators. They cannot conflict with
+  letter-starting patterns and could be merged into one digit-only DFA.
+
+Patterns that CANNOT be merged: `email`, `uri_with_password`,
+`mongodb_connection_string`, `jwt`, `bearer_token`, `aws_secret_access_key`,
+`aws_access_key_id` — these all open with `[A-Za-z0-9]+` and semantically overlap.
+
+Expected benefit: 3 merged DFAs (IBAN, URL, digit) + 60–65 separate NFA calls
+instead of 88. Estimate: 25–30% reduction in NFA call count. Not yet prototyped.
 
 ### 11.2 PCRE2 JIT as an alternative to Onigmo
 
@@ -1443,17 +1562,20 @@ env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 | Plain Onigmo sequential | 1.04× | 0.99× | 0.79× | 0.72× | 0.72× | ≈ pure-Ruby only |
 | v4.1 NFA per-pos + prefix | 8.1× | 7.3× | 7.8× | 0.19× | 0.19× | Fast but collapses on env |
 | v7: AC+BM+PCRE2 JIT | 3.29× | 2.51× | 0.96× | 0.26× | 0.26× | Collapses on dense/env |
-| **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Robust, zero deps** |
-| **Plain PCRE2 JIT sequential** | **3.9×** | **3.8×** | **3.9×** | **5.0×** | **3.8×** | **Best overall** |
+| **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Fast but not correct (31%)** |
+| **Plain PCRE2 JIT sequential** | **3.9×** | **3.8×** | **3.9×** | **5.0×** | **3.8×** | **Best overall, correct** |
 
-**Two viable architectures:**
+**One viable production architecture:**
 
 1. **Plain PCRE2 JIT sequential** — best overall. 3.8–5.0× over pure-Ruby, gets better
-   on dense/env. One dependency: `libpcre2-dev`. No AC trie, no BM tables.
+   on dense/env. One dependency: `libpcre2-dev`. No AC trie, no BM tables. Correct.
 
-2. **v4.2 Thompson NFA single-pass** — zero external dependencies. 2.3–6.1× over
-   pure-Ruby across all payload types. Best choice when `libpcre2` is unavailable
-   (Alpine Linux, minimal containers, WASM targets).
+**v4.2 as a research result:** v4.2 performance is a valid datapoint showing that
+single-pass leftmost-longest Thompson NFA eliminates O(N²) collapse. It is not
+production-ready: the merged NFA cannot distinguish per-pattern semantics when
+patterns have overlapping character alphabets (correctness 4/13, 31%). See §5 for
+full analysis. A selective-merge variant (patterns with mutually exclusive alphabets
+only) could recover correctness at the cost of reduced coverage — not yet prototyped.
 
 **Why v4.1 and v7 AC+BM collapse on dense/env:**
 Both assume hits are rare — the pre-filtering pipeline (AC trie or memmem scan) is
@@ -1485,10 +1607,11 @@ Four findings, each surprising:
    more than the calls it prevents when the confirmation engine is fast.
 3. **glibc's bottleneck is O(N) per-call state-log allocation, not missing BM.**
    BM is a partial mitigation for sparse inputs only; the real fix is engine replacement.
-4. **Thompson NFA single-pass (v4.2) is a viable zero-dependency alternative.** It
-   achieves 2.3–6.1× over pure-Ruby across all payload types with no external libraries,
-   beating PCRE2 JIT on dense payloads (6.1× vs 3.9×). The key architectural insight:
-   single-pass leftmost-longest eliminates O(N²) collapse at the cost of 2–3× on sparse.
+4. **Thompson NFA single-pass (v4.2) demonstrates O(N²) collapse elimination** — 2.3–6.1×
+   over pure-Ruby, beating PCRE2 JIT on dense payloads (6.1× vs 3.9×). However the merged
+   NFA architecture produces incorrect results (4/13, 31%) because overlapping character
+   alphabets prevent per-pattern semantic isolation in the shared DFA. The performance
+   result is valid; the architecture requires per-pattern DFA isolation for correctness.
 
 ---
 
@@ -1502,12 +1625,15 @@ Four findings, each surprising:
 | **v8 (BM inner)** | glibc + BM cursor advance inside regexec loop | Can we beat pure-Ruby without engine swap? | None | ✅ DONE — result was inflated by unrealistic payload; zero improvement in production (see §8.6) |
 | **realistic benchmark** | Re-run all engines on sparse/medium/dense/env payloads | Are previous results representative? | None | ✅ DONE — `bench_realistic.rb`; v7 and v4.1 collapse on env; plain PCRE2 JIT is the best overall |
 | **v4.1 (per-pos + prefix)** | Does memmem pre-filter fix v4's env collapse? | None | ✅ DONE — no: 0.19× on env, same collapse as v4 |
-| **v4.2 (single-pass)** | Does single-pass leftmost-longest fix the collapse? | None | ✅ DONE — yes: 2.3–6.1× across all payloads, zero deps |
+| **v4.2 (single-pass)** | Does single-pass leftmost-longest fix the collapse? | None | ✅ DONE — yes: 2.3–6.1×; **but** correctness 4/13 (31%) — merged NFA not viable |
+| **v4.2 correctness analysis** | Why does merged NFA produce false/missed matches? | None | ✅ DONE — overlapping character alphabets; per-pattern DFAs required |
+| **selective NFA merge** | Can we merge a subset of non-overlapping patterns? | None | Not yet started (see §11.1 addendum) |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
-**Research is complete.** Two viable paths:
-- **Plain PCRE2 JIT sequential** — 3.8–5.0× over pure-Ruby across all payload types, requires `libpcre2-dev`
-- **v4.2 Thompson NFA single-pass** — 2.3–6.1×, zero external dependencies
+**Research conclusion:** One viable production path:
+- **Plain PCRE2 JIT sequential** — 3.8–5.0× over pure-Ruby, requires `libpcre2-dev`, correct
+
+**v4.2 as a research result only:** 2.3–6.1× performance valid; correctness 4/13 (31%); architecture not viable for production without selective-merge variant
 
 ---
 

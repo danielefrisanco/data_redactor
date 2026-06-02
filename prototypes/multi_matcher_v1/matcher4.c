@@ -224,6 +224,37 @@ static ast_node_t *parse_regex(const char *src) {
 }
 
 /* ========================================================================
+ * 2b. Minimum-match-length computation (AST walk)
+ * ======================================================================== */
+
+static size_t ast_min_len(const ast_node_t *n) {
+    if (!n) return 0;
+    switch (n->type) {
+    case AST_LITERAL:     return 1;
+    case AST_CCLASS:      return 1;
+    case AST_DOT:         return 1;
+    case AST_ANCHOR_BOL:  return 0;
+    case AST_ANCHOR_EOL:  return 0;
+    case AST_CONCAT:      return ast_min_len(n->left) + ast_min_len(n->right);
+    case AST_ALT: {
+        size_t l = ast_min_len(n->left);
+        size_t r = ast_min_len(n->right);
+        return l < r ? l : r;
+    }
+    case AST_REPEAT: {
+        if (n->lo == 0) return 0;
+        return (size_t)n->lo * ast_min_len(n->left);
+    }
+    }
+    return 0;
+}
+
+/* Per-pattern minimum match lengths and prefix lengths; populated in mm4_init(). */
+static size_t g_pat_min_len[MM88_NUM_PATTERNS];
+static size_t g_pat_pfx_len[MM88_NUM_PATTERNS];  /* strlen(prefix) or 0 */
+static size_t g_pat_bml_len[MM88_NUM_PATTERNS];  /* strlen(bm_literal) or 0 */
+
+/* ========================================================================
  * 3. Thompson NFA
  * ======================================================================== */
 
@@ -507,6 +538,7 @@ void mm4_init(void) {
         if (MM88_PATTERNS[p].boundary_wrapped)
             src = to_free = make_wrapped(src);
         ast_node_t *ast = parse_regex(src);
+        g_pat_min_len[p] = ast_min_len(ast);
         free(to_free);
         frag_t frag = build_nfa(ast);
         ast_free(ast);
@@ -539,6 +571,13 @@ void mm4_init(void) {
 
     /* Allocate lazy DFA cache */
     g_dc = xcalloc(DCACHE_CAP, sizeof(*g_dc));
+
+    /* Pre-compute prefix and BM literal lengths to avoid strlen in hot path */
+    for (int p = 0; p < MM88_NUM_PATTERNS; p++) {
+        const mm88_pattern_def_t *pd = &MM88_PATTERNS[p];
+        g_pat_pfx_len[p] = (pd->prefix && !pd->prefix_is_infix) ? strlen(pd->prefix) : 0;
+        g_pat_bml_len[p] = pd->bm_literal ? strlen(pd->bm_literal) : 0;
+    }
 
     build_prefix_table();
 
@@ -592,17 +631,20 @@ size_t mm4_scan(const char *input, size_t len, mm4_match_t *out, size_t max) {
         }
 
         if (best_slot >= 0) {
+            size_t span = best_end - i;
             uint64_t a0 = g_dc[best_slot].accept[0];
             uint64_t a1 = g_dc[best_slot].accept[1];
             while (a0 && count<max) {
                 int bit=__builtin_ctzll(a0);
-                out[count++]=(mm4_match_t){bit,i,best_end-i};
                 a0&=a0-1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++]=(mm4_match_t){bit,i,span};
             }
             while (a1 && count<max) {
                 int bit=64+__builtin_ctzll(a1);
-                out[count++]=(mm4_match_t){bit,i,best_end-i};
                 a1&=a1-1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++]=(mm4_match_t){bit,i,span};
             }
         }
     }
@@ -717,17 +759,20 @@ size_t mm4_scan_v41(const char *input, size_t len,
         }
 
         if (best_slot >= 0) {
+            size_t span = best_end - i;
             uint64_t a0 = g_dc[best_slot].accept[0];
             uint64_t a1 = g_dc[best_slot].accept[1];
             while (a0 && count < max) {
                 int bit = __builtin_ctzll(a0);
-                out[count++] = (mm4_match_t){bit, i, best_end - i};
                 a0 &= a0 - 1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++] = (mm4_match_t){bit, i, span};
             }
             while (a1 && count < max) {
                 int bit = 64 + __builtin_ctzll(a1);
-                out[count++] = (mm4_match_t){bit, i, best_end - i};
                 a1 &= a1 - 1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++] = (mm4_match_t){bit, i, span};
             }
         }
     }
@@ -788,20 +833,25 @@ size_t mm4_scan_v42(const char *input, size_t len,
         if (next == 0 || i == len) {
             /* Dead state or end of input. */
             if (best_slot >= 0) {
-                /* Emit all patterns that accepted at best_end. */
+                /* Emit patterns that accepted at best_end, meet min-length,
+                 * and whose prefix/BM literal is present in the span. */
+                size_t span = best_end - match_start;
+                const char *sp = input + match_start;
                 uint64_t a0 = g_dc[best_slot].accept[0];
                 uint64_t a1 = g_dc[best_slot].accept[1];
                 while (a0 && count < max) {
                     int bit = __builtin_ctzll(a0);
-                    out[count++] = (mm4_match_t){bit, match_start, best_end - match_start};
                     a0 &= a0 - 1;
+                    if (span >= g_pat_min_len[bit])
+                        out[count++] = (mm4_match_t){bit, match_start, span};
                 }
                 while (a1 && count < max) {
                     int bit = 64 + __builtin_ctzll(a1);
-                    out[count++] = (mm4_match_t){bit, match_start, best_end - match_start};
                     a1 &= a1 - 1;
+                    if (span >= g_pat_min_len[bit])
+                        out[count++] = (mm4_match_t){bit, match_start, span};
                 }
-                /* Resume scan from end of emitted match. */
+                /* Advance past the span. */
                 i = best_end;
                 match_start = best_end;
             } else {
