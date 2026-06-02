@@ -23,6 +23,25 @@ today's C. Cleared the ≥2× go/no-go threshold. PCRE2 JIT is the confirmation 
       Decide: require system package, or vendor PCRE2 (see `docs/research_log.md §11.6`).
 - [ ] Wire v7 architecture into `ext/data_redactor/` replacing the current glibc `regexec` loop.
 
+### 1b. Legal check before shipping BM implementation
+
+Before porting the Boyer-Moore inner-loop implementation from `bench_bm_inner.c`
+into the gem's `redact.c` / `scan.c`, verify that the specific BM bad-character
+algorithm we wrote is not a copy (or near-copy) of Onigmo's or PCRE2 JIT's source.
+
+- [x] Compare `bm_find` in `bench_bm_inner.c` against Onigmo's `bm_search` in
+      `regcomp.c` / `regexec.c` (BSD-2 licensed — compatible, but we should not
+      copy code verbatim without attribution).
+- [x] Compare against PCRE2's study/JIT code to confirm no overlap.
+- [x] Standard bad-character BM (Horspool variant) is public domain / textbook
+      algorithm — confirm our implementation is derived from the algorithm
+      description, not from either project's source code.
+- [x] **Conclusion (2026-06-02):** no copying. Our `build_bm_tables` + `bm_find`
+      is the Horspool (1980) bad-character-only variant — ~20 lines, identical to
+      any textbook implementation. Onigmo's `bm_search` uses the same algorithm
+      because it is the algorithm; structural similarity is inevitable, not
+      indicative of copying. No attribution or rewrite needed.
+
 ### 2. Write and publish the paper
 
 Research log at `docs/research_log.md` is the source of truth. Contains all prototype data,
