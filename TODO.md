@@ -1,5 +1,53 @@
 # TODO
 
+## Multi-pattern matcher research (branch `feat/matcher-prototype-v1`)
+
+### 1. Decide which prototype to implement in the gem
+
+Six prototypes benchmarked. Decision required before any production work starts.
+
+Current best result: **v5 (AC + Onigmo + BM) — 1.52× over pure-Ruby, 15.2× over today's C**.
+
+Open question: would **v7 (AC + BM + PCRE2 JIT)** meaningfully improve on v5 for Group B
+always-candidates (pure-digit patterns: SSN, PESEL, credit card, IPv4)?
+Published benchmarks suggest 2–5× faster confirmation for those patterns.
+
+**Decision: ship v7 (AC + BM + PCRE2 JIT).** Result: 2.79× over pure-Ruby, 25.5× over
+today's C. Cleared the ≥2× go/no-go threshold. PCRE2 JIT is the confirmation engine.
+
+**Decision checklist:**
+- [x] Build and benchmark prototype v7 (AC + BM + PCRE2 JIT) — 2.79× over pure-Ruby. ✅
+- [x] Go/no-go: v7 ≥ 2× → ship v7 over v5. ✅
+- [ ] Evaluate portability trade-off: v7 requires `libpcre2-dev` with JIT enabled.
+      v7 silently falls back to interpreter on Alpine, musl, sandboxed containers.
+      Decide: require system package, or vendor PCRE2 (see `docs/research_log.md §11.6`).
+- [ ] Wire v7 architecture into `ext/data_redactor/` replacing the current glibc `regexec` loop.
+
+### 2. Write and publish the paper
+
+Research log at `docs/research_log.md` is the source of truth. Contains all prototype data,
+benchmark methodology, root-cause analysis, related work, and open questions.
+
+**Recommended path:**
+1. [ ] Complete benchmark rigor: document hardware, OS, Ruby/glibc versions; add stddev across runs;
+       add a microbenchmark isolating AC filter overhead from confirmation overhead.
+2. [ ] Add profiling evidence (perf/callgrind): show where cycles go in v2 (glibc) vs v3 (Onigmo)
+       to support the "BM literal pre-filter is the decisive factor" claim.
+3. [ ] Post preprint to **arXiv** (categories: `cs.PL` + `cs.DS`) — establishes priority, no peer review.
+4. [ ] Submit to **Software: Practice and Experience** (Wiley, Q2 journal) as the primary venue.
+       Scope: "practical experience with new and established software" — direct fit.
+       Timeline: ~6–12 months to decision. No conference travel required.
+5. [ ] If SPE reviewers push back on novelty: retarget **USENIX ATC** (experience report track).
+
+**Paper shape:** systems/experience report, 12–15 pages.
+Core contribution: two-stage AC + fast-engine pipeline is near-optimal for mixed-prefix DLP pattern
+sets; BM pre-filter is a worthwhile third stage; always-candidates are the binding constraint.
+Key related work to cite: Hyperscan (NSDI 2019), BLARE (SIGMOD 2023), HybridSA (OOPSLA 2024).
+
+**Estimated effort from current state:** 3–4 months part-time (10–15 h/week).
+
+---
+
 ## References
 - https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
 - https://github.com/advanced-security/secret-scanning-custom-patterns

@@ -260,7 +260,8 @@ These get answered by the prep PRs and inform the Phase 1/2 design:
 ## What this plan deliberately does NOT include
 
 - Option H (use Onigmo) — explicitly skipped per 2026-05-23 decision.
-  Documented in `TODO.md` as a fallback if Phases 1+2 fail.
+  Documented in `TODO.md` as a fallback if Phases 1+2 fail. **Now
+  reconsidered as a composable layer — see Prototype Results below.**
 - Options C, D (REG_NOSUB, bound greedy quantifiers) — marginal wins on
   the wrong axis. Dead code once Phase 2 ships.
 - Library extraction — deferred to after Phase 2 proves the design.
@@ -270,3 +271,138 @@ These get answered by the prep PRs and inform the Phase 1/2 design:
 - README rewrite — the perf-disclosure entry stays as-is until Phase 2
   beats Ruby. Then it becomes a feature paragraph instead of a
   disclaimer.
+
+---
+
+## Prototype results and next options
+
+**Added 2026-05-23** (v1/v2). **Updated 2026-05-24** (v3/Option A complete).
+
+### Summary of all prototype results
+
+| Prototype | Patterns | Confirmation engine | ms/iter | vs pure-Ruby | Status |
+|---|---|---|---|---|---|
+| v1 — matcher.c | 10 (hardcoded) | glibc regexec | 114.9 | 0.6× | bottleneck isolated |
+| v2 — matcher2.c | 88 (generated) | glibc regexec | ~160 | ~1.25× | Option B complete |
+| v3 — matcher3.c | 88 (generated) | Onigmo (libonig) | 159.9 | **1.18×** | **Option A complete** |
+
+Pure-Ruby gsub baseline: ~190 ms/iter (88 patterns, 1 MB).
+Today's C engine: ~1800 ms/iter (88 patterns, 1 MB).
+
+### Key findings
+
+**AC filter works at scale:** 167 trie nodes for 88 patterns, same
+O(N) linear scan. The filter gives 11× over today's C engine.
+
+**Onigmo closes the Ruby gap:** replacing glibc regexec with Onigmo
+brings the confirmation step from slower-than-Ruby to beating Ruby
+(1.18×). The improvement is entirely in the Stage 2 engine, confirming
+the diagnosis from v1.
+
+**47/88 always-candidate patterns are the ceiling:** patterns with no
+usable literal prefix (email, IP, credit card, national IDs without a
+fixed prefix) bypass the AC filter and pay full Onigmo scan cost at
+every position. With the current pattern mix, the ceiling for AC+Onigmo
+is ~1.2× over pure-Ruby. The 3× bar requires reducing this set (Option D)
+or accepting the current ceiling (Option C).
+
+**Symbol interposition bug (resolved):** when loaded under Ruby via
+Fiddle, `libonig.so.5` symbols in `matcher3.so` were being interposed by
+`libruby.so`'s statically-linked Onigmo, which has a different
+`OnigRegion` struct layout. Fix: load `matcher3.so` with
+`RTLD_DEEPBIND` (`Fiddle::Handle.new(path, RTLD_NOW | 8)`). This is a
+prototype-only concern — the in-gem implementation will be compiled
+against the same Onigmo it links.
+
+### Options going forward
+
+---
+
+#### Option A — AC + Onigmo confirmation (prototype v3) ✓ COMPLETE
+
+**Result:** 1.18× faster than pure-Ruby gsub on 1 MB with 88 patterns.
+Beats pure-Ruby; does not meet the 3× kill criterion. See
+`prototypes/multi_matcher_v1/README.md` for full numbers.
+
+**Verdict:** architecture proven. The two-stage pipeline works. Decision
+point: ship with Onigmo dep (Option C) or build own automaton (Option D).
+
+---
+
+#### Option B — Extend prototype to all 88 patterns ✓ COMPLETE
+
+**Result:** matcher2.c + bench2.rb, 88 patterns, glibc regexec,
+correctness check passes all 17 cases. Numbers show ~1.25× over
+pure-Ruby (~160 ms/iter vs ~190 ms baseline).
+
+---
+
+#### Option C — AC + Onigmo, full 88 patterns, in-gem
+
+Previously called "Option H" (use Onigmo). Now understood as: keep the
+existing C orchestration layer, swap glibc `regex.h` → Onigmo for the
+confirmation step, and add the AC trie as a shared prefix filter above
+Onigmo.
+
+**Compile phase changes:**
+- `extconf.rb`: detect and link `libonig` (or vendor as a submodule).
+- `patterns.c`: compile each pattern with `onig_new` instead of
+  `regcomp`. Store `OnigRegex` handles alongside the existing
+  `compiled_patterns[]` array.
+- Add AC trie build at `Init_data_redactor` time from the same prefix
+  table as the prototype.
+
+**Runtime changes in `redact.c` / `scan.c`:**
+- Replace the 88-`regexec`-per-position loop with the two-stage
+  pipeline: AC walk → `onig_search` at candidate positions.
+- Always-candidate patterns (no prefix) keep their existing per-position
+  cost but now use Onigmo instead of glibc.
+
+**Expected result:** ~1.2× faster than pure-Ruby gsub (per Option A
+measurement). 11× faster than today's C engine.
+
+**Cost:** 3-5 days. Adds a system dependency (`libonig`). Requires
+`extconf.rb` changes and gemspec changes to declare the native dep.
+Tests must all pass (`bundle exec rspec`).
+
+**Trade-off vs Option D:** faster to ship; lower ceiling; adds dep.
+
+---
+
+#### Option D — Full Thompson NFA/DFA combined automaton (original Phase 1+2)
+
+The original plan: build a custom regex engine that compiles all 88
+patterns into one merged DFA (Thompson's construction + subset
+construction + Hopcroft minimisation). One byte → one table lookup.
+No `regexec`, no Onigmo.
+
+**Status:** still valid. Option A confirms the two-stage pipeline works;
+Option D's full automaton would eliminate the always-candidate per-pattern
+cost, pushing the ceiling above 3×.
+
+**When to pursue:** the answer if you want zero runtime dependencies
+and maximum portability. Higher ceiling than Option C.
+
+**Cost:** multi-week. Regex parser, NFA, DFA, minimisation, fuzz harness.
+Per the original plan.
+
+---
+
+#### Option E — Status quo with better documentation
+
+Do nothing to the engine. Document the prototype numbers in the README
+perf section.
+
+**Cost:** 1 hour.
+
+---
+
+### Recommended sequence (updated 2026-05-24)
+
+```
+Option A complete (1.18× over pure-Ruby, 11× over today's C)
+    │
+    ├── want to ship soon, accept Onigmo dep  →  Option C (in-gem, 3-5 days)
+    │
+    └── want >3× and/or no dep               →  Option D (full NFA/DFA, multi-week)
+```
