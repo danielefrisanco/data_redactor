@@ -921,10 +921,14 @@ All 17 test cases pass for both v2 and v3.
 
 ## 8. Results Summary
 
-### 8.1 Full benchmark table
+### 8.1 Full benchmark table — single synthetic payload (original, now known to be best-case)
 
-All engines from v5 onward measured on the same machine, same day, same payload
-(fixed seed 42, `bench7_compare.rb`). v1–v4 figures are from earlier separate runs.
+**⚠️ These numbers used a single synthetic payload (1 hit per ~5700 bytes, sparse).
+They represent best-case for AC+BM architectures. See §8.5 for realistic multi-payload
+results which significantly change the conclusions about v7 and v8.**
+
+All engines from v5 onward measured on the same machine, same day, fixed seed 42
+(`bench7_compare.rb`). v1–v4 figures are from earlier separate runs.
 
 | Engine | Architecture | ms/iter | vs pure-Ruby | vs today's C |
 |---|---|---|---|---|
@@ -933,7 +937,7 @@ All engines from v5 onward measured on the same machine, same day, same payload
 | Plain Onigmo sequential | Onigmo, no AC, no BM | 134 | **1.05×** | 6.1× |
 | v3: AC + Onigmo | AC trie + Onigmo | 155 | 0.91× | 5.3× |
 | v5: AC + Onigmo + BM | AC + BM + Onigmo | 108 | 1.31× | 7.6× |
-| **glibc + BM inner loop (v8)** | **glibc, BM cursor advance per pattern** | **59.8** | **2.93×** | **13.7×** |
+| glibc + BM inner loop (v8) | glibc, BM cursor advance per pattern | 59.8 | 2.93× | 13.7× |
 | Plain PCRE2 no-JIT | PCRE2 interpreter sequential | 326 | 0.54× | 2.5× |
 | v7: AC + BM + PCRE2 no-JIT | AC + BM + PCRE2 interpreter | 261 | 0.67× | 3.1× |
 | v7: AC + BM + PCRE2 JIT | AC + BM + PCRE2 JIT | 44 | 3.98× | 18.7× |
@@ -943,26 +947,107 @@ v1 (AC+glibc, 10 patterns): 114.9 ms, 0.60× pure-Ruby baseline of that run.
 v4 (Thompson NFA walk, upper bound): 791–818 ms, 0.22×.
 v6 (AC+BM+glibc): 1639 ms, 0.12×.
 
-**Note on baselines:** v8 / Ruby figures use the 2026-05-31 machine measurement
-(pure-Ruby = 175 ms, current C = 821 ms, fixed seed 42, 20 iters). Earlier runs
-(pure-Ruby = 141 ms) were on the same machine under different load; ratios within
-each run are comparable, cross-run absolute times are not.
+### 8.5 Realistic multi-payload benchmark (corrected, 2026-06-02)
 
-**v4 note:** the 791–818 ms figure is the `mm4_walk` upper-bound measurement
-(single-pass DFA, no restart). A correct `mm4_scan` would be slower.
+**Benchmark script:** `bench_realistic.rb` (fixed seed 42, 10 iterations per engine).
 
-**Critical finding — AC+BM pipeline overhead on JIT:**
-- Plain PCRE2 JIT: 35.5 ms
-- AC+BM+PCRE2 JIT: 43.8 ms
-- Pipeline adds **1.23× overhead** when the engine is JIT. The AC trie scan and BM
-  logic cost more than the confirmations they prevent, because JIT confirmation is
-  so cheap.
+**Payload types:**
+- **sparse** — 1 hit per 5000 bytes: clean logs, long documents
+- **medium** — 1 hit per 500 bytes: mixed application logs
+- **dense** — 1 hit per 50 bytes: redaction-heavy output
+- **env** — ~100% secrets: `.env` files, config dumps (KEY=VALUE lines, nearly all matching)
 
-**Critical finding — plain Onigmo ≈ pure-Ruby:**
-- Plain Onigmo sequential: 134 ms (1.05× over pure-Ruby)
-- Onigmo already has an internal BM pre-filter per pattern. Running 88 patterns
-  sequentially is essentially free compared to glibc. The AC+BM pipeline (v5: 108 ms)
-  adds only ~20% on top of plain Onigmo — it helps, but modestly.
+**Results — ms/iter (two runs averaged, lower is better):**
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| Pure-Ruby gsub | 171 | 170 | 203 | 318 |
+| DataRedactor today (glibc) | 854 | 886 | 897 | 990 |
+| Plain Onigmo sequential | 166 | 177 | 266 | 441 |
+| Plain PCRE2 no-JIT | 416 | 436 | 495 | 537 |
+| **Plain PCRE2 JIT** | **45** | **46** | **55** | **57** |
+| v7: AC+BM+PCRE2 no-JIT | 332 | 455 | 1771 | 8922 |
+| v7: AC+BM+PCRE2 JIT | 54 | 70 | 226 | 1083 |
+
+**Results — × over pure-Ruby (higher is better):**
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.23× | 0.32× |
+| Plain Onigmo sequential | 1.03× | 0.96× | 0.76× | 0.72× |
+| Plain PCRE2 no-JIT | 0.41× | 0.39× | 0.41× | 0.59× |
+| **Plain PCRE2 JIT** | **3.80×** | **3.70×** | **3.69×** | **5.58×** |
+| v7: AC+BM+PCRE2 no-JIT | 0.52× | 0.37× | 0.11× | 0.04× |
+| v7: AC+BM+PCRE2 JIT | 3.17× | 2.43× | 0.90× | 0.29× |
+
+**Key findings from realistic benchmarks:**
+
+1. **Plain PCRE2 JIT is robust across all payload types.** 3.7–5.6× over pure-Ruby.
+   Improves on dense/env because JIT native code handles match-heavy inputs efficiently.
+
+2. **v7 AC+BM+PCRE2 JIT catastrophically degrades on dense/env.**
+   - env: 1083 ms (0.29× pure-Ruby) — 9 seconds absolute, worse than glibc
+   - dense: 226 ms (0.90× pure-Ruby)
+   - Root cause: the AC trie fires on almost every byte in dense inputs; BM pre-filter
+     is useless when hits are frequent; pipeline coordination overhead dominates.
+     AC+BM is designed for sparse inputs where most patterns can be skipped entirely.
+
+3. **v8 (glibc + BM inner loop) 2.93× claim was a best-case artefact.**
+   The prototype payload had 1 hit per 5700 bytes — best case for BM cursor advance.
+   On realistic payloads, the outer `strstr` already handles the "literal absent" case,
+   and the inner BM gains nothing extra. See §8.6 for detailed analysis.
+
+4. **Plain Onigmo degrades gracefully on dense/env (0.72–1.03×) but does not beat
+   pure-Ruby reliably.** On env it is 0.72× — slower than pure-Ruby.
+
+5. **glibc is consistently the worst** (0.19–0.32×) across all payloads, but its
+   degradation curve is relatively flat compared to v7's catastrophic collapse.
+
+### 8.6 Why Onigmo outperforms glibc — and why the BM story is more complex than claimed
+
+**Previous claim (§8.4, now revised):** "glibc has no BM pre-filter; adding BM to glibc
+replicates what Onigmo does and surpasses it (2.93× vs 1.05×)."
+
+**This was wrong for two reasons:**
+
+**Reason 1: The v8 BM result was measured on an unrealistic payload.**
+The `bench_bm_inner.c` prototype used a payload where the outer `strstr` pre-filter
+(already in production `redact.c`) could not help — every pattern's literal was present.
+In that scenario, BM cursor advance inside the loop gave a real 5.8× win over variant A.
+But variant A of the prototype did NOT have the outer `strstr` filter. Production `redact.c`
+already has `strstr` — so the two extra things BM would add (inner loop advance + skip on
+absent literal) are either already covered by `strstr` or negligible on sparse inputs.
+On realistic payloads, porting v8 to production showed zero improvement vs main (695 ms vs 682 ms).
+
+**Reason 2: The real reason glibc is slow is not the missing BM — it is the O(N) state-log.**
+Measured with `bench_malloc.c`:
+- malloc/free churn (88 allocations/call): 4% of total time
+- `regexec` cost: 94% of total time
+
+The 94% `regexec` cost has two sub-components:
+- NFA evaluation at each position (same algorithmic cost as Onigmo)
+- **O(N) state-log allocation on every `regexec` call** (glibc allocates an array
+  proportional to input length before any matching begins — this is mandatory in glibc's
+  `re_search_internal` and cannot be avoided)
+
+Onigmo uses a fixed-size stack per match attempt (O(1) per call). On a 1MB input with
+88 patterns, glibc allocates ~88MB of state-log per `redact` call; Onigmo allocates
+nothing at the call level. This is the dominant performance difference.
+
+**Measured evidence:** on the env payload, `@` appears 7101 times (once per 140 bytes).
+Onigmo's BM for the email pattern has literal `@` — shift = 1, meaning BM provides
+zero skip on `@`-dense input. Both engines evaluate NFA at every `@`. Yet Onigmo is
+still 2.3× faster than glibc on env. The difference is entirely the state-log allocation.
+
+**What BM actually does for Onigmo:** on sparse inputs (e.g. long clean logs with rare `@`),
+BM skips large spans between `@` characters. On dense inputs it cannot skip. This explains
+why Onigmo degrades from 1.03× (sparse) to 0.72× (env) — BM stops helping.
+
+**What this means for optimising glibc:** the correct target is eliminating the O(N)
+per-call state-log allocation — which requires replacing `regexec` with a different
+engine. There is no way to fix it within glibc. BM cursor advance (v8) is a real
+improvement for sparse inputs but the prototype result was inflated by a non-representative
+payload and the absence of the existing `strstr` pre-filter in the comparison baseline.
 
 ### 8.2 AC trie scale
 
@@ -987,32 +1072,32 @@ These 47 patterns pay full Onigmo scan cost at every input position.
 They are the binding constraint on performance — the AC filter cannot
 help them.
 
-### 8.4 How the 3× criterion was met — two paths
+### 8.4 How the 3× criterion is met — one path
 
-**Path 1 — glibc + BM inner loop (v8, zero dependencies):**
-Adding a Boyer-Moore bad-character cursor advance inside the `regexec` loop
-(48 of 88 patterns, built from `pattern_required_literal[]`) brings glibc from
-821 ms (0.21× pure-Ruby) to 59.8 ms (**2.93× pure-Ruby**). The 3× threshold is
-nearly met with no new dependencies. The 40 always-candidate patterns (no literal)
-remain unaffected. malloc churn accounts for only 4% of the remaining time.
+**Revised conclusion after realistic multi-payload benchmarks (§8.5):**
 
-**Path 2 — plain PCRE2 JIT (external dependency):**
-PCRE2 JIT compiles each pattern to native machine code at init time. The
-JIT speedup over PCRE2 interpreter is 9.18×. Plain sequential PCRE2 JIT
-achieves **3.98× over pure-Ruby** — the highest result in this study.
-The AC+BM pipeline adds 1.23× overhead on top of plain JIT (net negative):
-the pipeline costs more than the `pcre2_jit_match` calls it prevents.
+The v8 (glibc + BM inner loop) 2.93× result was an artefact of a best-case synthetic
+payload and a flawed baseline comparison. On realistic payloads it gives zero improvement
+over current production code. See §8.6 for the detailed analysis.
 
-**Comparison:**
-- v8 (glibc + BM inner): 2.93× pure-Ruby, zero new dependencies
-- Plain PCRE2 JIT: 3.98× pure-Ruby, requires `libpcre2-dev`
-- Delta: PCRE2 JIT is 1.36× faster than v8
+**The only architecture that meets the 3× criterion across all realistic payload types
+is plain PCRE2 JIT sequential.**
 
-**Onigmo architecture ceiling:** Onigmo already has its own internal BM pre-filter
-per pattern, which is why plain Onigmo ≈ pure-Ruby (1.05×) and why the AC+BM
-pipeline added only ~20% on top. Adding BM to glibc (v8) replicates what Onigmo
-does internally and surpasses it (2.93× vs 1.05×) because our outer `strstr`
-pre-filter eliminates whole patterns, not just positions.
+- Sparse (1 hit/5000B): **3.80×** over pure-Ruby
+- Medium (1 hit/500B): **3.70×**
+- Dense (1 hit/50B): **3.69×**
+- Env (all secrets): **5.58×** — improves further as hit density increases
+
+One dependency: `libpcre2-dev`. JIT degrades silently to interpreter if unavailable.
+No AC trie, no BM tables — simpler code than v7, better results across all inputs.
+
+**Why no zero-dependency path exists:**
+The glibc `regexec` bottleneck is the O(N) per-call state-log allocation — mandatory
+in glibc's `re_search_internal`, cannot be worked around. BM cursor advance helps on
+sparse inputs but the production code already has `strstr` which achieves the same
+result (skip when literal absent) at the outer loop level. The inner BM adds nothing
+on top. The only fix is replacing `regexec` with an engine that does not allocate O(N)
+per call — which is PCRE2 JIT (or Onigmo, but Onigmo only reaches ~1× pure-Ruby).
 
 ---
 
@@ -1278,52 +1363,59 @@ Not yet prototyped.
 
 ## 12. Conclusion
 
-All engines measured on the same machine, fixed seed 42. 2026-05-31 baseline:
-pure-Ruby = 175 ms, current C = 821 ms.
+Realistic multi-payload benchmarks (§8.5, `bench_realistic.rb`, 2026-06-02).
+Four payload types: sparse (1 hit/5000B), medium (1 hit/500B), dense (1 hit/50B),
+env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 
-| Engine | ms/iter | vs pure-Ruby | vs today's C | Status |
-|---|---|---|---|---|
-| DataRedactor today (glibc) | 821 | 0.21× | 1.0× | Current state |
-| Plain Onigmo sequential | 134 | 1.05× | 6.1× | ≈ pure-Ruby |
-| v5: AC + Onigmo + BM | 108 | 1.62× | 7.6× | Best Onigmo result |
-| **glibc + BM inner loop (v8)** | **59.8** | **2.93×** | **13.7×** | **Zero-dependency path** |
-| v7: AC + BM + PCRE2 JIT | 44 | 3.98× | 18.7× | Pipeline adds overhead |
-| **Plain PCRE2 JIT sequential** | **35.5** | **4.93×** | **23.1×** | **Fastest** |
+**× over pure-Ruby by payload type:**
 
-**Two viable paths to ship:**
+| Engine | sparse | medium | dense | env | Verdict |
+|---|---|---|---|---|---|
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.23× | 0.32× | Worst across all inputs |
+| Plain Onigmo sequential | 1.03× | 0.96× | 0.76× | 0.72× | ≈ pure-Ruby, degrades on dense |
+| v7: AC+BM+PCRE2 JIT | 3.17× | 2.43× | 0.90× | 0.29× | Collapses on dense/env |
+| **Plain PCRE2 JIT sequential** | **3.80×** | **3.70×** | **3.69×** | **5.58×** | **Only robust winner** |
 
-**Path A — glibc + BM inner loop (v8):** Add a Boyer-Moore bad-character table
-per pattern (48 of 88 patterns, built from existing `pattern_required_literal[]`).
-Advance the `regexec` cursor via BM before each call. Zero new dependencies.
-Result: **2.93× over pure-Ruby**, **13.7× over current C**. Near-3× with no
-system requirements change.
+**There is one architecture to ship: plain PCRE2 JIT sequential.**
+- Consistently 3.7–5.6× over pure-Ruby across all payload types
+- Gets *better* on dense/env inputs — JIT handles match-heavy paths efficiently
+- One dependency: `libpcre2-dev`
+- No AC trie, no BM tables — simpler code than v7
 
-**Path B — plain PCRE2 JIT:** Replace `regexec` with `pcre2_jit_match`. Requires
-`libpcre2-dev`. Result: **4.93× over pure-Ruby**, **23.1× over current C**.
-AC+BM pipeline is not helpful — plain sequential is both simpler and faster.
+**Why v7 AC+BM collapses on dense/env:**
+The AC trie + BM pipeline assumes hits are rare. On `.env` files or dense logs,
+the AC trie fires on nearly every byte and BM pre-filtering is useless (literals
+are present everywhere). Pipeline coordination overhead then dominates. On env,
+v7 JIT takes 1083 ms — slower than glibc (990 ms) and 27× slower than plain PCRE2 JIT.
 
-**Why the pipeline hurts JIT:** JIT match on a non-matching pattern is ~35 ns.
-The AC trie scan + BM logic costs more than the calls they prevent. Pipeline
-adds 1.23× overhead — net negative when the engine is fast.
+**Why v8 (glibc + BM inner loop) was a false result:**
+The prototype benchmark used a payload with 1 hit per 5700 bytes, and its "current"
+baseline did NOT have the outer `strstr` pre-filter already in production `redact.c`.
+When ported to production code with the `strstr` filter present, BM adds nothing on
+realistic payloads (695 ms vs 682 ms on main). See §8.6 for full analysis.
 
-**Why plain Onigmo ≈ pure-Ruby:** Onigmo has its own internal BM pre-filter per
-pattern compiled at `onig_new`. Running 88 Onigmo patterns sequentially ≈ 88
-Ruby `gsub` calls. Our v8 result (2.93×) exceeds plain Onigmo (1.05×) because
-we additionally skip whole patterns via the outer `strstr` filter.
+**Why Onigmo outperforms glibc (not BM, but allocation):**
+The primary difference between glibc and Onigmo is not the BM pre-filter but glibc's
+mandatory O(N) state-log allocation on every `regexec` call. With 88 patterns × 1 MB,
+glibc allocates ~88 MB of state-log per `redact` call. Onigmo uses a fixed-size stack
+(O(1)). BM helps Onigmo on sparse inputs but not on dense inputs — yet Onigmo is still
+2.3× faster than glibc on env, proving the allocation cost is the dominant factor.
 
-**PCRE2 interpreter ≈ glibc without BM:** both pay full NFA cost at every
-position; neither has an internal pre-filter. Adding BM to glibc (v8) is the
-fix — not an engine swap.
+**Why no zero-dependency path reaches 3×:**
+glibc's O(N) state-log is mandatory and cannot be worked around within `regexec`.
+Replacing it requires a different engine — PCRE2 JIT is the practical choice.
 
-**Option D (Thompson NFA/DFA):** not competitive — 791–818 ms upper bound due
-to DFA state explosion with 88 patterns (6888 NFA states).
+**Paper contribution (revised):**
+Three findings, each surprising:
+1. AC+BM pipeline is net negative for JIT engines — the pipeline costs more than the
+   calls it prevents when the engine is fast.
+2. AC+BM pipeline catastrophically degrades on high-hit-density inputs — collapses
+   27× worse than plain JIT on `.env`-style payloads.
+3. glibc's bottleneck is O(N) per-call state-log allocation, not missing BM.
+   BM is a partial mitigation for sparse inputs only; the real fix is engine replacement.
 
-**Paper contribution:** the research inverts the original hypothesis. The
-AC+BM pipeline is beneficial only when the confirmation engine is slow
-(glibc, PCRE2 interpreter). When JIT is available, the pipeline is net negative.
-When glibc is kept, adding BM *inside* the scan loop (not as an outer filter)
-is the key fix — replicating Onigmo's internal behaviour without switching engines.
-Both findings are surprising and publication-worthy.
+**Option D (Thompson NFA/DFA):** not competitive — 791–818 ms upper bound,
+DFA state explosion with 88 patterns (6888 NFA states).
 
 ---
 
@@ -1334,12 +1426,12 @@ Both findings are surprising and publication-worthy.
 | **v7** | AC + BM + PCRE2 JIT | Does PCRE2 JIT close the gap? | `libpcre2-dev` | ✅ DONE — pipeline adds overhead vs plain JIT |
 | **plain PCRE2 JIT** | Sequential PCRE2 JIT, no AC, no BM | Is plain JIT faster than the pipeline? | `libpcre2-dev` | ✅ DONE — 4.93× over pure-Ruby, fastest |
 | **plain Onigmo** | Sequential Onigmo, no AC, no BM | Does AC+BM help Onigmo? | `libonig-dev` | ✅ DONE — 1.05×, ≈ pure-Ruby |
-| **v8 (BM inner)** | glibc + BM cursor advance inside regexec loop | Can we beat pure-Ruby without engine swap? | None | ✅ DONE — 2.93× over pure-Ruby, zero deps |
+| **v8 (BM inner)** | glibc + BM cursor advance inside regexec loop | Can we beat pure-Ruby without engine swap? | None | ✅ DONE — result was inflated by unrealistic payload; gives zero improvement in production (see §8.6) |
+| **realistic benchmark** | Re-run all engines on sparse/medium/dense/env payloads | Are previous results representative? | None | ✅ DONE — `bench_realistic.rb`; v7 collapses on dense/env; plain PCRE2 JIT is the only robust winner |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
-**Research is complete for the core question.** Two viable paths are identified:
-- **Path A (zero deps):** ship v8 BM inner loop into `redact.c` / `scan.c` — 2.93× over pure-Ruby
-- **Path B (libpcre2):** ship plain PCRE2 JIT sequential — 4.93× over pure-Ruby
+**Research is complete.** One viable path:
+- **Plain PCRE2 JIT sequential** — 3.7–5.6× over pure-Ruby across all payload types, requires `libpcre2-dev`
 
 ---
 
