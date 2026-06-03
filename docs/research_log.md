@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03; v12.1 literal pre-filter added 2026-06-03.
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03; v12.1 literal pre-filter + v14 first-byte filter added 2026-06-03.
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -1006,6 +1006,56 @@ by literals is the target, and only a first-byte/start-set filter (v14) reaches 
 
 ---
 
+### Prototype v14 — matcher14.c (v12.1 literal filter + first-byte filter)
+
+**Files:** `matcher14.c`, `matcher14.h`
+
+**Motivation:** v12.1 proved a literal filter cannot touch the ~40 literal-less
+boundary-wrapped digit-ID patterns (920 ms floor). v14 adds the filter that *can*:
+a **first-byte / start-set filter**. Because every pattern is constrained to pure
+POSIX-ERE (no `\d\w\s\b`, lookaround, named groups, non-greedy — enforced in code,
+see §5 v12.1), each is a true regular language with a well-defined set of bytes
+that can be its first *consumed* byte. We compute that 256-bit set once at init by
+epsilon-closing the bytecode from pc 0 (over `SPLIT`/`JMP`, treating `BOL`/`EOL`
+as passable so the set is a safe superset that never rejects a real match), then
+in `scan_one` skip forward over any run of input bytes the set rejects — entirely
+in C, never entering the VM. Boundary-wrapped digit patterns get
+`first = {non-alphanumerics}`, so they skip the long alphanumeric noise runs that
+v12.1 had to step through. The v12.1 literal skip is kept and composes with it.
+If an empty match is possible (`MATCH` reachable with no byte consumed) filtering
+is disabled for that pattern (`has_first_filter = 0`).
+
+**Correctness: CORRECT** — after fixing a cross-call state bug (see §6.10 below).
+Matches independent per-pattern `gsub` exactly on sparse/medium/dense 1 MB, infix
+smoke cases (`uri`, `bearer`), and pure noise; plus a 600-scan sequential stress
+test of mixed inputs all match `gsub`.
+
+**Performance: 2.0–2.7× over v11 — the first-byte filter reaches the digit patterns.**
+
+| Payload | v11 | v12.1 | v14 | v14 vs v11 |
+|---|---|---|---|---|
+| sparse (1 hit/5000B) | 1101 ms | 1001 ms | **405 ms** | 2.72× |
+| medium (1 hit/500B) | 1110 ms | 989 ms | **423 ms** | 2.63× |
+| dense (1 hit/50B) | 1395 ms | 1265 ms | **693 ms** | 2.01× |
+| pure noise | — | 920 ms (floor) | **423 ms** | — |
+
+The decisive number: on **pure noise**, v12.1's literal filter bottomed out at
+920 ms (the literal-less digit patterns it could not touch); v14 cuts that to
+423 ms — a 2.2× reduction of the exact slice v12 proved untouchable, confirming
+the first-byte filter is the lever for the literal-less "always-candidate"
+patterns (TODO.md §44). v14 is still ~2.5× *slower* than pure-Ruby (≈160 ms), so
+the gap that remains is the VM's own per-byte constant factor on the bytes that
+*pass* the filter — the target of v15 (iterative `addthread`, inlined `CHAR`,
+branchless `CLASS`), which stacks on top of v14.
+
+**Allocation discipline:** the start-set is a fixed 256-bit bitmap per pattern,
+filled once at init. The scan hot path allocates nothing — it reuses the v11
+scratch (`g_seen`/`g_clist`/`g_nlist`, realloc-once then reused). `mm14_free` now
+frees that scratch and resets the persistent generation counter so a free/re-init
+cycle starts clean.
+
+---
+
 ## 6. Problems Encountered and How We Solved Them
 
 ### 6.1 glibc `regexec` bottleneck (root cause, not a code bug)
@@ -1202,6 +1252,44 @@ engine is fast enough that call-count reduction dominates total runtime.
 For Onigmo (v5 vs v3: 155 → 131 ms, 15% improvement), BM call reduction
 is the dominant factor. For glibc regexec (v6 vs v2: 1178 → 1639 ms, 39%
 regression), the engine cost is so high that BM overhead makes things worse.
+
+---
+
+### 6.10 v14 cross-call state corruption (generation-counter reuse)
+
+**Problem:** v14 dropped a real match (`bearer_token` → 0 instead of 1) but *only*
+on the second and later `mm14_scan` calls — a fresh scan of the same string was
+correct. The combined correctness harness (which scans several payloads in
+sequence) flagged `smoke-bearer` as a mismatch; the same string scanned standalone
+passed. The tell: `(+"...")` mutable strings failed after a prior call, frozen
+literals "passed" only because the harness happened to scan them first.
+
+**Root cause:** the Thompson VM deduplicates threads with a generation-stamped
+`seen[pc]` array — `seen[pc] == gen` means "already added this step". The `gen`
+counter was a per-call local reset to `0` each call, while `seen[]` persists
+across calls (it is reused scratch). On the first call `seen[]` is all zeros and
+`gen` climbs 1,2,3…; on a later call `gen` restarts low while `seen[]` still holds
+stamps from the previous run, so `seen[pc] == gen` can spuriously be true and a
+needed thread is dropped. v11/v12 had the *same* latent bug but never triggered it
+in practice: without the first-byte filter their `gen` climbed so high each call
+that a low restart rarely re-collided. v14's first-byte filter runs far fewer seed
+iterations, so `gen` ends low — and the next call collides immediately.
+
+**Fix:** make the generation counter **persist across calls** (`g_gen[p]`), so
+stamps stay globally monotonic and a fresh call never reuses a previous call's
+stamp. The only reset is when the `int` counter nears overflow: clear `seen[]`
+once and restart at 0 (headroom checked against the max increments one call can
+make, `~2·len`). `mm14_free` resets `g_gen` and frees the scratch together so a
+free/re-init cycle stays consistent. The scan hot path still allocates nothing.
+
+**Verification:** 600 sequential scans of mixed inputs all match the `gsub`
+reference; standalone and in-sequence results are now identical.
+
+**Lesson:** generation-stamp dedup is only safe if the counter is monotonic over
+the lifetime of the `seen[]` array it stamps. Resetting the counter while keeping
+the array is a latent correctness bug — it lay dormant in v11/v12 and only surfaced
+once an optimization (the first-byte filter) changed the counter's growth rate.
+Persist the counter with the array, or clear the array whenever you reset.
 
 ---
 
