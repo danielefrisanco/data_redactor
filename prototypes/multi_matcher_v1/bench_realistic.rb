@@ -12,7 +12,7 @@
 # All engines run on the identical payload bytes (same Random seed per type).
 #
 # Usage:
-#   make matcher4.so matcher7.so matcher7_plain.so matcher7_plain_onig.so matcher11.so
+#   make matcher4.so matcher7.so matcher7_plain.so matcher7_plain_onig.so matcher11.so matcher14.so matcher15.so
 #   bundle exec ruby bench_realistic.rb
 
 require "fiddle"
@@ -41,7 +41,15 @@ MM7PO_HANDLE = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher7_plain_onig.
 #                                    Fiddle::Handle::RTLD_NOW)
 # MM10_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher10.so"),
 #                                    Fiddle::Handle::RTLD_NOW)
-MM11_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher11.so"),
+# v11 excluded from live benchmark — ~1000 ms/iter, already documented in
+# research_log.md §5. Numbers: sparse=1101ms, medium=1110ms, dense=1395ms.
+# MM11_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher11.so"),
+#                                    Fiddle::Handle::RTLD_NOW)
+MM14_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher14.so"),
+                                   Fiddle::Handle::RTLD_NOW)
+MM15_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher15.so"),
+                                   Fiddle::Handle::RTLD_NOW)
+MM17_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher17.so"),
                                    Fiddle::Handle::RTLD_NOW)
 
 module MM4
@@ -98,10 +106,32 @@ end
 
 # v9 / v10 disabled — incorrect (see research_log.md §5).
 
-module MM11
-  Init = Fiddle::Function.new(MM11_HANDLE["mm11_init"], [], Fiddle::TYPE_VOID)
-  Free = Fiddle::Function.new(MM11_HANDLE["mm11_free"], [], Fiddle::TYPE_VOID)
-  Scan = Fiddle::Function.new(MM11_HANDLE["mm11_scan"],
+module MM14
+  Init = Fiddle::Function.new(MM14_HANDLE["mm14_init"], [], Fiddle::TYPE_VOID)
+  Free = Fiddle::Function.new(MM14_HANDLE["mm14_free"], [], Fiddle::TYPE_VOID)
+  Scan = Fiddle::Function.new(MM14_HANDLE["mm14_scan"],
+           [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+            Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  def self.init = Init.call
+  def self.free = Free.call
+  def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
+end
+
+module MM15
+  Init = Fiddle::Function.new(MM15_HANDLE["mm15_init"], [], Fiddle::TYPE_VOID)
+  Free = Fiddle::Function.new(MM15_HANDLE["mm15_free"], [], Fiddle::TYPE_VOID)
+  Scan = Fiddle::Function.new(MM15_HANDLE["mm15_scan"],
+           [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+            Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  def self.init = Init.call
+  def self.free = Free.call
+  def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
+end
+
+module MM17
+  Init = Fiddle::Function.new(MM17_HANDLE["mm17_init"], [], Fiddle::TYPE_VOID)
+  Free = Fiddle::Function.new(MM17_HANDLE["mm17_free"], [], Fiddle::TYPE_VOID)
+  Scan = Fiddle::Function.new(MM17_HANDLE["mm17_scan"],
            [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
             Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
   def self.init = Init.call
@@ -181,121 +211,114 @@ end
 ITERS = 10
 buf   = Fiddle::Pointer.malloc(MATCH_STRIDE * 65536)
 
-MM4.init;      MM4.free   # warm up NFA compile + DFA cache alloc
-MM7P.init(0);  MM7P.free  # warm up JIT compile
-MM7P.init(1);  MM7P.free
-MM7.init(0);   MM7.free
-MM7.init(1);   MM7.free
-MM7PO.init;    MM7PO.free
-MM11.init;     MM11.free  # warm up 88 per-pattern bytecode compile
+MM7P.init(1); MM7P.free   # warm up PCRE2 JIT compile
+MM7.init(1);  MM7.free    # warm up AC+BM+PCRE2 JIT compile
+MM7PO.init;   MM7PO.free  # warm up Onigmo compile
+MM14.init;    MM14.free   # warm up v14 (literal + first-byte filter)
+MM15.init;    MM15.free   # warm up v15.1 (iterative addthread + O(1) accept)
+MM17.init;    MM17.free   # warm up v17 (precomputed initial thread list)
 
 puts "Realistic payload benchmark — #{ITERS} iterations per engine per payload"
 puts "All payloads: ~1 MB, fixed seed 42"
 puts
-puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT", "v9sep", "v11bc"
+puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
+  "", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v17"
 ]
-puts "-" * 139
+puts "-" * 99
+
+# v4 NFA excluded from live benchmark — results already in research_log.md §8.5.
+# Crashes on env (1600 ms/iter), and DFA cache cold-start is noisy on shorter payloads.
+
+def run_engine(label)
+  $stderr.print "  #{label}..."; $stderr.flush
+  t = Benchmark.realtime { yield }
+  $stderr.puts " done (#{(t * 1000).round(0)} ms total)"
+  t
+end
 
 PAYLOADS.each do |name, payload|
+  $stderr.puts "\n[#{name.strip}]"
   t = {}
 
-  t[:ruby] = Benchmark.realtime { ITERS.times { pure_ruby_redact(payload) } }
-  t[:c]    = Benchmark.realtime { ITERS.times { DataRedactor.redact(payload) } }
-
-  MM4.init
-  t[:v4]   = Benchmark.realtime { ITERS.times { MM4.scan(payload, buf) } }
-  t[:v41]  = Benchmark.realtime { ITERS.times { MM4.scan41(payload, buf) } }
-  t[:v42]  = Benchmark.realtime { ITERS.times { MM4.scan42(payload, buf) } }
-  MM4.free
+  t[:ruby] = run_engine("ruby")   { ITERS.times { pure_ruby_redact(payload) } }
+  t[:c]    = run_engine("C-today") { ITERS.times { DataRedactor.redact(payload) } }
 
   MM7PO.init
-  t[:onig] = Benchmark.realtime { ITERS.times { MM7PO.scan(payload, buf) } }
+  t[:onig] = run_engine("onig") { ITERS.times { MM7PO.scan(payload, buf) } }
   MM7PO.free
 
-  MM7P.init(0)
-  t[:pcre2] = Benchmark.realtime { ITERS.times { MM7P.scan(payload, buf) } }
-  MM7P.free
-
   MM7P.init(1)
-  t[:pcre2jit] = Benchmark.realtime { ITERS.times { MM7P.scan(payload, buf) } }
+  t[:pcre2jit] = run_engine("pcre2jit") { ITERS.times { MM7P.scan(payload, buf) } }
   MM7P.free
-
-  MM7.init(0)
-  t[:v7nojit] = Benchmark.realtime { ITERS.times { MM7.scan(payload, buf) } }
-  MM7.free
 
   MM7.init(1)
-  t[:v7jit] = Benchmark.realtime { ITERS.times { MM7.scan(payload, buf) } }
+  t[:v7jit] = run_engine("v7jit") { ITERS.times { MM7.scan(payload, buf) } }
   MM7.free
 
-  t[:v9] = nil  # v9 incorrect — excluded (see research_log.md §5)
+  MM14.init
+  t[:v14] = run_engine("v14") { ITERS.times { MM14.scan(payload, buf) } }
+  MM14.free
 
-  MM11.init
-  t[:v11] = Benchmark.realtime { ITERS.times { MM11.scan(payload, buf) } }
-  MM11.free
+  MM15.init
+  t[:v15] = run_engine("v15") { ITERS.times { MM15.scan(payload, buf) } }
+  MM15.free
+
+  MM17.init
+  t[:v16] = run_engine("v17") { ITERS.times { MM17.scan(payload, buf) } }
+  MM17.free
 
   ms = t.transform_values { |v| v.nil? ? nil : (v / ITERS * 1000).round(1) }
 
-  puts "%-26s  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7s  %7.1f" % [
+  puts "%-26s  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f" % [
     name,
-    ms[:ruby], ms[:c], ms[:v4], ms[:v41], ms[:v42],
-    ms[:onig], ms[:pcre2], ms[:pcre2jit], ms[:v7nojit], ms[:v7jit], "-", ms[:v11]
+    ms[:ruby], ms[:c], ms[:onig], ms[:pcre2jit], ms[:v7jit], ms[:v14], ms[:v15], ms[:v16]
   ]
 end
 
 puts
 puts "All times in ms/iter. Lower is better."
 puts
-puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "× over pure-Ruby", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT", "v9sep", "v11bc"
+puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
+  "× over pure-Ruby", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v17"
 ]
-puts "-" * 139
+puts "-" * 99
 
 PAYLOADS.each do |name, payload|
+  $stderr.puts "\n[#{name.strip}] ratios"
   t = {}
-  t[:ruby] = Benchmark.realtime { ITERS.times { pure_ruby_redact(payload) } }
-  t[:c]    = Benchmark.realtime { ITERS.times { DataRedactor.redact(payload) } }
-
-  MM4.init
-  t[:v4]  = Benchmark.realtime { ITERS.times { MM4.scan(payload, buf) } }
-  t[:v41] = Benchmark.realtime { ITERS.times { MM4.scan41(payload, buf) } }
-  t[:v42] = Benchmark.realtime { ITERS.times { MM4.scan42(payload, buf) } }
-  MM4.free
+  t[:ruby] = run_engine("ruby")    { ITERS.times { pure_ruby_redact(payload) } }
+  t[:c]    = run_engine("C-today") { ITERS.times { DataRedactor.redact(payload) } }
 
   MM7PO.init
-  t[:onig] = Benchmark.realtime { ITERS.times { MM7PO.scan(payload, buf) } }
+  t[:onig] = run_engine("onig") { ITERS.times { MM7PO.scan(payload, buf) } }
   MM7PO.free
 
-  MM7P.init(0)
-  t[:pcre2] = Benchmark.realtime { ITERS.times { MM7P.scan(payload, buf) } }
-  MM7P.free
-
   MM7P.init(1)
-  t[:pcre2jit] = Benchmark.realtime { ITERS.times { MM7P.scan(payload, buf) } }
+  t[:pcre2jit] = run_engine("pcre2jit") { ITERS.times { MM7P.scan(payload, buf) } }
   MM7P.free
-
-  MM7.init(0)
-  t[:v7nojit] = Benchmark.realtime { ITERS.times { MM7.scan(payload, buf) } }
-  MM7.free
 
   MM7.init(1)
-  t[:v7jit] = Benchmark.realtime { ITERS.times { MM7.scan(payload, buf) } }
+  t[:v7jit] = run_engine("v7jit") { ITERS.times { MM7.scan(payload, buf) } }
   MM7.free
 
-  t[:v9] = nil  # v9 incorrect — excluded (see research_log.md §5)
+  MM14.init
+  t[:v14] = run_engine("v14") { ITERS.times { MM14.scan(payload, buf) } }
+  MM14.free
 
-  MM11.init
-  t[:v11] = Benchmark.realtime { ITERS.times { MM11.scan(payload, buf) } }
-  MM11.free
+  MM15.init
+  t[:v15] = run_engine("v15") { ITERS.times { MM15.scan(payload, buf) } }
+  MM15.free
+
+  MM17.init
+  t[:v16] = run_engine("v17") { ITERS.times { MM17.scan(payload, buf) } }
+  MM17.free
 
   base = t[:ruby]
   ratios = t.transform_values { |v| v.nil? ? nil : (base / v).round(2) }
 
-  puts "%-26s  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8s  %8.2f" % [
+  puts "%-26s  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f" % [
     name,
-    ratios[:ruby], ratios[:c], ratios[:v4], ratios[:v41], ratios[:v42],
-    ratios[:onig], ratios[:pcre2], ratios[:pcre2jit],
-    ratios[:v7nojit], ratios[:v7jit], "-", ratios[:v11]
+    ratios[:ruby], ratios[:c], ratios[:onig], ratios[:pcre2jit],
+    ratios[:v7jit], ratios[:v14], ratios[:v15], ratios[:v16]
   ]
 end

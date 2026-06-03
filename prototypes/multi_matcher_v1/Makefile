@@ -13,7 +13,7 @@ ONIG_LDFLAGS = -lonig
 PCRE2_CFLAGS  = -DPCRE2_CODE_UNIT_WIDTH=8 $(shell pkg-config --cflags libpcre2-8 2>/dev/null)
 PCRE2_LDFLAGS = -lpcre2-8
 
-.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 smoke11 smoke12 smoke14 smoke15 generate
+.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 smoke11 smoke12 smoke14 smoke15 smoke16 smoke17 generate
 
 all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so
 
@@ -168,6 +168,26 @@ matcher15.so: matcher15.c matcher15.h patterns_generated.h
 smoke15: matcher15
 	./matcher15
 
+# Prototype v16 — v15.1 + cross-pattern union first-byte bitmap. Zero deps.
+matcher16: matcher16.c matcher16.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM16_MAIN -o $@ matcher16.c $(LDFLAGS)
+
+matcher16.so: matcher16.c matcher16.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher16.c $(LDFLAGS)
+
+smoke16: matcher16
+	./matcher16
+
+# Prototype v17 — v15.1 + precomputed initial thread list. Zero deps.
+matcher17: matcher17.c matcher17.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM17_MAIN -o $@ matcher17.c $(LDFLAGS)
+
+matcher17.so: matcher17.c matcher17.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher17.c $(LDFLAGS)
+
+smoke17: matcher17
+	./matcher17
+
 # Standalone micro-benchmarks (no .so — direct C executables).
 bench_malloc: bench_malloc.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c
 	$(CC) $(CFLAGS) -I../../ext/data_redactor \
@@ -189,5 +209,7 @@ clean:
 	      matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so \
 	      matcher11 matcher11.so matcher12 matcher12.so \
 	      matcher14 matcher14.so matcher15 matcher15.so \
+	      matcher16 matcher16.so \
+	      matcher17 matcher17.so \
 	      bench_malloc bench_bm_inner \
 	      patterns_generated.h

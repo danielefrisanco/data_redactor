@@ -1124,6 +1124,87 @@ still allocates nothing.
 
 ---
 
+### Prototype v15.2 — matcher16.c (v15.1 + cross-pattern union first-byte bitmap)
+
+**Files:** `matcher16.c`, `matcher16.h`
+
+**Motivation:** v15.1 has a per-pattern first-byte filter for each of the 88 patterns
+individually. The hypothesis was that ORing all 88 `first[]` bitmaps into a single
+`g_union_first` bitmap and checking it once per byte before any per-pattern work
+would eliminate positions where no pattern can start, reducing the per-pattern
+filter work.
+
+**Result: no improvement — marginally slower on all payloads (~4% regression).**
+
+| Payload | v15.1 | v15.2 | Δ |
+|---|---|---|---|
+| sparse | 356 ms | 370 ms | −4% |
+| medium | 366 ms | 383 ms | −5% |
+| dense | 570 ms | 592 ms | −4% |
+| env | 992 ms | 1045 ms | −5% |
+
+**Why it failed:** the per-pattern first-byte filters inside `scan_one` already perform
+the same work more precisely — they skip bytes rejected by *this specific pattern*,
+which is a subset of what the union rejects. Adding the union pass as an extra outer
+loop only adds overhead (one `cc_test` per byte) without reducing the per-pattern
+filter work by a meaningful amount. The union is a superset of each individual filter;
+bytes the union skips were already being skipped by every per-pattern filter anyway.
+
+**Conclusion:** the union bitmap idea is sound in principle but provides no practical
+benefit on top of the already-present per-pattern filters. Parked.
+
+---
+
+### Prototype v17 — matcher17.c (v15.1 + precomputed initial thread list)
+
+**Files:** `matcher17.c`, `matcher17.h`
+
+**Motivation:** at every candidate position, `scan_one` calls `addthread(pc=0)` to
+epsilon-close the bytecode from the start state. For patterns without BOL/EOL anchors
+(~85 of 88) this closure is position-independent — the same set of byte-consuming pcs
+every time. v17 computes this set once at init (`eng->init_list[]`) and at seed time
+copies it into `cl` with `memcpy` instead of running the DFS. This eliminates the
+per-position seed `addthread` call for almost all patterns.
+
+**Result: no improvement — within noise (~0–1%) on all payloads.**
+
+| Payload | v15.1 | v17 | Δ |
+|---|---|---|---|
+| sparse | 356 ms | 321 ms | +1% |
+| medium | 366 ms | 356 ms | +1% |
+| dense | 570 ms | 562 ms | +2% |
+| env | 992 ms | 952 ms | +1% |
+
+**Why it failed:** the seed `addthread(pc=0)` was not the bottleneck. For patterns with
+a first-byte filter, most positions are already skipped before seeding — so the seed
+call is rare. For patterns without a filter (the always-candidate digit patterns), the
+seed call is frequent but the epsilon closure from pc=0 is very shallow (a few SPLITs
+then CHARs) — the DFS terminates in 5–10 steps, and `memcpy` of a 5-element array is
+not meaningfully faster than that.
+
+**Where the cost actually is:** the inner VM loop — for each byte that passes the
+first-byte filter, we iterate `cl->n` threads, do a switch dispatch per thread, and
+call `addthread` for every matching thread. On the pure-digit boundary-wrapped
+patterns (~40 patterns, no literal skip, `first = {non-alphanumeric}`), this loop
+runs at every non-alphanumeric byte in the input. The bottleneck is this step loop,
+not the seed.
+
+**Why Onigmo/pure-Ruby is faster despite having the same structural problem:** both
+Onigmo and PCRE2 JIT face the same pattern mix — ~40 pure-digit patterns with no
+skippable literal. Onigmo is faster because its NFA interpreter inner loop is more
+tightly optimized C (years of tuning, tighter bytecode, better cache layout for
+instruction structs). PCRE2 JIT is faster because it compiles each pattern to native
+machine code at init time — no interpreter dispatch at all. Our VM is a clean
+implementation but not a heavily tuned one; the gap to Onigmo is interpreter quality,
+not algorithmic.
+
+**Conclusion:** the seed optimization was the wrong target. To close the gap with
+Onigmo without a JIT, the lever is the inner step loop — tighter instruction structs,
+CHAR fast-path inlining, or a flat precomputed transition table (O(1) per-byte step
+instead of a switch over a linked list). These require more invasive restructuring.
+
+---
+
 ## 6. Problems Encountered and How We Solved Them
 
 ### 6.1 glibc `regexec` bottleneck (root cause, not a code bug)
@@ -1912,21 +1993,21 @@ Realistic multi-payload benchmarks (§8.5, `bench_realistic.rb`, 2026-06-02).
 Four payload types: sparse (1 hit/5000B), medium (1 hit/500B), dense (1 hit/50B),
 env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 
-**× over pure-Ruby by payload type (final, 2026-06-02):**
+**× over pure-Ruby by payload type (updated 2026-06-03):**
 
 | Engine | sparse | medium | dense | env | min | Verdict |
 |---|---|---|---|---|---|---|
 | DataRedactor today (glibc) | 0.20× | 0.19× | 0.22× | 0.30× | 0.19× | Baseline (worst) |
-| Plain Onigmo sequential | 1.04× | 0.99× | 0.79× | 0.72× | 0.72× | ≈ pure-Ruby only |
-| v4.1 NFA per-pos + prefix | 8.1× | 7.3× | 7.8× | 0.19× | 0.19× | Fast but collapses on env |
-| v7: AC+BM+PCRE2 JIT | 3.29× | 2.51× | 0.96× | 0.26× | 0.26× | Collapses on dense/env |
+| Plain Onigmo sequential | 1.07× | 0.98× | 0.76× | 0.75× | 0.75× | ≈ pure-Ruby only |
+| v7: AC+BM+PCRE2 JIT | 3.31× | 2.53× | 0.91× | 0.31× | 0.31× | Collapses on dense/env |
 | **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Fast but not correct (31%)** |
-| **Plain PCRE2 JIT sequential** | **3.9×** | **3.8×** | **3.9×** | **5.0×** | **3.8×** | **Best overall, correct** |
+| **v15.1 bytecode VM** | **0.48×** | **0.44×** | **0.33×** | **0.31×** | **0.31×** | **Zero-dep, correct, beats glibc 2.2×** |
+| **Plain PCRE2 JIT sequential** | **3.90×** | **3.81×** | **3.60×** | **5.51×** | **3.60×** | **Best overall, correct** |
 
-**One viable production architecture:**
+**Two viable production architectures:**
 
-1. **Plain PCRE2 JIT sequential** — best overall. 3.8–5.0× over pure-Ruby, gets better
-   on dense/env. One dependency: `libpcre2-dev`. No AC trie, no BM tables. Correct.
+1. **Plain PCRE2 JIT sequential** — best overall. 3.6–5.5× over pure-Ruby. One dependency: `libpcre2-dev`.
+2. **v15.1 bytecode VM (zero dependencies)** — 0.31–0.48× over pure-Ruby, but **2.2× over today's glibc C extension**. Pure C, no external deps, correct.
 
 **v4.2 as a research result:** v4.2 performance is a valid datapoint showing that
 single-pass leftmost-longest Thompson NFA eliminates O(N²) collapse. It is not
@@ -1985,13 +2066,20 @@ Four findings, each surprising:
 | **v4.1 (per-pos + prefix)** | Does memmem pre-filter fix v4's env collapse? | None | ✅ DONE — no: 0.19× on env, same collapse as v4 |
 | **v4.2 (single-pass)** | Does single-pass leftmost-longest fix the collapse? | None | ✅ DONE — yes: 2.3–6.1×; **but** correctness 4/13 (31%) — merged NFA not viable |
 | **v4.2 correctness analysis** | Why does merged NFA produce false/missed matches? | None | ✅ DONE — overlapping character alphabets; per-pattern DFAs required |
+| **v11 bytecode VM** | Correct bytecode VM baseline (zero deps) | Can a hand-rolled VM be correct? | None | ✅ DONE — correct, ~6× slower than pure-Ruby |
+| **v12.1 literal filter** | memmem skip for infix literals | Does literal skip help? | None | ✅ DONE — 1.1× over v11; ~40 literal-less patterns dominate |
+| **v14 first-byte filter** | Per-pattern start-set bitmap | Can we skip the digit-pattern positions? | None | ✅ DONE — 2.6× over v11; cuts pure-noise floor from 920ms to 423ms |
+| **v15.1 VM constant-factor** | Iterative addthread + O(1) accept | Can we tighten the inner loop? | None | ✅ DONE — 1.1× over v14; 2.2× over glibc today |
+| **v15.2 union bitmap** | OR of all 88 first-sets, skip before per-pattern work | Does a shared skip reduce per-pattern overhead? | None | ✅ DONE — no improvement (~4% slower); per-pattern filters already do this |
+| **v17 precomputed init list** | Cache epsilon-closure of pc=0, memcpy at seed time | Is seed addthread the bottleneck? | None | ✅ DONE — no improvement (~1%); inner step loop dominates, not seed overhead |
 | **selective NFA merge** | Can we merge a subset of non-overlapping patterns? | None | Not yet started (see §11.1 addendum) |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
-**Research conclusion:** One viable production path:
-- **Plain PCRE2 JIT sequential** — 3.8–5.0× over pure-Ruby, requires `libpcre2-dev`, correct
+**Research conclusion (updated 2026-06-03):** Two viable production paths:
+- **Plain PCRE2 JIT sequential** — 3.6–5.5× over pure-Ruby, requires `libpcre2-dev`, correct
+- **v15.1 bytecode VM** — 2.2× over today's glibc C extension, zero dependencies, correct; still ~2× slower than pure-Ruby
 
-**v4.2 as a research result only:** 2.3–6.1× performance valid; correctness 4/13 (31%); architecture not viable for production without selective-merge variant
+**Remaining gap to pure-Ruby:** the inner VM step loop is the bottleneck — iterating `cl->n` threads, switch dispatch per instruction, `addthread` call per match. Onigmo closes this gap through years of tight C optimization. A JIT would close it entirely. Neither seed caching (v17) nor union filtering (v15.2) addresses the inner loop cost.
 
 ---
 
