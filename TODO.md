@@ -23,6 +23,35 @@ today's C. Cleared the ≥2× go/no-go threshold. PCRE2 JIT is the confirmation 
       Decide: require system package, or vendor PCRE2 (see `docs/research_log.md §11.6`).
 - [ ] Wire v7 architecture into `ext/data_redactor/` replacing the current glibc `regexec` loop.
 
+### 1b. Bound greedy tails in built-in patterns (perf + worst-case)
+
+The `jwt` pattern is `eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+`.
+The final `+` (and the `{10,}`) are **unbounded**, which:
+- makes `ast_max_len` report unbounded → disables the v12 literal back-up skip and
+  the bounded-window optimizations for this pattern;
+- is a theoretical O(N²) trigger (a crafted `eyJ…` + a megabyte of base64url chars
+  forces the greedy tail to scan far). Measured engines are O(N) on real payloads,
+  but the worst case is real.
+
+Key insight: **redaction does not need to match the whole token to neutralize it.**
+A JWT is unusable once its front is gone, so matching `eyJ` + a bounded prefix and
+redacting that is sufficient for safety. So:
+
+- [ ] Evaluate bounding the greedy tails: `[A-Za-z0-9_-]+` → `[A-Za-z0-9_-]{N,M}`
+      (pick N large enough to neutralize, e.g. ≥ the smallest real signature) and
+      `{10,}` → `{10,M}`. Restores a bounded `max_len`, kills the O(N²) worst case,
+      enables more skip optimizations.
+- [ ] Decide the policy: redaction-for-safety (bounded tail OK, leaves the token's
+      tail visible but cryptographically dead) vs redaction-for-privacy (must not
+      leak any of it → keep unbounded). May differ per tag.
+- [ ] Re-examine whether the `jwt` regex itself is correct (three base64url
+      segments, `eyJ` anchor on each). Real JWT signature lengths are fixed per alg
+      (HS256≈43, ES256≈86, RS256≈342) — could anchor lengths instead of `+`.
+- [ ] Apply the same bounded-tail review to other patterns with trailing `+`/`{n,}`
+      (audit `ext/data_redactor/patterns.c`). NOTE: this is a **gem pattern change**
+      governed by CLAUDE.md pattern tiers + false-positive rules, separate from the
+      matcher-engine prototypes. Any change needs positive + negative spec coverage.
+
 ### 2. Write and publish the paper
 
 Research log at `docs/research_log.md` is the source of truth. Contains all prototype data,
