@@ -13,9 +13,9 @@ ONIG_LDFLAGS = -lonig
 PCRE2_CFLAGS  = -DPCRE2_CODE_UNIT_WIDTH=8 $(shell pkg-config --cflags libpcre2-8 2>/dev/null)
 PCRE2_LDFLAGS = -lpcre2-8
 
-.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 generate
+.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 generate
 
-all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so
+all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so
 
 # Option B generated header (always regenerate from gem source).
 generate: gen_patterns.rb
@@ -108,6 +108,26 @@ smoke7_plain: matcher7_plain
 matcher7_plain_onig.so: matcher7_plain_onig.c matcher7_plain_onig.h patterns_generated.h
 	$(CC) $(CFLAGS) $(ONIG_CFLAGS) -shared -o $@ matcher7_plain_onig.c $(LDFLAGS) $(ONIG_LDFLAGS)
 
+# Prototype v9 — 88 separate per-pattern Thompson NFA + lazy DFA caches. Zero deps.
+matcher9: matcher9.c matcher9.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM9_MAIN -o $@ matcher9.c $(LDFLAGS)
+
+matcher9.so: matcher9.c matcher9.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher9.c $(LDFLAGS)
+
+smoke9: matcher9
+	./matcher9
+
+# Prototype v10 — 88 per-pattern backtracking NFA, fixed O(1) stack. Zero deps.
+matcher10: matcher10.c matcher10.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM10_MAIN -o $@ matcher10.c $(LDFLAGS)
+
+matcher10.so: matcher10.c matcher10.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher10.c $(LDFLAGS)
+
+smoke10: matcher10
+	./matcher10
+
 # Standalone micro-benchmarks (no .so — direct C executables).
 bench_malloc: bench_malloc.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c
 	$(CC) $(CFLAGS) -I../../ext/data_redactor \
@@ -126,6 +146,6 @@ bench_bm_inner: bench_bm_inner.c ../../ext/data_redactor/patterns.c ../../ext/da
 clean:
 	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so \
 	      matcher4 matcher4.so matcher5 matcher5.so matcher6 matcher6.so \
-	      matcher7 matcher7.so \
+	      matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so \
 	      bench_malloc bench_bm_inner \
 	      patterns_generated.h
