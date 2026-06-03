@@ -13,7 +13,7 @@ ONIG_LDFLAGS = -lonig
 PCRE2_CFLAGS  = -DPCRE2_CODE_UNIT_WIDTH=8 $(shell pkg-config --cflags libpcre2-8 2>/dev/null)
 PCRE2_LDFLAGS = -lpcre2-8
 
-.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 generate
+.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 smoke11 generate
 
 all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so
 
@@ -127,6 +127,16 @@ matcher10.so: matcher10.c matcher10.h patterns_generated.h
 
 smoke10: matcher10
 	./matcher10
+
+# Prototype v11 — 88 per-pattern Thompson bytecode VM. Zero deps.
+matcher11: matcher11.c matcher11.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM11_MAIN -o $@ matcher11.c $(LDFLAGS)
+
+matcher11.so: matcher11.c matcher11.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher11.c $(LDFLAGS)
+
+smoke11: matcher11
+	./matcher11
 
 # Standalone micro-benchmarks (no .so — direct C executables).
 bench_malloc: bench_malloc.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c

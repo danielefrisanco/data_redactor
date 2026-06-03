@@ -12,7 +12,7 @@
 # All engines run on the identical payload bytes (same Random seed per type).
 #
 # Usage:
-#   make matcher4.so matcher7.so matcher7_plain.so matcher7_plain_onig.so
+#   make matcher4.so matcher7.so matcher7_plain.so matcher7_plain_onig.so matcher11.so
 #   bundle exec ruby bench_realistic.rb
 
 require "fiddle"
@@ -34,9 +34,14 @@ MM7_HANDLE   = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher7.so"),
                                    Fiddle::Handle::RTLD_NOW)
 MM7PO_HANDLE = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher7_plain_onig.so"),
                                    Fiddle::Handle::RTLD_NOW | 8)  # RTLD_DEEPBIND
-MM9_HANDLE   = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher9.so"),
-                                   Fiddle::Handle::RTLD_NOW)
-MM10_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher10.so"),
+# v9 and v10 are INCORRECT (over-count vs the Ruby gsub reference — see
+# research_log.md §5). Excluded from the benchmark. v11 (bytecode VM) is the
+# current correct baseline.
+# MM9_HANDLE   = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher9.so"),
+#                                    Fiddle::Handle::RTLD_NOW)
+# MM10_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher10.so"),
+#                                    Fiddle::Handle::RTLD_NOW)
+MM11_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher11.so"),
                                    Fiddle::Handle::RTLD_NOW)
 
 module MM4
@@ -91,21 +96,12 @@ module MM7PO
   def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
 end
 
-module MM9
-  Init = Fiddle::Function.new(MM9_HANDLE["mm9_init"], [], Fiddle::TYPE_VOID)
-  Free = Fiddle::Function.new(MM9_HANDLE["mm9_free"], [], Fiddle::TYPE_VOID)
-  Scan = Fiddle::Function.new(MM9_HANDLE["mm9_scan"],
-           [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
-            Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
-  def self.init = Init.call
-  def self.free = Free.call
-  def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
-end
+# v9 / v10 disabled — incorrect (see research_log.md §5).
 
-module MM10
-  Init = Fiddle::Function.new(MM10_HANDLE["mm10_init"], [], Fiddle::TYPE_VOID)
-  Free = Fiddle::Function.new(MM10_HANDLE["mm10_free"], [], Fiddle::TYPE_VOID)
-  Scan = Fiddle::Function.new(MM10_HANDLE["mm10_scan"],
+module MM11
+  Init = Fiddle::Function.new(MM11_HANDLE["mm11_init"], [], Fiddle::TYPE_VOID)
+  Free = Fiddle::Function.new(MM11_HANDLE["mm11_free"], [], Fiddle::TYPE_VOID)
+  Scan = Fiddle::Function.new(MM11_HANDLE["mm11_scan"],
            [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
             Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
   def self.init = Init.call
@@ -191,14 +187,13 @@ MM7P.init(1);  MM7P.free
 MM7.init(0);   MM7.free
 MM7.init(1);   MM7.free
 MM7PO.init;    MM7PO.free
-#MM9.init;      MM9.free   # warm up 88 per-pattern NFA compile
-MM10.init;     MM10.free  # warm up 88 per-pattern backtracking NFA
+MM11.init;     MM11.free  # warm up 88 per-pattern bytecode compile
 
 puts "Realistic payload benchmark — #{ITERS} iterations per engine per payload"
 puts "All payloads: ~1 MB, fixed seed 42"
 puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT", "v9sep", "v10nfa"
+  "", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT", "v9sep", "v11bc"
 ]
 puts "-" * 139
 
@@ -234,18 +229,18 @@ PAYLOADS.each do |name, payload|
   t[:v7jit] = Benchmark.realtime { ITERS.times { MM7.scan(payload, buf) } }
   MM7.free
 
-  t[:v9] = nil  # skipped — too slow
+  t[:v9] = nil  # v9 incorrect — excluded (see research_log.md §5)
 
-  MM10.init
-  t[:v10] = Benchmark.realtime { ITERS.times { MM10.scan(payload, buf) } }
-  MM10.free
+  MM11.init
+  t[:v11] = Benchmark.realtime { ITERS.times { MM11.scan(payload, buf) } }
+  MM11.free
 
   ms = t.transform_values { |v| v.nil? ? nil : (v / ITERS * 1000).round(1) }
 
   puts "%-26s  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7s  %7.1f" % [
     name,
     ms[:ruby], ms[:c], ms[:v4], ms[:v41], ms[:v42],
-    ms[:onig], ms[:pcre2], ms[:pcre2jit], ms[:v7nojit], ms[:v7jit], "-", ms[:v10]
+    ms[:onig], ms[:pcre2], ms[:pcre2jit], ms[:v7nojit], ms[:v7jit], "-", ms[:v11]
   ]
 end
 
@@ -253,7 +248,7 @@ puts
 puts "All times in ms/iter. Lower is better."
 puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "× over pure-Ruby", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT", "v9sep", "v10nfa"
+  "× over pure-Ruby", "Ruby", "C-today", "v4NFA", "v4.1pfx", "v4.2sng", "Onigmo", "PCRE2", "PCRE2JIT", "v7nJIT", "v7JIT", "v9sep", "v11bc"
 ]
 puts "-" * 139
 
@@ -288,11 +283,11 @@ PAYLOADS.each do |name, payload|
   t[:v7jit] = Benchmark.realtime { ITERS.times { MM7.scan(payload, buf) } }
   MM7.free
 
-  t[:v9] = nil  # skipped
+  t[:v9] = nil  # v9 incorrect — excluded (see research_log.md §5)
 
-  MM10.init
-  t[:v10] = Benchmark.realtime { ITERS.times { MM10.scan(payload, buf) } }
-  MM10.free
+  MM11.init
+  t[:v11] = Benchmark.realtime { ITERS.times { MM11.scan(payload, buf) } }
+  MM11.free
 
   base = t[:ruby]
   ratios = t.transform_values { |v| v.nil? ? nil : (base / v).round(2) }
@@ -301,6 +296,6 @@ PAYLOADS.each do |name, payload|
     name,
     ratios[:ruby], ratios[:c], ratios[:v4], ratios[:v41], ratios[:v42],
     ratios[:onig], ratios[:pcre2], ratios[:pcre2jit],
-    ratios[:v7nojit], ratios[:v7jit], "-", ratios[:v10]
+    ratios[:v7nojit], ratios[:v7jit], "-", ratios[:v11]
   ]
 end

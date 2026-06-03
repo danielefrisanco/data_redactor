@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02.
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03.
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -801,6 +801,135 @@ Using Run 1 figures as the common baseline (same session as bench_bm_inner Run 1
 is a direct drop-in improvement to `replace_all_matches` in `redact.c` and the
 equivalent loop in `scan.c`. No new files, no new dependencies. The BM tables
 would be built at `Init_data_redactor` time alongside `regcomp`.
+
+---
+
+### Prototype v9 — matcher9.c (88 per-pattern Thompson NFA + lazy DFA cache)
+
+**Files:** `matcher9.c`, `matcher9.h`
+
+**Motivation:** v4 built one *merged* NFA→DFA over all 88 patterns and suffered
+DFA state explosion / cross-pattern contamination (documented in §11). v9 gives
+each pattern its own NFA and its own small (512-slot) lazy DFA cache — correct by
+construction (no merging), no glibc `regexec`, no per-call O(N) allocation.
+
+**Result: INCORRECT.** Passes the 11/11 smoke test but the smoke test only checks
+"is the expected pattern name present among the matches" — it never checks the
+*count*. Against the ground-truth Ruby `gsub` reference, v9 massively over-counts:
+
+| Smoke input | Ruby `gsub` (truth) | v9 |
+|---|---|---|
+| `AIzaSy…` (google_api) | 2 | **34** |
+| `cc: 4111111111111111` (credit_card) | 1 | **17** |
+| `iban: DE89…` (iban_de) | 3 | **25** |
+
+The leftmost-longest reset logic re-seeds the start state in a way that produces
+many overlapping spurious matches on boundary-wrapped patterns. **Do not use v9 as
+a correctness or performance reference.**
+
+---
+
+### Prototype v10 — matcher10.c (88 per-pattern NFA, precomputed transition table)
+
+**Files:** `matcher10.c`, `matcher10.h`
+
+**Motivation:** avoid v9's lazy-DFA hashing by precomputing, at init time, for
+every `(NFA state, byte)` pair the full epsilon-closed target set into a flat
+pool (`trans[state][byte] → {offset, count}`). Scan time then has zero DFS and
+zero epsilon closure — advancing one byte is a table lookup per active thread.
+
+**Result: INCORRECT.** Same flaw class as v9. Passes 11/11 smoke but over-counts
+against the Ruby `gsub` reference (e.g. us_ssn=2 vs 1, google_api=30 vs 2,
+credit_card=16 vs 1, iban_de=23 vs 3). The dead-end / reset / re-seed logic in
+`scan_one` does not reproduce non-overlapping leftmost-longest `gsub` semantics.
+It is also slow (~1 s/iter on 500 KB before the fix that was never validated).
+**Do not use v10 as a correctness or performance reference.**
+
+---
+
+### Prototype v11 — matcher11.c (88 per-pattern Thompson **bytecode VM**)
+
+**Files:** `matcher11.c`, `matcher11.h`
+
+**Motivation:** v9 and v10 were both incorrect because their hand-rolled
+state-set reset logic did not match `gsub` semantics. v11 starts over with the
+**virtual-machine approach** (Cox 2009, "Regular Expression Matching: the Virtual
+Machine Approach", already in the bibliography). Each pattern compiles once to a
+flat bytecode program; scanning is a classic two-list Thompson simulation with the
+control flow made *explicit in the instruction stream* rather than implicit in an
+epsilon graph — which is what makes correctness tractable.
+
+**Instruction set (minimal — nothing speculative):**
+
+| Opcode | Meaning |
+|---|---|
+| `CHAR c` | match byte == c, then advance |
+| `CLASS bitmap` | match byte in 256-bit class, then advance |
+| `ANY` | match any byte != `\n`, then advance |
+| `SPLIT x, y` | fork to x (preferred) and y; consumes nothing |
+| `JMP x` | goto x; consumes nothing |
+| `BOL` / `EOL` | zero-width line anchors |
+| `MATCH` | accept |
+
+**Architecture:**
+- Reuses the proven POSIX-ERE parser + AST from v9 (unchanged).
+- `emit_node()` lowers the AST to bytecode. Greedy quantifiers emit `SPLIT` with
+  the body branch preferred. `{lo,hi}` emits `lo` mandatory copies + `(hi-lo)`
+  split-guarded optional copies. `*`/`+` emit the standard split-loop.
+- `addthread()` epsilon-closes a pc into the current/next thread list,
+  deduplicating by pc with a generation-stamped `seen[]` array (no per-byte
+  memset).
+- `scan_one()` runs one left-to-right sweep per pattern: seed at `pos`, step the
+  two lists byte by byte, remember the longest accept end for the current start,
+  then resume **non-overlapping** from that end (or `pos+1` on no match) — exactly
+  reproducing `String#gsub` semantics.
+- Boundary-wrapped patterns are wrapped in `(^|[^0-9A-Za-z])(...)([^0-9A-Za-z]|$)`
+  before compilation, identical to the pure-Ruby reference.
+- Prefix patterns use `memmem` to jump to the next literal occurrence before
+  seeding (the only optimization present; everything else is left simple).
+
+**Result: CORRECT.** Verified against the ground-truth reference — *independent
+per-pattern* `gsub` replacement count (`pl.gsub(re){…}` summed over the 88
+patterns, each seeing the original input):
+
+| Payload | Ruby `gsub` (truth) | v11 |
+|---|---|---|
+| smoke google_api | 2 | **2 ✓** |
+| smoke iban_de | 3 | **3 ✓** |
+| sparse 100 KB (1 hit/5000B) | 30 | **30 ✓** |
+| medium 1 MB (1 hit/500B) | 207 | **207 ✓** |
+| dense 100 KB (1 hit/50B) | 1536 | **1536 ✓** |
+
+> **Reference-semantics note.** The correct reference is *independent* per-pattern
+> matching: each pattern scans the original input. The production
+> `DataRedactor.redact` pipeline instead applies patterns *sequentially* on the
+> already-redacted string (`reduce` with `gsub`), so a later pattern sees
+> `[REDACTED]` instead of the original bytes — on the medium payload that
+> sequential pipeline reports 163 replacements vs 207 independent. The matcher's
+> job is to find all matches in the raw input (207); collapsing overlaps across
+> patterns is a separate concern. Also beware: `String#scan(re).size` counts
+> capture-group arrays, **not** matches, when the regex has groups — use the
+> `gsub` replacement count as the reference, not `scan`.
+
+**Performance: slow, as expected for a first correct version (no optimization).**
+1 MB payloads, 10 iters, vs pure-Ruby `gsub` baseline on the same machine:
+
+| Payload | Ruby | v11 | v11 vs Ruby |
+|---|---|---|---|
+| sparse (1 hit/5000B) | 152 ms | 983 ms | 0.16× |
+| medium (1 hit/500B) | 152 ms | 1000 ms | 0.15× |
+| dense (1 hit/50B) | 175 ms | 1208 ms | 0.15× |
+
+v11 is ~6× *slower* than pure-Ruby right now. This is the intended clean baseline:
+correct first, with deliberately no first-byte filter, no shared literal
+pre-filter, recursive `addthread`, and no hot-path inlining. Each of those is a
+localized, independently-verifiable improvement to make next.
+
+**Improvement backlog (do one at a time, re-verify against the `gsub` reference):**
+1. Iterative `addthread` (remove recursion).
+2. Shared first-byte / literal pre-filter so noise bytes skip the VM entirely
+   (the v8 BM result shows this is the decisive factor).
+3. Inline the common `CHAR` step; keep `CLASS` bitmap test branchless.
 
 ---
 
