@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03; v12.1 literal pre-filter + v14 first-byte filter added 2026-06-03.
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03; v12.1 literal pre-filter + v14 first-byte filter added 2026-06-03; v15.1 VM constant-factor speedups added 2026-06-03.
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -1053,6 +1053,74 @@ filled once at init. The scan hot path allocates nothing — it reuses the v11
 scratch (`g_seen`/`g_clist`/`g_nlist`, realloc-once then reused). `mm14_free` now
 frees that scratch and resets the persistent generation counter so a free/re-init
 cycle starts clean.
+
+**Complexity (measured on v14, all later VM variants share it):** *time* is **O(N)
+on realistic payloads** and **O(N²) worst case per pattern** in theory. The
+worst case comes from the per-start-position scan structure (the outer loop can try
+up to N starts, each forward-scanning up to L bytes for a pattern whose greedy tail
+is unbounded — e.g. `jwt`'s trailing `[A-Za-z0-9_-]+`); the first-byte filter and
+fast thread-set death keep it linear in practice. Empirically, scanning dense
+1 MB → 16 MB the cost stayed flat at **~75 ms/100 KB** (no super-linear growth).
+*Space* is **O(Σ Mₚ)** — a few hundred KB for all 88 bytecode programs + reused
+thread scratch — and **independent of N**; the scan hot path allocates nothing.
+This is the structural opposite of glibc `regexec`, which allocated O(N) *per call*
+(the original root cause). Killing the O(N²) worst case is v15.2's goal (single
+pass); the unbounded greedy tails that enable it are tracked separately as a *gem
+pattern* change (bound the tail so a match still neutralizes the token — TODO.md
+§1b), not an engine change.
+
+---
+
+### Prototype v15.1 — matcher15.c (v14 + Thompson VM constant-factor speedups)
+
+**Files:** `matcher15.c`, `matcher15.h`
+
+**Motivation:** v14 is already O(N) and allocation-free; what remains is the VM's
+per-byte constant factor on the bytes that *pass* the filters. v15.1 keeps v14's
+structure and semantics unchanged and only lowers that constant, in two measured
+steps:
+
+**Step 1 — iterative `addthread`.** Replaced the recursive epsilon-closure with an
+explicit DFS stack (capacity 2·prog.n; a pc can be pushed twice before being
+deduped at pop). Pre-order is preserved exactly — `SPLIT` pushes `y` then `x` so
+`x`'s subtree drains first, matching the old recursion — so leftmost preference is
+identical. **Result: 1.00–1.03× (negligible).** Useful negative result: recursion
+was *not* the bottleneck — gcc was already optimizing the shallow, `seen[]`-deduped
+closure. Kept anyway (removes stack-depth risk, still allocation-free).
+
+**Step 2 — O(1) accept check.** v11–v14 re-scanned the entire current thread list
+every byte just to find an `OP_MATCH`. v15.1 stops storing `MATCH` in the thread
+list; `addthread` instead sets a `matched` flag on the list (threads are added in
+priority order, so the first MATCH seen is the highest-priority accept). The
+per-byte accept test becomes `if (cl->matched …)` instead of an O(list) rescan.
+One subtlety handled: a closure can be MATCH-only (no byte-consuming threads, so
+`cl->n == 0`); the loop condition is `while (cl->n > 0 || cl->matched)` so that
+accept is still recorded. **Result: 1.10–1.11× — the real win of v15.1.**
+
+**Correctness:** matches the independent per-pattern `gsub` reference exactly,
+byte-for-byte identical match counts to v14 on sparse/medium/dense/uri/bearer/noise,
+and a 600-scan sequential mixed-input stress test passes (no cross-call regression
+from the `matched`-flag change).
+
+**Performance (1 MB, 10 iters):**
+
+| Payload | v11 | v14 | v15.1 | v15.1 vs v14 |
+|---|---|---|---|---|
+| sparse | 1101 ms | 397 ms | **357 ms** | 1.11× |
+| medium | 1110 ms | 414 ms | **377 ms** | 1.10× |
+| dense | 1395 ms | 655 ms | **592 ms** | 1.11× |
+
+**Takeaway:** the constant-factor ceiling is low (~1.1×) precisely *because* v14's
+filters already removed most per-byte work — what's left is genuine VM stepping on
+bytes that pass the filter, dominated by the closure/step cost, not dispatch
+overhead. The larger remaining lever is the **single-pass rewrite (v15.2)**: track
+all active start positions in one left-to-right sweep, making the worst case true
+O(N·M) and eliminating the redundant re-scanning across overlapping start positions
+that the current "resume from match_end / pos+1" structure incurs.
+
+**Allocation discipline:** unchanged from v14 — added one reused per-pattern DFS
+stack (`g_estack`, realloc-once then reused, freed in `mm15_free`). Scan hot path
+still allocates nothing.
 
 ---
 
