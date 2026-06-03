@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03.
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03; v12.1 literal pre-filter added 2026-06-03.
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -930,6 +930,79 @@ localized, independently-verifiable improvement to make next.
 2. Shared first-byte / literal pre-filter so noise bytes skip the VM entirely
    (the v8 BM result shows this is the decisive factor).
 3. Inline the common `CHAR` step; keep `CLASS` bitmap test branchless.
+
+---
+
+### Prototype v12.1 — matcher12.c (v11 VM + literal pre-filter for all patterns)
+
+**Files:** `matcher12.c`, `matcher12.h`
+
+**Motivation:** v11 only `memmem`-skipped noise for the start-anchored-prefix
+patterns; infix-literal patterns were seeded + stepped at every byte (the ~11
+ns/pattern/byte measured on pure noise). v12.1 extends the literal skip to infix
+patterns: a match must *contain* the required literal, so a match start lies in
+`[hit - max_back .. hit]` for each literal occurrence, where
+`max_back = ast_max_len − lit_len` (computed from the AST at init). If the prefix
+before the literal is unbounded (`*`/`+`/`{n,}`), `max_back` is unbounded and the
+pattern falls back to v11's full per-byte scan.
+
+**Correctness: CORRECT.** Verified against independent per-pattern `gsub` on
+sparse/medium/dense 1 MB payloads plus infix smoke cases (`uri_with_password`,
+`bearer_token`): all counts match exactly (sparse 246, medium 2130, dense 15577).
+
+**Performance: only 1.10× over v11 — the literal skip barely helps.**
+
+| Payload | v11 | v12.1 | speedup |
+|---|---|---|---|
+| sparse (1 hit/5000B) | 1080 ms | 979 ms | 1.10× |
+| medium (1 hit/500B) | 1127 ms | 1037 ms | 1.09× |
+| dense (1 hit/50B) | 1382 ms | 1234 ms | 1.12× |
+
+**Why the win is small — the decisive finding (re-confirms TODO.md §44):**
+In the prototype's `patterns_generated.h`, **~40 of the 88 patterns carry no
+usable literal at all** — the boundary-wrapped pure-digit national-ID / financial
+patterns (SSN, CPF, Aadhaar, credit_card, IPv4, PESEL, …) have both `prefix` and
+`bm_literal` set to NULL. v12.1 cannot skip a single byte for them; they scan
+every position regardless. These literal-less patterns are exactly the
+"always-candidates" the earlier research flagged as *"the binding constraint"*
+(TODO.md §44) and measured at ~35 ms each / 28 MB/s. The literal skip only helps
+the ~30 prefixed patterns, which the earlier research already measured as
+"essentially free (0.6 ms each, fully skipped)". So v12.1 speeds up the
+already-cheap patterns and does nothing for the expensive ones → ~1.1× overall.
+
+**Consequence for the plan:** any *literal* pre-filter (the whole v12 family, and
+by extension the literal side of v13's Aho-Corasick) is structurally incapable of
+accelerating the 40 literal-less digit-ID patterns that dominate the cost. The
+lever that *can* reach them is the **first-byte / start-set filter (v14)**: even a
+literal-less boundary-wrapped digit pattern can only start right after a
+non-alphanumeric boundary with a digit (or a small known first-char set), which is
+computable from the POSIX-ERE the engine is constrained to. That constraint is
+not hypothetical — it is enforced in code at
+[lib/data_redactor.rb:71](../lib/data_redactor.rb) (`RUBY_ONLY_SYNTAX_RE` rejects
+`\d \w \s \b`, lookaround, named groups, inline flags, and non-greedy `*? +? ??`)
+and [lib/data_redactor.rb:68](../lib/data_redactor.rb) (`CAPTURE_GROUP_RE` rejects
+capture groups under `boundary: true`), both checked in `add_pattern`. Every
+pattern is therefore a true regular language with a well-defined first-byte set
+and no backtracking risk. v14 is promoted ahead of v13.
+
+**On variant numbering:** the file is `matcher12.c` and currently holds only the
+first variant, **v12.1** (memmem + bounded back-up, full-scan fallback for
+unbounded prefixes). The two alternative skip strategies discussed before building
+(v12.2 = memmem windows back to previous hit; v12.3 = per-position forward literal
+gate) were *not* built, and the decision is backed by a direct measurement of the
+ceiling rather than asserted:
+
+- v12.1 on the **pure-noise** 1 MB payload (where every literal-bearing pattern's
+  literal is absent, so all ~30 of them `memmem`→NULL and bail immediately — i.e.
+  a *perfect* literal filter): **920 ms/iter**.
+- v12.1 on the **sparse** payload: **979 ms/iter**.
+
+The 920 ms is entirely the ~40 literal-less digit-ID patterns, which no literal
+filter can skip. The absolute most any better skip strategy could recover is the
+~59 ms gap (≈6%) — and v12.2/v12.3 are merely different bookkeeping for the same
+skip v12.1 already does well, so they would recover little of even that 6% while
+adding complexity. The v12 family is parked at v12.1. The 94% that is untouchable
+by literals is the target, and only a first-byte/start-set filter (v14) reaches it.
 
 ---
 
