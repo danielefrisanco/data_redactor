@@ -13,7 +13,7 @@ ONIG_LDFLAGS = -lonig
 PCRE2_CFLAGS  = -DPCRE2_CODE_UNIT_WIDTH=8 $(shell pkg-config --cflags libpcre2-8 2>/dev/null)
 PCRE2_LDFLAGS = -lpcre2-8
 
-.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 smoke11 smoke12 smoke14 smoke15 smoke16 smoke17 generate
+.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 smoke11 smoke12 smoke14 smoke15 smoke16 smoke17 smoke18 generate
 
 all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so
 
@@ -188,6 +188,16 @@ matcher17.so: matcher17.c matcher17.h patterns_generated.h
 smoke17: matcher17
 	./matcher17
 
+# Prototype v18 — v15.1 + per-pattern lazy DFA transition cache. Zero deps.
+matcher18: matcher18.c matcher18.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM18_MAIN -o $@ matcher18.c $(LDFLAGS)
+
+matcher18.so: matcher18.c matcher18.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher18.c $(LDFLAGS)
+
+smoke18: matcher18
+	./matcher18
+
 # Standalone micro-benchmarks (no .so — direct C executables).
 bench_malloc: bench_malloc.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c
 	$(CC) $(CFLAGS) -I../../ext/data_redactor \
@@ -211,5 +221,6 @@ clean:
 	      matcher14 matcher14.so matcher15 matcher15.so \
 	      matcher16 matcher16.so \
 	      matcher17 matcher17.so \
+	      matcher18 matcher18.so \
 	      bench_malloc bench_bm_inner \
 	      patterns_generated.h

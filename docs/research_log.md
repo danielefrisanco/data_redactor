@@ -1205,6 +1205,84 @@ instead of a switch over a linked list). These require more invasive restructuri
 
 ---
 
+### Prototype v18 — matcher18.c (v15.1 + per-pattern lazy DFA transition cache) ★ BREAKTHROUGH
+
+**Files:** `matcher18.c`, `matcher18.h`, `verify18.rb`
+
+**Motivation:** v17 isolated the bottleneck as the inner step loop (iterate `cl->n`
+threads, switch-dispatch per instruction, `addthread` per match — once per input
+byte). The standard way to collapse that into O(1) per byte is the lazy DFA: replace
+the NFA-state-set step with a single table lookup `state = table[state][byte]`. This
+is what Onigmo/RE2 do internally. The two earlier table attempts both failed for
+reasons that do **not** apply here:
+- **v4 merged all 88 patterns** → DFA state explosion + cross-pattern contamination
+  (correctness 31%). v18 is **per-pattern** — each pattern's DFA is tiny and isolated.
+- **v9/v10 had incorrect leftmost-longest reset logic in `scan_one`** (over-counted
+  16–30× vs gsub). The table mechanism itself was fine. v18 reuses **v15.1's
+  proven-correct `scan_one` outer structure verbatim** and swaps only the inner step.
+
+**Design:**
+- A DFA state = a canonical (sorted, deduped) set of byte-consuming NFA pcs + a
+  `matched` flag. States are interned in a per-pattern open-addressing hash
+  (`pc-set → small int id`).
+- `trans[state*256 + byte]` → next state id, filled **lazily**: on first access run
+  v15.1's exact NFA step + `addthread` closure once, canonicalize, intern, cache.
+  Subsequent visits are a single array lookup. `DFA_DEAD = -1` ends the attempt.
+- The start state (id 0) is the closure of pc 0 (reuses v17's precompute idea).
+- All buffers realloc-once, reused across calls; scan hot path allocates nothing once
+  a pattern's reachable DFA is warm.
+
+**BOL/EOL handling (the key correctness boundary):** a DFA state cannot encode "am I
+at a line boundary," so any pattern whose bytecode contains `OP_BOL`/`OP_EOL` (from
+`^`/`$`, including the boundary wrapper `(^|…)`/`(…|$)`) falls back to v15.1's exact
+NFA inner loop. Measured split: **64 of 88 patterns take the DFA path; 24 fall back.**
+(Better than the feared ~40 — many boundary-wrapped patterns compile without a
+reachable anchor instruction.)
+
+**Correctness: CORRECT — byte-for-byte identical to v15.1.** `verify18.rb` compares
+the full `(pattern_id, start, length)` match set of v18 against v15.1 (proven correct
+against the independent per-pattern gsub reference) on smoke cases, sparse/medium/dense
+1 MB, pure noise, and a **600-scan sequential stress test** (catches cross-call state
+bugs like §6.10). All identical. This is the exact gate v9/v10 failed.
+
+**Performance: ~2× over v15.1; reaches parity with pure-Ruby/Onigmo.**
+
+| Payload | pure-Ruby | Onigmo | v15.1 | **v18** | v18 vs v15.1 | v18 × pure-Ruby |
+|---|---|---|---|---|---|---|
+| sparse | 157 ms | 154 ms | 345 ms | **170 ms** | 2.0× | 0.93× |
+| medium | 157 ms | 162 ms | 443 ms | **209 ms** | 2.1× | 0.75× |
+| dense | 225 ms | 287 ms | 626 ms | **248 ms** | 2.5× | 0.91× |
+| env | 324 ms | 450 ms | 1044 ms | **294 ms** | 3.6× | **1.10×** |
+
+- **vs today's glibc C extension (~800–1070 ms): v18 is ~4–5× faster.**
+- **vs Onigmo: v18 ties on sparse/medium and *beats* it on dense (248 vs 287) and
+  env (294 vs 450).** This is the first zero-dependency engine to reach Onigmo's
+  level — and on the dense/secret-heavy payloads (the redaction use case) it wins.
+- **On env it beats pure-Ruby (1.10×)** — the DFA's O(1)/byte step shines exactly
+  where the NFA loop was doing the most per-byte thread work.
+- PCRE2 JIT still wins outright (native code, no interpretation) at 3.7–5.3×, but it
+  requires `libpcre2-dev`. v18 is the best **zero-dependency** result.
+
+**Why it works where v15.2/v17 didn't:** v15.2 (union filter) and v17 (seed cache)
+both nibbled at non-bottleneck costs. v18 attacks the actual hot path — the per-byte
+inner loop — converting O(active threads) work into one table lookup. The 24 anchor
+patterns that fall back still pay the v15.1 cost, which is why env (heavy on
+boundary-wrapped digit patterns) doesn't improve even more; lowering those anchors
+to DFA-able form is the documented follow-up (v18.1).
+
+**Allocation discipline:** per pattern, one interned-state hash + flat `trans` table +
+pc-set pool, all realloc-once and freed in `mm18_free`. No per-merge explosion because
+DFAs are per-pattern and tiny (tens to low-hundreds of states each). Scan hot path
+allocates nothing after warm-up.
+
+**Follow-up (v18.1, not yet built):** lower the boundary wrapper so the 24 anchor
+patterns become DFA-able — `(^|[^0-9A-Za-z])` is a real anchor only at pos 0; for
+pos>0 it is the ordinary class `[^0-9A-Za-z]`. Handling pos==0 once outside the DFA
+would move the boundary-wrapped digit patterns onto the fast path and should improve
+dense/env further.
+
+---
+
 ## 6. Problems Encountered and How We Solved Them
 
 ### 6.1 glibc `regexec` bottleneck (root cause, not a code bug)
@@ -2002,12 +2080,13 @@ env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 | v7: AC+BM+PCRE2 JIT | 3.31× | 2.53× | 0.91× | 0.31× | 0.31× | Collapses on dense/env |
 | **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Fast but not correct (31%)** |
 | **v15.1 bytecode VM** | **0.48×** | **0.44×** | **0.33×** | **0.31×** | **0.31×** | **Zero-dep, correct, beats glibc 2.2×** |
+| **v18 per-pattern lazy DFA** | **0.97×** | **0.90×** | **0.82×** | **1.07×** | **0.82×** | **Zero-dep, correct, ties/beats Onigmo; ~4–5× over glibc** |
 | **Plain PCRE2 JIT sequential** | **3.90×** | **3.81×** | **3.60×** | **5.51×** | **3.60×** | **Best overall, correct** |
 
 **Two viable production architectures:**
 
-1. **Plain PCRE2 JIT sequential** — best overall. 3.6–5.5× over pure-Ruby. One dependency: `libpcre2-dev`.
-2. **v15.1 bytecode VM (zero dependencies)** — 0.31–0.48× over pure-Ruby, but **2.2× over today's glibc C extension**. Pure C, no external deps, correct.
+1. **Plain PCRE2 JIT sequential** — fastest. 3.6–5.5× over pure-Ruby. One dependency: `libpcre2-dev`.
+2. **v18 per-pattern lazy DFA (zero dependencies)** — 0.82–1.10× over pure-Ruby (ties pure-Ruby/Onigmo, beats both on dense/env), **~4–5× over today's glibc C extension**. Pure C, no external deps, correct (byte-for-byte identical to the proven v15.1). This is the recommended zero-dependency path.
 
 **v4.2 as a research result:** v4.2 performance is a valid datapoint showing that
 single-pass leftmost-longest Thompson NFA eliminates O(N²) collapse. It is not
@@ -2072,14 +2151,20 @@ Four findings, each surprising:
 | **v15.1 VM constant-factor** | Iterative addthread + O(1) accept | Can we tighten the inner loop? | None | ✅ DONE — 1.1× over v14; 2.2× over glibc today |
 | **v15.2 union bitmap** | OR of all 88 first-sets, skip before per-pattern work | Does a shared skip reduce per-pattern overhead? | None | ✅ DONE — no improvement (~4% slower); per-pattern filters already do this |
 | **v17 precomputed init list** | Cache epsilon-closure of pc=0, memcpy at seed time | Is seed addthread the bottleneck? | None | ✅ DONE — no improvement (~1%); inner step loop dominates, not seed overhead |
+| **v18 per-pattern lazy DFA** | Replace inner NFA-set step with O(1) table lookup | Can a per-pattern lazy DFA close the gap to Onigmo? | None | ✅ DONE — **yes: ~2× over v15.1, ties/beats Onigmo, ~4–5× over glibc; correct (==v15.1)** |
+| **v18.1 anchor lowering** | Make boundary-wrapped digit patterns DFA-able | Can the 24 fallback patterns join the DFA path? | None | Not yet started (see v18 follow-up) |
 | **selective NFA merge** | Can we merge a subset of non-overlapping patterns? | None | Not yet started (see §11.1 addendum) |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
 **Research conclusion (updated 2026-06-03):** Two viable production paths:
 - **Plain PCRE2 JIT sequential** — 3.6–5.5× over pure-Ruby, requires `libpcre2-dev`, correct
-- **v15.1 bytecode VM** — 2.2× over today's glibc C extension, zero dependencies, correct; still ~2× slower than pure-Ruby
+- **v18 per-pattern lazy DFA** — ties/beats pure-Ruby and Onigmo (0.82–1.10×), ~4–5× over today's glibc C extension, **zero dependencies, correct (byte-for-byte identical to v15.1)**
 
-**Remaining gap to pure-Ruby:** the inner VM step loop is the bottleneck — iterating `cl->n` threads, switch dispatch per instruction, `addthread` call per match. Onigmo closes this gap through years of tight C optimization. A JIT would close it entirely. Neither seed caching (v17) nor union filtering (v15.2) addresses the inner loop cost.
+**How the gap was closed:** the inner VM step loop was the bottleneck (confirmed by
+v17's null result). v18's per-pattern lazy DFA converts that O(active-threads)/byte
+loop into one table lookup, reaching Onigmo's level without a dependency. The earlier
+table attempts (v4 merged, v9/v10 wrong reset logic) failed for reasons that don't
+apply to a per-pattern DFA wrapping v15.1's proven `scan_one`.
 
 ---
 

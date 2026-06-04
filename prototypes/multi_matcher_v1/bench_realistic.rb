@@ -51,6 +51,8 @@ MM15_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher15.so"),
                                    Fiddle::Handle::RTLD_NOW)
 MM17_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher17.so"),
                                    Fiddle::Handle::RTLD_NOW)
+MM18_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher18.so"),
+                                   Fiddle::Handle::RTLD_NOW)
 
 module MM4
   Init  = Fiddle::Function.new(MM4_HANDLE["mm4_init"],      [], Fiddle::TYPE_VOID)
@@ -139,6 +141,17 @@ module MM17
   def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
 end
 
+module MM18
+  Init = Fiddle::Function.new(MM18_HANDLE["mm18_init"], [], Fiddle::TYPE_VOID)
+  Free = Fiddle::Function.new(MM18_HANDLE["mm18_free"], [], Fiddle::TYPE_VOID)
+  Scan = Fiddle::Function.new(MM18_HANDLE["mm18_scan"],
+           [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+            Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  def self.init = Init.call
+  def self.free = Free.call
+  def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
+end
+
 # ---------- Payload builders ------------------------------------------------
 
 HITS = [
@@ -216,13 +229,13 @@ MM7.init(1);  MM7.free    # warm up AC+BM+PCRE2 JIT compile
 MM7PO.init;   MM7PO.free  # warm up Onigmo compile
 MM14.init;    MM14.free   # warm up v14 (literal + first-byte filter)
 MM15.init;    MM15.free   # warm up v15.1 (iterative addthread + O(1) accept)
-MM17.init;    MM17.free   # warm up v17 (precomputed initial thread list)
+MM18.init;    MM18.free   # warm up v18 (lazy DFA transition cache)
 
 puts "Realistic payload benchmark — #{ITERS} iterations per engine per payload"
 puts "All payloads: ~1 MB, fixed seed 42"
 puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v17"
+  "", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v18"
 ]
 puts "-" * 99
 
@@ -263,9 +276,9 @@ PAYLOADS.each do |name, payload|
   t[:v15] = run_engine("v15") { ITERS.times { MM15.scan(payload, buf) } }
   MM15.free
 
-  MM17.init
-  t[:v16] = run_engine("v17") { ITERS.times { MM17.scan(payload, buf) } }
-  MM17.free
+  MM18.init
+  t[:v16] = run_engine("v18") { ITERS.times { MM18.scan(payload, buf) } }
+  MM18.free
 
   ms = t.transform_values { |v| v.nil? ? nil : (v / ITERS * 1000).round(1) }
 
@@ -279,7 +292,7 @@ puts
 puts "All times in ms/iter. Lower is better."
 puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "× over pure-Ruby", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v17"
+  "× over pure-Ruby", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v18"
 ]
 puts "-" * 99
 
@@ -309,9 +322,9 @@ PAYLOADS.each do |name, payload|
   t[:v15] = run_engine("v15") { ITERS.times { MM15.scan(payload, buf) } }
   MM15.free
 
-  MM17.init
-  t[:v16] = run_engine("v17") { ITERS.times { MM17.scan(payload, buf) } }
-  MM17.free
+  MM18.init
+  t[:v16] = run_engine("v18") { ITERS.times { MM18.scan(payload, buf) } }
+  MM18.free
 
   base = t[:ruby]
   ratios = t.transform_values { |v| v.nil? ? nil : (base / v).round(2) }
