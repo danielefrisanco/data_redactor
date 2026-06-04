@@ -53,6 +53,8 @@ MM17_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher17.so"),
                                    Fiddle::Handle::RTLD_NOW)
 MM18_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher18.so"),
                                    Fiddle::Handle::RTLD_NOW)
+MM18_1_HANDLE = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher18_1.so"),
+                                    Fiddle::Handle::RTLD_NOW)
 
 module MM4
   Init  = Fiddle::Function.new(MM4_HANDLE["mm4_init"],      [], Fiddle::TYPE_VOID)
@@ -152,6 +154,17 @@ module MM18
   def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
 end
 
+module MM18_1
+  Init = Fiddle::Function.new(MM18_1_HANDLE["mm18_1_init"], [], Fiddle::TYPE_VOID)
+  Free = Fiddle::Function.new(MM18_1_HANDLE["mm18_1_free"], [], Fiddle::TYPE_VOID)
+  Scan = Fiddle::Function.new(MM18_1_HANDLE["mm18_1_scan"],
+           [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+            Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  def self.init = Init.call
+  def self.free = Free.call
+  def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
+end
+
 # ---------- Payload builders ------------------------------------------------
 
 HITS = [
@@ -229,15 +242,16 @@ MM7.init(1);  MM7.free    # warm up AC+BM+PCRE2 JIT compile
 MM7PO.init;   MM7PO.free  # warm up Onigmo compile
 MM14.init;    MM14.free   # warm up v14 (literal + first-byte filter)
 MM15.init;    MM15.free   # warm up v15.1 (iterative addthread + O(1) accept)
-MM18.init;    MM18.free   # warm up v18 (lazy DFA transition cache)
+MM18.init;    MM18.free   # warm up v18 (lazy DFA, 64/88 patterns)
+MM18_1.init;  MM18_1.free # warm up v18.1 (lazy DFA, 88/88 patterns)
 
 puts "Realistic payload benchmark — #{ITERS} iterations per engine per payload"
 puts "All payloads: ~1 MB, fixed seed 42"
 puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v18"
+  "", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v15.1", "v18", "v18.1"
 ]
-puts "-" * 99
+puts "-" * 108
 
 # v4 NFA excluded from live benchmark — results already in research_log.md §8.5.
 # Crashes on env (1600 ms/iter), and DFA cache cold-start is noisy on shorter payloads.
@@ -277,14 +291,18 @@ PAYLOADS.each do |name, payload|
   MM15.free
 
   MM18.init
-  t[:v16] = run_engine("v18") { ITERS.times { MM18.scan(payload, buf) } }
+  t[:v18] = run_engine("v18") { ITERS.times { MM18.scan(payload, buf) } }
   MM18.free
+
+  MM18_1.init
+  t[:v18_1] = run_engine("v18.1") { ITERS.times { MM18_1.scan(payload, buf) } }
+  MM18_1.free
 
   ms = t.transform_values { |v| v.nil? ? nil : (v / ITERS * 1000).round(1) }
 
   puts "%-26s  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f" % [
     name,
-    ms[:ruby], ms[:c], ms[:onig], ms[:pcre2jit], ms[:v7jit], ms[:v14], ms[:v15], ms[:v16]
+    ms[:ruby], ms[:c], ms[:onig], ms[:pcre2jit], ms[:v7jit], ms[:v15], ms[:v18], ms[:v18_1]
   ]
 end
 
@@ -294,7 +312,7 @@ puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
   "× over pure-Ruby", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v18"
 ]
-puts "-" * 99
+puts "-" * 108
 
 PAYLOADS.each do |name, payload|
   $stderr.puts "\n[#{name.strip}] ratios"
@@ -323,8 +341,12 @@ PAYLOADS.each do |name, payload|
   MM15.free
 
   MM18.init
-  t[:v16] = run_engine("v18") { ITERS.times { MM18.scan(payload, buf) } }
+  t[:v18] = run_engine("v18") { ITERS.times { MM18.scan(payload, buf) } }
   MM18.free
+
+  MM18_1.init
+  t[:v18_1] = run_engine("v18.1") { ITERS.times { MM18_1.scan(payload, buf) } }
+  MM18_1.free
 
   base = t[:ruby]
   ratios = t.transform_values { |v| v.nil? ? nil : (base / v).round(2) }
@@ -332,6 +354,6 @@ PAYLOADS.each do |name, payload|
   puts "%-26s  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f" % [
     name,
     ratios[:ruby], ratios[:c], ratios[:onig], ratios[:pcre2jit],
-    ratios[:v7jit], ratios[:v14], ratios[:v15], ratios[:v16]
+    ratios[:v7jit], ratios[:v15], ratios[:v18], ratios[:v18_1]
   ]
 end

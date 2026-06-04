@@ -1275,11 +1275,61 @@ pc-set pool, all realloc-once and freed in `mm18_free`. No per-merge explosion b
 DFAs are per-pattern and tiny (tens to low-hundreds of states each). Scan hot path
 allocates nothing after warm-up.
 
-**Follow-up (v18.1, not yet built):** lower the boundary wrapper so the 24 anchor
-patterns become DFA-able — `(^|[^0-9A-Za-z])` is a real anchor only at pos 0; for
-pos>0 it is the ordinary class `[^0-9A-Za-z]`. Handling pos==0 once outside the DFA
-would move the boundary-wrapped digit patterns onto the fast path and should improve
-dense/env further.
+**Follow-up → see v18.1 below.**
+
+---
+
+### Prototype v18.1 — matcher18_1.c (v18 + anchor lowering, all 88/88 patterns DFA) ★
+
+**Files:** `matcher18_1.c`, `matcher18_1.h`, `verify18_1.rb`
+
+**Motivation:** v18 put 64/88 patterns on the DFA path. The 24 that fell back were
+all anchor-containing (boundary-wrapped: SSN, PESEL, credit card, IPv4, IBAN, etc.)
+— exactly the patterns that dominate cost on dense/env payloads. Lowering them to
+the DFA path was the obvious follow-up.
+
+**Key insight:** `OP_BOL` in `(^|[^0-9A-Za-z])` only fires at position 0. For all
+other positions the `^` branch of the SPLIT is dead — only the `[^0-9A-Za-z]` class
+branch produces active NFA threads. So for the DFA transition table, computing
+closures with `addthread_dfa(pos=1)` (a non-BOL position) naturally excludes the `^`
+branch — the DFA start state only contains threads reachable via `[^0-9A-Za-z]`.
+This is a safe *subset* (not superset) for pos>0, meaning the DFA never fires the
+wrong branch. For pos=0, `scan_one` falls back to NFA for exactly that one position
+so `^` fires correctly.
+
+**Implementation:** `addthread_dfa` delegates to `addthread(pos=1)` — no new code
+path, just a different dummy position. In `scan_one`, a `use_dfa_here` flag enables
+the DFA for all positions except boundary-wrapped patterns at pos==0. `eng->use_dfa`
+is set to `!full` for all 88 patterns (no anchor exclusion). `eng->boundary_wrapped`
+stores the flag for the pos-0 fallback check.
+
+**Correctness: CORRECT.** `verify18_1.rb` confirms byte-for-byte identical match sets
+to v15.1 on smoke/sparse/medium/dense/noise plus 600-scan sequential stress test.
+
+**Performance: best zero-dependency result — beats pure-Ruby and Onigmo on all payloads.**
+
+| Payload | pure-Ruby | Onigmo | PCRE2 JIT | v18 | **v18.1** | v18.1 × Ruby |
+|---|---|---|---|---|---|---|
+| sparse | 197 ms | 178 ms | 48 ms | 189 ms | **101 ms** | **1.95×** |
+| medium | 177 ms | 179 ms | 49 ms | 190 ms | **103 ms** | **1.72×** |
+| dense | 212 ms | 265 ms | 56 ms | 243 ms | **138 ms** | **1.53×** |
+| env | 315 ms | 437 ms | 61 ms | 282 ms | **190 ms** | **1.66×** |
+
+- **Beats Onigmo on every payload** (1.8× faster on env, 1.76× on sparse).
+- **Beats pure-Ruby on all four payloads** (1.5–2×).
+- **~5–6× faster than today's glibc C extension.**
+- PCRE2 JIT still wins (~2× faster than v18.1) because it emits native machine code;
+  v18.1 still does one `int` array lookup + pointer add per byte, PCRE2 JIT does one
+  `cmp`/`jne`.
+- The gap to PCRE2 JIT has narrowed from 8× (v15.1) to 2× (v18.1). The remaining
+  factor is instruction-level: table lookup vs native code. A JIT would close it; for
+  a pure-C zero-dep engine, v18.1 is likely near the practical ceiling.
+
+**Why the two-phase approach worked:** the first attempt at anchor lowering (naive
+always-passable BOL in `addthread_dfa`) produced false positives because it included
+`^`-reachable pcs in the DFA start state for all positions. The correct approach is
+`addthread(pos=1)` which simply never fires `^` — the position check naturally
+excludes the `^` branch without any explicit filtering.
 
 ---
 
@@ -2080,13 +2130,14 @@ env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 | v7: AC+BM+PCRE2 JIT | 3.31× | 2.53× | 0.91× | 0.31× | 0.31× | Collapses on dense/env |
 | **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Fast but not correct (31%)** |
 | **v15.1 bytecode VM** | **0.48×** | **0.44×** | **0.33×** | **0.31×** | **0.31×** | **Zero-dep, correct, beats glibc 2.2×** |
-| **v18 per-pattern lazy DFA** | **0.97×** | **0.90×** | **0.82×** | **1.07×** | **0.82×** | **Zero-dep, correct, ties/beats Onigmo; ~4–5× over glibc** |
+| **v18 per-pattern lazy DFA (64/88)** | **0.97×** | **0.90×** | **0.82×** | **1.07×** | **0.82×** | **Zero-dep, correct, ties/beats Onigmo** |
+| **v18.1 lazy DFA (88/88, anchor lowered)** | **1.95×** | **1.72×** | **1.53×** | **1.66×** | **1.53×** | **Zero-dep, correct, beats Onigmo all payloads; ~5–6× over glibc** |
 | **Plain PCRE2 JIT sequential** | **3.90×** | **3.81×** | **3.60×** | **5.51×** | **3.60×** | **Best overall, correct** |
 
 **Two viable production architectures:**
 
 1. **Plain PCRE2 JIT sequential** — fastest. 3.6–5.5× over pure-Ruby. One dependency: `libpcre2-dev`.
-2. **v18 per-pattern lazy DFA (zero dependencies)** — 0.82–1.10× over pure-Ruby (ties pure-Ruby/Onigmo, beats both on dense/env), **~4–5× over today's glibc C extension**. Pure C, no external deps, correct (byte-for-byte identical to the proven v15.1). This is the recommended zero-dependency path.
+2. **v18.1 per-pattern lazy DFA, anchor-lowered (zero dependencies)** — 1.5–2.0× over pure-Ruby, beats Onigmo on all payloads, **~5–6× over today's glibc C extension**. Pure C, no external deps, correct (byte-for-byte identical to v15.1). This is the recommended zero-dependency path.
 
 **v4.2 as a research result:** v4.2 performance is a valid datapoint showing that
 single-pass leftmost-longest Thompson NFA eliminates O(N²) collapse. It is not
@@ -2151,8 +2202,8 @@ Four findings, each surprising:
 | **v15.1 VM constant-factor** | Iterative addthread + O(1) accept | Can we tighten the inner loop? | None | ✅ DONE — 1.1× over v14; 2.2× over glibc today |
 | **v15.2 union bitmap** | OR of all 88 first-sets, skip before per-pattern work | Does a shared skip reduce per-pattern overhead? | None | ✅ DONE — no improvement (~4% slower); per-pattern filters already do this |
 | **v17 precomputed init list** | Cache epsilon-closure of pc=0, memcpy at seed time | Is seed addthread the bottleneck? | None | ✅ DONE — no improvement (~1%); inner step loop dominates, not seed overhead |
-| **v18 per-pattern lazy DFA** | Replace inner NFA-set step with O(1) table lookup | Can a per-pattern lazy DFA close the gap to Onigmo? | None | ✅ DONE — **yes: ~2× over v15.1, ties/beats Onigmo, ~4–5× over glibc; correct (==v15.1)** |
-| **v18.1 anchor lowering** | Make boundary-wrapped digit patterns DFA-able | Can the 24 fallback patterns join the DFA path? | None | Not yet started (see v18 follow-up) |
+| **v18 per-pattern lazy DFA** | Replace inner NFA-set step with O(1) table lookup | Can a per-pattern lazy DFA close the gap to Onigmo? | None | ✅ DONE — 2× over v15.1, ties/beats Onigmo (64/88 patterns on DFA) |
+| **v18.1 anchor lowering** | Make boundary-wrapped digit patterns DFA-able | Can the 24 fallback patterns join the DFA path? | None | ✅ DONE — **all 88/88 DFA; 1.5–2.0× over pure-Ruby, beats Onigmo all payloads** |
 | **selective NFA merge** | Can we merge a subset of non-overlapping patterns? | None | Not yet started (see §11.1 addendum) |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
