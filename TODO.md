@@ -67,7 +67,10 @@ buffer-edge digit payloads to `verify19.rb` surfaced it (see §research_log v19)
 **Impact:** every boundary-wrapped pattern at end-of-buffer. v19's merged digit pass
 *does* honor `$`, so it already fixes the **9 pure-`[0-9]{n}` patterns**. Still open:
 the ~15 other boundary-wrapped patterns that go through `scan_one` — czech_rodne_cislo,
-romanian_cnp, us_ssn / canadian_sin / korean_rrn (dashed), the IBANs, etc.
+romanian_cnp, us_ssn / canadian_sin / korean_rrn (dashed), etc. (IBANs are **not**
+affected: they are fixed-length with a distinctive prefix, carry no `$` anchor, and
+now run through the v19 IBAN union pass — `iban-eob` in `verify19.rb` confirms a
+buffer-end IBAN matches.)
 
 - [ ] In `scan_one`, fall back to the position-sensitive NFA inner loop for start
       positions within `max_len` of the buffer end (symmetric to the existing

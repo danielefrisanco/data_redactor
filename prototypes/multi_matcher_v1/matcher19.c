@@ -416,6 +416,19 @@ static int g_digit_lo[MM88_NUM_PATTERNS];
 static int g_digit_hi[MM88_NUM_PATTERNS];
 static int g_have_digit_group = 0;
 
+/* v19 IBAN union pass. Each IBAN pattern has a fixed 2-letter country-code
+ * prefix (pd->prefix, non-infix, length 2) and is NOT boundary-wrapped, so each
+ * one would otherwise run its own memmem("XX") sweep over the whole buffer —
+ * 18 sweeps that mostly find nothing. We replace them with ONE pass: a 256-entry
+ * first-byte table picks candidate starts, and a [256][256] pair table maps the
+ * 2-byte prefix to the single owning pattern id (country codes are unique, so the
+ * mapping is 1:1). At each candidate we run that pattern's own DFA verify, with a
+ * per-pattern non-overlapping cursor exactly as scan_one would. */
+static int g_iban_member[MM88_NUM_PATTERNS];
+static int g_iban_first[256];                 /* 1 = byte can start a country code */
+static int g_iban_pair[256][256];             /* [c0][c1] = pattern id, or -1 */
+static int g_have_iban_group = 0;
+
 /* Parse a raw regex of the form "[0-9]{n}" or "[0-9]{lo,hi}". Returns 1 and sets
  * *lo,*hi on success; returns 0 if the regex is anything else. Deliberately strict:
  * only the exact pure-digit shape qualifies, so [1-8].., 8.., dashed formats, etc.
@@ -438,6 +451,21 @@ static int parse_pure_digit(const char *re, int *lo, int *hi) {
     }
     if (*p != '}' || *(p+1) != '\0') return 0;   /* trailing junk → not pure */
     *lo = a; *hi = b;
+    return 1;
+}
+
+/* An IBAN member is a non-boundary-wrapped pattern whose regex begins with two
+ * uppercase ASCII letters then `[0-9]{2}` (the country code + check digits). The
+ * two letters are the unique prefix we dispatch on. Returns 1 and sets c0,c1 on
+ * success. */
+static int parse_iban_prefix(const char *re, int boundary_wrapped,
+                             unsigned char *c0, unsigned char *c1) {
+    if (boundary_wrapped) return 0;
+    if (!(re[0] >= 'A' && re[0] <= 'Z')) return 0;
+    if (!(re[1] >= 'A' && re[1] <= 'Z')) return 0;
+    if (strncmp(re + 2, "[0-9]{2}", 8) != 0) return 0;
+    *c0 = (unsigned char)re[0];
+    *c1 = (unsigned char)re[1];
     return 1;
 }
 
@@ -614,6 +642,19 @@ void mm19_init(void) {
             g_digit_lo[p] = lo;
             g_digit_hi[p] = hi;
             g_have_digit_group = 1;
+        }
+
+        /* v19: flag IBAN members and record their 2-byte prefix dispatch. */
+        unsigned char c0, c1;
+        if (parse_iban_prefix(MM88_PATTERNS[p].regex,
+                              MM88_PATTERNS[p].boundary_wrapped, &c0, &c1)) {
+            if (!g_have_iban_group)
+                for (int a = 0; a < 256; a++)
+                    for (int b = 0; b < 256; b++) g_iban_pair[a][b] = -1;
+            g_iban_member[p] = 1;
+            g_iban_first[c0] = 1;
+            g_iban_pair[c0][c1] = p;
+            g_have_iban_group = 1;
         }
     }
     g_initialized = 1;
@@ -856,6 +897,23 @@ static int dfa_compute_trans(int p, int sid, unsigned char c) {
 }
 
 /* Build the DFA start state (id 0): closure of pc 0 at a non-boundary position. */
+/* Ensure per-pattern NFA scratch is sized for prog.n. scan_one inlines this; the
+ * merged group passes (IBAN) call it because they build/step the DFA without ever
+ * entering scan_one for these patterns. */
+static void ensure_scratch(int p) {
+    prog_t *pr = &g_engines[p].prog;
+    if (g_seen_cap[p] >= pr->n) return;
+    g_seen[p]       = realloc(g_seen[p],       pr->n * sizeof(int));
+    g_clist[p].list = realloc(g_clist[p].list, pr->n * sizeof(int));
+    g_nlist[p].list = realloc(g_nlist[p].list, pr->n * sizeof(int));
+    g_estack[p]     = realloc(g_estack[p],     (2 * pr->n + 1) * sizeof(int));
+    if (!g_seen[p] || !g_clist[p].list || !g_nlist[p].list || !g_estack[p]) {
+        perror("realloc"); exit(1);
+    }
+    memset(g_seen[p], 0, pr->n * sizeof(int));
+    g_seen_cap[p] = pr->n;
+}
+
 static void dfa_build_start(int p) {
     pat_engine_t *eng = &g_engines[p];
     prog_t       *pr  = &eng->prog;
@@ -1070,14 +1128,83 @@ static size_t scan_digit_group(const char *input, size_t len,
     return count;
 }
 
+/* v19 IBAN union pass. One linear sweep replaces the 18 per-pattern memmem
+ * prefix sweeps. At each position whose byte can start a country code, look up
+ * the 2-byte prefix; if it owns a pattern, run that pattern's DFA from this
+ * position (exactly scan_one's DFA inner loop) and emit the leftmost-longest
+ * match. Each member keeps its own non-overlapping cursor (last_end), so a hit
+ * advances only that pattern's resume point — identical to scan_one's per-pattern
+ * `pos = match_end` semantics. IBAN patterns are never boundary-wrapped and are
+ * always use_dfa, so no ^/$ special-casing is needed. */
+static size_t g_iban_last_end[MM88_NUM_PATTERNS];
+
+static size_t scan_iban_group(const char *input, size_t len,
+                              mm19_match_t *out, size_t max, size_t count) {
+    for (int p = 0; p < MM88_NUM_PATTERNS; p++)
+        if (g_iban_member[p]) {
+            g_iban_last_end[p] = 0;
+            pat_engine_t *eng = &g_engines[p];
+            dfa_t *d = &g_dfa[p];
+            if (eng->use_dfa && d->n_states == 0) { ensure_scratch(p); dfa_build_start(p); }
+        }
+
+    size_t i = 0;
+    while (i + 1 < len && count < max) {
+        unsigned char c0 = (unsigned char)input[i];
+        if (!g_iban_first[c0]) { i++; continue; }
+        int p = g_iban_pair[c0][(unsigned char)input[i + 1]];
+        if (p < 0) { i++; continue; }
+        if (i < g_iban_last_end[p]) { i++; continue; }  /* non-overlapping resume */
+
+        pat_engine_t *eng = &g_engines[p];
+        dfa_t *d = &g_dfa[p];
+        size_t match_end = (size_t)-1, sp = i;
+        int st = 0;
+        while (st != DFA_DEAD) {
+            if (d->matched[st] && sp - i >= eng->min_len) match_end = sp;
+            if (sp == len) break;
+            int next = d->trans[st * 256 + (unsigned char)input[sp]];
+            if (next == TRANS_UNFILLED)
+                next = dfa_compute_trans(p, st, (unsigned char)input[sp]);
+            st = next;
+            sp++;
+        }
+
+        if (match_end != (size_t)-1) {
+            size_t span = match_end - i;
+            out[count++] = (mm19_match_t){p, i, span};
+            g_iban_last_end[p] = match_end;
+            i = (span == 0) ? i + 1 : match_end;
+        } else {
+            i++;
+        }
+    }
+    return count;
+}
+
 size_t mm19_scan(const char *input, size_t len, mm19_match_t *out, size_t max) {
     size_t count = 0;
     for (int p = 0; p < MM88_NUM_PATTERNS && count < max; p++) {
         if (g_digit_member[p]) continue;   /* handled by the merged digit pass */
+        if (g_iban_member[p])  continue;   /* handled by the IBAN union pass */
         count = scan_one(p, input, len, out, max, count);
     }
+    if (g_have_iban_group && count < max)
+        count = scan_iban_group(input, len, out, max, count);
     if (g_have_digit_group && count < max)
         count = scan_digit_group(input, len, out, max, count);
+    return count;
+}
+
+/* Bench helper: scan only patterns in [lo,hi]. Used by bench_iban_cost.c to
+ * isolate the per-group cost. Not part of the public engine API. */
+size_t mm19_scan_range(int lo, int hi, const char *input, size_t len,
+                       mm19_match_t *out, size_t max) {
+    size_t count = 0;
+    for (int p = lo; p <= hi && p < MM88_NUM_PATTERNS && count < max; p++) {
+        if (g_digit_member[p]) continue;
+        count = scan_one(p, input, len, out, max, count);
+    }
     return count;
 }
 

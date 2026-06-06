@@ -68,6 +68,14 @@ payloads = {
   "digit-runs"   => (["12345678901", "123456789", "12345678", "1234567",
                       "123456789012", "1234567890123"].join(" ")),
   "digit-nl"     => "12345678901\n123456789\n12345678",
+  # IBAN union-pass edge cases (buffer end, back-to-back, mixed countries, near-miss prefix)
+  "iban-eob"     => "pay to DE89370400440532013000",            # ends at buffer end
+  "iban-b2b"     => "DE89370400440532013000 NL91ABNA0417164300",# two different countries adjacent
+  "iban-same"    => "DE89370400440532013000 DE89370400440532013000", # same pattern twice (non-overlap cursor)
+  "iban-mixed"   => "x FR1420041010050500013M02606 y PT50000201231234567890154 z",
+  "iban-nearmis" => "DEXX370400440532013000 and AB12345678901234",# bad check digits / unknown country
+  "iban-bulk"    => (["DE89370400440532013000", "AT611904300234573201",
+                      "BE68539007547034", "ES9121000418450200051332"].join("  ")),
 }
 
 def stress_matches(engine, inputs)

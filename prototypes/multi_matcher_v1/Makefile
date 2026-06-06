@@ -208,7 +208,7 @@ matcher18_1.so: matcher18_1.c matcher18_1.h patterns_generated.h
 smoke18_1: matcher18_1
 	./matcher18_1
 
-# Prototype v19 — v18.1 + merged pure-digit-group scan. Zero deps.
+# Prototype v19 — v18.1 + merged pure-digit-group scan + IBAN union pass. Zero deps.
 matcher19: matcher19.c matcher19.h patterns_generated.h
 	$(CC) $(CFLAGS) -DMM19_MAIN -o $@ matcher19.c $(LDFLAGS)
 
@@ -217,6 +217,10 @@ matcher19.so: matcher19.c matcher19.h patterns_generated.h
 
 smoke19: matcher19
 	./matcher19
+
+# Isolates the IBAN group's cost (18 memmem prefix sweeps) vs the full v19 scan.
+bench_iban_cost: bench_iban_cost.c matcher19.c matcher19.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM19_BENCH bench_iban_cost.c matcher19.c -o $@ $(LDFLAGS)
 
 # Standalone micro-benchmarks (no .so — direct C executables).
 bench_malloc: bench_malloc.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c
@@ -244,5 +248,5 @@ clean:
 	      matcher18 matcher18.so \
 	      matcher18_1 matcher18_1.so \
 	      matcher19 matcher19.so \
-	      bench_malloc bench_bm_inner \
+	      bench_malloc bench_bm_inner bench_iban_cost \
 	      patterns_generated.h
