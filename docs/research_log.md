@@ -1331,6 +1331,68 @@ always-passable BOL in `addthread_dfa`) produced false positives because it incl
 `addthread(pos=1)` which simply never fires `^` — the position check naturally
 excludes the `^` branch without any explicit filtering.
 
+**Latent bug found later (see v19):** `addthread_dfa` also never fires `OP_EOL`, so a
+boundary-wrapped match whose trailing boundary is `$` (the match ends exactly at
+end-of-buffer) is invisible to the DFA path. v18.1 passes its verify only because the
+test corpus never places such a match at the very end of the buffer (every line ends
+in `\n`). This affects all boundary-wrapped digit/format patterns at buffer edge and
+is tracked in §13 / TODO.md. v19 fixes it for the 9 pure-digit patterns it absorbs;
+the remaining ~15 (czech_rodne_cislo, romanian_cnp, SSN-style, IBANs, …) still need a
+v18.1-level fix.
+
+---
+
+### Prototype v19 — matcher19.c (v18.1 + merged pure-digit group) ★ best zero-dep
+
+**Idea (selective DFA merge, per §11.1):** v18.1 scans all 88 patterns independently.
+Several patterns form *mutually-exclusive groups* whose members share an identical
+start state and differ only in length — the cleanest being the **pure-digit group**:
+the 9 patterns whose raw regex is exactly `[0-9]{lo,hi}` and which are boundary-wrapped
+(south_african_id `{13}`, japanese_my_number `{12}`, the four `{11}` variants,
+the two `{9}` variants, dutch_bsn `{8,9}`). Instead of 9 separate per-pattern outer
+scans (each: first-byte filter walk + DFA drive), v19 runs **one linear pass** that
+finds every maximal run of ASCII digits and, for a run of length L, emits each member
+whose `[lo,hi]` window contains L.
+
+**Why it is exactly equivalent to v18.1/v15 for these 9 patterns:** because each member
+is wrapped `(^|[^0-9A-Za-z])([0-9]{lo,hi})([^0-9A-Za-z]|$)`, a fixed-length member
+matches *only* a digit run of exactly that length (a shorter prefix of a longer run is
+followed by a digit, not a boundary, so the trailing `[^…]` fails). So per maximal run,
+the firing members are precisely those with `lo≤L≤hi`. The merged pass reproduces v15's
+boundary-wrapped span — **including the per-pattern non-overlapping `String#gsub`
+stream**: each member carries its own `last_end` cursor, so when two adjacent runs share
+a single separator byte, that byte is consumed by the earlier match and the later run
+falls back to the zero-width `^` boundary only after `\n` (matching gsub's
+`^`-after-newline semantics). Edge cases handled: `^` at pos 0, `$` at end-of-buffer,
+letter-abutting runs (rejected), `\n`-separated runs.
+
+**Bonus correctness:** because the merged pass handles `$` explicitly, v19 *recovers*
+the digit-member matches at end-of-buffer that v18.1's DFA path silently dropped (the
+EOL bug above). `verify19.rb` confirms v19 equals v15 on every digit case; the only
+residual v15 diffs are two **non-member** patterns (czech_rodne_cislo, romanian_cnp)
+that still go through v18.1's `scan_one` and thus inherit the same EOL bug — classified
+as KNOWN and tracked in TODO, not a v19 regression.
+
+**Performance (this env, 10 iter, ~1 MB payloads, real gem in-process):**
+
+| Payload | pure-Ruby | Onigmo | v15.1 | v18.1 | **v19** | v19 × Ruby | v19 vs v18.1 |
+|---|---|---|---|---|---|---|---|
+| sparse | 215.6 | 191.7 | 424.4 | 106.4 | **95.4** | **1.95×** | 1.10× |
+| medium | 186.4 | 189.7 | 419.5 | 107.6 | **99.5** | **1.92×** | 1.08× |
+| dense | 213.6 | 290.3 | 668.0 | 148.0 | **138.0** | **1.61×** | 1.07× |
+| env | 338.1 | 499.0 | 1159.5 | 214.7 | **202.9** | **1.65×** | 1.06× |
+
+- **New best zero-dependency engine.** 1.6–1.95× over pure-Ruby, ~5× over today's
+  glibc C extension, beats Onigmo on every payload.
+- The 6–10% gain over v18.1 comes purely from collapsing 9 of 88 per-pattern scans into
+  one digit pass — biggest on noise-heavy payloads where those 9 scans were otherwise
+  pure overhead. A proportionally larger win is expected from merging the **IBAN group**
+  (18 patterns → one prefix trie) — the documented v20 follow-up.
+
+**Files:** `matcher19.{c,h}`, `verify19.rb`, Makefile `matcher19`/`smoke19`,
+`bench_realistic.rb` v19 column. The merge is isolated to `scan_digit_group` +
+`g_digit_member[]` flagging at init; `scan_one` is unchanged from v18.1.
+
 ---
 
 ## 6. Problems Encountered and How We Solved Them
@@ -2131,13 +2193,14 @@ env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 | **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Fast but not correct (31%)** |
 | **v15.1 bytecode VM** | **0.48×** | **0.44×** | **0.33×** | **0.31×** | **0.31×** | **Zero-dep, correct, beats glibc 2.2×** |
 | **v18 per-pattern lazy DFA (64/88)** | **0.97×** | **0.90×** | **0.82×** | **1.07×** | **0.82×** | **Zero-dep, correct, ties/beats Onigmo** |
-| **v18.1 lazy DFA (88/88, anchor lowered)** | **1.95×** | **1.72×** | **1.53×** | **1.66×** | **1.53×** | **Zero-dep, correct, beats Onigmo all payloads; ~5–6× over glibc** |
-| **Plain PCRE2 JIT sequential** | **3.90×** | **3.81×** | **3.60×** | **5.51×** | **3.60×** | **Best overall, correct** |
+| **v18.1 lazy DFA (88/88, anchor lowered)** | **1.78×** | **1.74×** | **1.47×** | **1.54×** | **1.47×** | **Zero-dep, correct, beats Onigmo all payloads; ~5× over glibc** |
+| **v19 = v18.1 + merged pure-digit group** | **1.95×** | **1.92×** | **1.61×** | **1.65×** | **1.61×** | **Best zero-dep; 6–10% over v18.1; *more* correct (recovers digit EOL cases)** |
+| **Plain PCRE2 JIT sequential** | **3.70×** | **3.69×** | **3.61×** | **5.43×** | **3.61×** | **Best overall, correct** |
 
 **Two viable production architectures:**
 
-1. **Plain PCRE2 JIT sequential** — fastest. 3.6–5.5× over pure-Ruby. One dependency: `libpcre2-dev`.
-2. **v18.1 per-pattern lazy DFA, anchor-lowered (zero dependencies)** — 1.5–2.0× over pure-Ruby, beats Onigmo on all payloads, **~5–6× over today's glibc C extension**. Pure C, no external deps, correct (byte-for-byte identical to v15.1). This is the recommended zero-dependency path.
+1. **Plain PCRE2 JIT sequential** — fastest. 3.6–5.4× over pure-Ruby. One dependency: `libpcre2-dev`.
+2. **v19 per-pattern lazy DFA + merged pure-digit group (zero dependencies)** — 1.6–1.95× over pure-Ruby, beats Onigmo on all payloads, **~5× over today's glibc C extension**. Pure C, no external deps. This is the recommended zero-dependency path. (Builds on v18.1; collapses the 9 pure-`[0-9]{n}` patterns into one digit-run pass and along the way fixes v18.1's EOL-at-buffer-end miss for those 9.)
 
 **v4.2 as a research result:** v4.2 performance is a valid datapoint showing that
 single-pass leftmost-longest Thompson NFA eliminates O(N²) collapse. It is not
@@ -2204,7 +2267,9 @@ Four findings, each surprising:
 | **v17 precomputed init list** | Cache epsilon-closure of pc=0, memcpy at seed time | Is seed addthread the bottleneck? | None | ✅ DONE — no improvement (~1%); inner step loop dominates, not seed overhead |
 | **v18 per-pattern lazy DFA** | Replace inner NFA-set step with O(1) table lookup | Can a per-pattern lazy DFA close the gap to Onigmo? | None | ✅ DONE — 2× over v15.1, ties/beats Onigmo (64/88 patterns on DFA) |
 | **v18.1 anchor lowering** | Make boundary-wrapped digit patterns DFA-able | Can the 24 fallback patterns join the DFA path? | None | ✅ DONE — **all 88/88 DFA; 1.5–2.0× over pure-Ruby, beats Onigmo all payloads** |
-| **selective NFA merge** | Can we merge a subset of non-overlapping patterns? | None | Not yet started (see §11.1 addendum) |
+| **v19 merged pure-digit group** | Collapse the 9 pure-`[0-9]{n}` patterns into one digit-run pass | Does a selective merge of a mutually-exclusive group beat per-pattern scanning? | None | ✅ DONE — **best zero-dep; 6–10% over v18.1; also fixes EOL bug for the 9 members** |
+| **v18.1 EOL-at-buffer-end bug** | `addthread_dfa` never fires `OP_EOL`, so boundary-wrapped matches ending exactly at end-of-buffer are dropped | How to make the DFA path honor `$`? | None | ⚠️ OPEN — v19 fixes it for its 9 digit members; ~15 other boundary-wrapped patterns (czech_rodne_cislo, romanian_cnp, SSN-style, IBANs…) still affected. See TODO.md |
+| **v20 IBAN trie merge** | Merge the 18 IBAN patterns (disjoint country prefixes) into one prefix-trie DFA | Does the merge scale to a larger mutually-exclusive group? | None | Not yet started (next selective-merge target, §11.1) |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
 **Research conclusion (updated 2026-06-03):** Two viable production paths:

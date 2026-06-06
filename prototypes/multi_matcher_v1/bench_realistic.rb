@@ -55,6 +55,8 @@ MM18_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher18.so"),
                                    Fiddle::Handle::RTLD_NOW)
 MM18_1_HANDLE = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher18_1.so"),
                                     Fiddle::Handle::RTLD_NOW)
+MM19_HANDLE  = Fiddle::Handle.new(File.join(PROTOTYPE_DIR, "matcher19.so"),
+                                   Fiddle::Handle::RTLD_NOW)
 
 module MM4
   Init  = Fiddle::Function.new(MM4_HANDLE["mm4_init"],      [], Fiddle::TYPE_VOID)
@@ -165,6 +167,17 @@ module MM18_1
   def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
 end
 
+module MM19
+  Init = Fiddle::Function.new(MM19_HANDLE["mm19_init"], [], Fiddle::TYPE_VOID)
+  Free = Fiddle::Function.new(MM19_HANDLE["mm19_free"], [], Fiddle::TYPE_VOID)
+  Scan = Fiddle::Function.new(MM19_HANDLE["mm19_scan"],
+           [Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T,
+            Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T], Fiddle::TYPE_SIZE_T)
+  def self.init = Init.call
+  def self.free = Free.call
+  def self.scan(inp, buf) = Scan.call(inp, inp.bytesize, buf, 65536)
+end
+
 # ---------- Payload builders ------------------------------------------------
 
 HITS = [
@@ -244,14 +257,15 @@ MM14.init;    MM14.free   # warm up v14 (literal + first-byte filter)
 MM15.init;    MM15.free   # warm up v15.1 (iterative addthread + O(1) accept)
 MM18.init;    MM18.free   # warm up v18 (lazy DFA, 64/88 patterns)
 MM18_1.init;  MM18_1.free # warm up v18.1 (lazy DFA, 88/88 patterns)
+MM19.init;    MM19.free   # warm up v19 (v18.1 + merged pure-digit group)
 
 puts "Realistic payload benchmark — #{ITERS} iterations per engine per payload"
 puts "All payloads: ~1 MB, fixed seed 42"
 puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v15.1", "v18", "v18.1"
+  "", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v15.1", "v18", "v18.1", "v19"
 ]
-puts "-" * 108
+puts "-" * 116
 
 # v4 NFA excluded from live benchmark — results already in research_log.md §8.5.
 # Crashes on env (1600 ms/iter), and DFA cache cold-start is noisy on shorter payloads.
@@ -278,14 +292,6 @@ PAYLOADS.each do |name, payload|
   t[:pcre2jit] = run_engine("pcre2jit") { ITERS.times { MM7P.scan(payload, buf) } }
   MM7P.free
 
-  MM7.init(1)
-  t[:v7jit] = run_engine("v7jit") { ITERS.times { MM7.scan(payload, buf) } }
-  MM7.free
-
-  MM14.init
-  t[:v14] = run_engine("v14") { ITERS.times { MM14.scan(payload, buf) } }
-  MM14.free
-
   MM15.init
   t[:v15] = run_engine("v15") { ITERS.times { MM15.scan(payload, buf) } }
   MM15.free
@@ -298,11 +304,15 @@ PAYLOADS.each do |name, payload|
   t[:v18_1] = run_engine("v18.1") { ITERS.times { MM18_1.scan(payload, buf) } }
   MM18_1.free
 
+  MM19.init
+  t[:v19] = run_engine("v19") { ITERS.times { MM19.scan(payload, buf) } }
+  MM19.free
+
   ms = t.transform_values { |v| v.nil? ? nil : (v / ITERS * 1000).round(1) }
 
   puts "%-26s  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f  %7.1f" % [
     name,
-    ms[:ruby], ms[:c], ms[:onig], ms[:pcre2jit], ms[:v7jit], ms[:v15], ms[:v18], ms[:v18_1]
+    ms[:ruby], ms[:c], ms[:onig], ms[:pcre2jit], ms[:v15], ms[:v18], ms[:v18_1], ms[:v19]
   ]
 end
 
@@ -310,9 +320,9 @@ puts
 puts "All times in ms/iter. Lower is better."
 puts
 puts "%-26s  %8s  %8s  %8s  %8s  %8s  %8s  %8s  %8s" % [
-  "× over pure-Ruby", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v7JIT", "v14flt", "v15.1", "v18"
+  "× over pure-Ruby", "Ruby", "C-today", "Onigmo", "PCRE2JIT", "v15.1", "v18", "v18.1", "v19"
 ]
-puts "-" * 108
+puts "-" * 116
 
 PAYLOADS.each do |name, payload|
   $stderr.puts "\n[#{name.strip}] ratios"
@@ -328,14 +338,6 @@ PAYLOADS.each do |name, payload|
   t[:pcre2jit] = run_engine("pcre2jit") { ITERS.times { MM7P.scan(payload, buf) } }
   MM7P.free
 
-  MM7.init(1)
-  t[:v7jit] = run_engine("v7jit") { ITERS.times { MM7.scan(payload, buf) } }
-  MM7.free
-
-  MM14.init
-  t[:v14] = run_engine("v14") { ITERS.times { MM14.scan(payload, buf) } }
-  MM14.free
-
   MM15.init
   t[:v15] = run_engine("v15") { ITERS.times { MM15.scan(payload, buf) } }
   MM15.free
@@ -348,12 +350,16 @@ PAYLOADS.each do |name, payload|
   t[:v18_1] = run_engine("v18.1") { ITERS.times { MM18_1.scan(payload, buf) } }
   MM18_1.free
 
+  MM19.init
+  t[:v19] = run_engine("v19") { ITERS.times { MM19.scan(payload, buf) } }
+  MM19.free
+
   base = t[:ruby]
   ratios = t.transform_values { |v| v.nil? ? nil : (base / v).round(2) }
 
   puts "%-26s  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f  %8.2f" % [
     name,
     ratios[:ruby], ratios[:c], ratios[:onig], ratios[:pcre2jit],
-    ratios[:v7jit], ratios[:v15], ratios[:v18], ratios[:v18_1]
+    ratios[:v15], ratios[:v18], ratios[:v18_1], ratios[:v19]
   ]
 end

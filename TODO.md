@@ -52,6 +52,33 @@ redacting that is sufficient for safety. So:
       governed by CLAUDE.md pattern tiers + false-positive rules, separate from the
       matcher-engine prototypes. Any change needs positive + negative spec coverage.
 
+### 1c. Fix v18.1 EOL-at-buffer-end bug (DFA path drops `$`-terminated matches)
+
+**Bug:** in the lazy-DFA path (v18/v18.1/v19), `addthread_dfa` computes
+position-independent closures by calling `addthread(pos=1)` on a dummy empty string.
+That correctly excludes the `^` branch — but it *also* means `OP_EOL` never fires.
+Consequently a boundary-wrapped match whose trailing boundary is `$` (the match ends
+**exactly at end-of-buffer**) is never accepted by the DFA and is silently dropped.
+
+**Why it hid:** `verify18_1.rb`'s corpus always appends `\n`/text after every hit, so
+no boundary-wrapped match ever lands at the very end of the buffer. Adding
+buffer-edge digit payloads to `verify19.rb` surfaced it (see §research_log v19).
+
+**Impact:** every boundary-wrapped pattern at end-of-buffer. v19's merged digit pass
+*does* honor `$`, so it already fixes the **9 pure-`[0-9]{n}` patterns**. Still open:
+the ~15 other boundary-wrapped patterns that go through `scan_one` — czech_rodne_cislo,
+romanian_cnp, us_ssn / canadian_sin / korean_rrn (dashed), the IBANs, etc.
+
+- [ ] In `scan_one`, fall back to the position-sensitive NFA inner loop for start
+      positions within `max_len` of the buffer end (symmetric to the existing
+      `boundary_wrapped && pos==0` BOL fallback). Requires storing per-engine
+      `max_len` + a `has_eol` flag. Cheap: only the final ~max_len bytes use the NFA.
+- [ ] Alternative: give DFA accepting states an EOL-conditional MATCH and check it
+      when `sp==len`. More invasive but keeps the whole scan on the DFA.
+- [ ] Add buffer-edge cases (digit runs, dashed IDs, IBANs ending at `len`, after
+      `\n`) to the v18.1/v19 verify corpus so this can't regress silently again.
+- [ ] Once fixed, `verify19.rb` should show zero KNOWN-classified diffs vs v15.
+
 ### 2. Write and publish the paper
 
 Research log at `docs/research_log.md` is the source of truth. Contains all prototype data,
