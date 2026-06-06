@@ -1423,6 +1423,60 @@ as KNOWN and tracked in TODO, not a v19 regression.
 `scan_digit_group` + `scan_iban_group` + `g_digit_member[]`/`g_iban_member[]`
 flagging at init; `scan_one` is unchanged from v18.1.
 
+#### v19 https:// variants — A/B study (v19b vs v19c)
+
+A third selective-merge candidate is the four patterns that literally begin with
+`https://` (aws_s3_presigned_url, microsoft_teams_webhook, slack_webhook_url,
+sentry_dsn). They are interesting because they each carry only an **infix**
+`bm_literal` (`.ingest.sentry.io`, `hooks.slack.com`, …) **and** an unbounded
+`max_len`, so the v12 literal-skip is disabled (`can_skip = 0`) — each one walks
+to **every `h`** in the buffer (common in prose). Measured: this group is ~17% of
+full-scan time on noise, and the `h`-walk for 4 patterns costs ~2.3 ms vs ~0.1 ms
+for a single `memmem("https://")` sweep (which finds nothing in noise) — a 23×
+gap in the *filtering* work alone.
+
+Two fixes were prototyped as **separate engines** and benchmarked head-to-head
+against the committed v19 baseline (so the win is isolated, not entangled with
+the digit/IBAN merges):
+
+- **v19b — `scan_https_group` union pass** (`matcher19b.{c,h}`): one shared
+  `memmem("https://")` sweep; at each hit, run all four members' DFAs with their
+  own non-overlapping `last_end` cursors (same faithful semantics as the IBAN
+  pass, but a 1:N dispatch since the members share the prefix).
+- **v19c — start-anchored `https://` req_literal** (`matcher19c.{c,h}`): no new
+  scan path; at init, override the infix `bm_literal` with a *start-anchored*
+  `"https://"` literal so the existing per-pattern memmem skip fires
+  (`can_skip = 1, max_back = 0`). One-branch change in `mm19c_init`.
+
+Both equal v15 on the full corpus plus six new https edge payloads (real
+webhook/DSN/presigned examples, buffer-end, back-to-back, near-miss, 50× dense).
+
+**Result (`bench_https_variants.rb`, best-of-20, ~1 MB https-bearing payloads):**
+
+| Payload | v19 (baseline) | v19b (union) | v19c (req_literal) | winner |
+|---|---|---|---|---|
+| sparse | 74.3 | **68.1** (−8.3%) | 68.9 (−7.3%) | v19b |
+| medium | 78.1 | **71.3** (−8.8%) | 76.3 (−2.3%) | v19b |
+| dense | 109.0 | **106.9** (−1.9%) | 110.6 (+1.4%) | v19b |
+| noise | 68.4 | **66.1** (−3.3%) | 69.6 (+1.7%) | v19b |
+
+**v19b (union pass) wins on every payload; v19c is break-even-to-worse on
+dense/noise.** Why v19c underperforms despite being "simpler": it still issues
+**four separate** `memmem("https://")` sweeps (one per pattern) where v19b issues
+**one** shared sweep, and it discards the deeper infix `bm_literal` filter, so when
+`https://` *does* occur it drives a DFA at every `https://` rather than only at the
+rare deep substring. The union pass is therefore not just faster but architecturally
+the right merge — the A/B confirms it rather than assuming it.
+
+**Status:** kept as evaluation variants (not folded into v19). The committed v19
+remains digit+IBAN only; v19b/v19c document the https study. The full
+`bench_realistic.rb` figure for the union pass (measured separately) was ~5–7% on
+sparse/env, ~0% on medium/dense — a real but modest, payload-dependent win, which
+is why it stayed a documented variant rather than the default.
+
+**Files:** `matcher19b.{c,h}`, `matcher19c.{c,h}`, `verify19b.rb`, `verify19c.rb`,
+`bench_https_variants.rb`, Makefile `matcher19b`/`matcher19c`/`smoke19b`/`smoke19c`.
+
 ---
 
 ## 6. Problems Encountered and How We Solved Them
@@ -2075,13 +2129,15 @@ accepting position. Candidate groups (two of three now implemented in v19):
   *pure* `[0-9]{n}` shape — dashed/dotted ID formats like `us_ssn`, `korean_rrn`
   still scan individually; merging those is open, see TODO.)
 
-- **`https://` URL patterns (4–6 patterns) — not yet prototyped.**
+- **`https://` URL patterns (4) — ✅ studied as v19b/v19c (kept as variants).**
   `aws_s3_presigned_url`, `slack_webhook_url`, `sentry_dsn`,
-  `microsoft_teams_webhook` all start with `https://`; after the literal they
-  diverge at the next host component. A merged pass would run 1 DFA pass instead
-  of up to 6 per `https://` hit. Caveat: these already carry distinctive *infix*
-  `bm_literal`s (`.ingest.sentry.io`, `hooks.slack.com`, …), so — as with IBANs —
-  the win is bounded by how often `https://` itself recurs, not by the member count.
+  `microsoft_teams_webhook` all start with `https://`. The motivating finding was
+  *not* prefix recurrence but that their infix `bm_literal` + unbounded `max_len`
+  **disabled the skip entirely**, so each walked to every `h`. v19b (one shared
+  `memmem("https://")` union pass) beat both the baseline and the simpler v19c
+  (start-anchored req_literal) on every payload — see the v19 https-variant A/B
+  above. Win is real but modest (~5–8% on sparse/medium/env, ~0% on dense), so it
+  is documented as a variant rather than folded into the default v19.
 
 Patterns that CANNOT be merged: `email`, `uri_with_password`,
 `mongodb_connection_string`, `jwt`, `bearer_token`, `aws_secret_access_key`,
