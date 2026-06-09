@@ -1356,6 +1356,70 @@ RSpec.describe DataRedactor do
       result = DataRedactor.scan(input)
       expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
     end
+
+    # The AKIA-prefix behaviour must be independent of WHICH characters follow,
+    # not an artefact of repeated 'A's. aws_secret_access_key is [A-Za-z0-9/+=]{40}
+    # so any of these 20-char suffixes COULD form a 40-char secret on the original
+    # buffer — yet today's sequential rewrite redacts only the 20-char AKIA prefix
+    # because aws_access_key_id (idx 14) rewrites it before idx 15 ever runs.
+    # This is the contract the ported engine's overlap resolver (mm_resolve,
+    # "index-order greedy claim") must reproduce byte-for-byte. See TODO.md §1d Gap 5.
+    {
+      "repeated A"  => "A" * 20,
+      "repeated B"  => "B" * 20,
+      "repeated Z"  => "Z" * 20,
+      "repeated 9"  => "9" * 20,
+      "mixed alnum" => "B3xQ7mK9pL2wR5tZ8nV4",
+      "lowercase"   => "abcdefghijklmnopqrst",
+      "with slashes" => "B/B/B/B/B/B/B/B/B/B/",
+    }.each do |label, suffix|
+      it "redacts only the 20-char AKIA prefix regardless of the following bytes (#{label})" do
+        input = "AKIAIOSFODNN7EXAMPLE" + suffix
+        # Only the AKIA prefix is claimed; the 40-char-secret pattern is blocked by
+        # the prior rewrite, so the suffix survives verbatim.
+        expect(DataRedactor.redact(input)).to eq("[REDACTED]" + suffix)
+        result = DataRedactor.scan(input)
+        expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
+        expect(result[:matches].first[:value]).to eq("AKIAIOSFODNN7EXAMPLE")
+      end
+    end
+  end
+
+  # Rewrite-created/destroyed boundary cases — two sensitive tokens that ABUT with
+  # NO separator between them. The glibc engine rewrote patterns sequentially, so a
+  # lower-index pattern's [REDACTED] could introduce a '['/']' boundary that an
+  # adjacent boundary-wrapped pattern then matched on the rewritten buffer. The v19
+  # engine scans the ORIGINAL buffer in one pass and cannot see a boundary the
+  # rewrite would create — this is its ONE documented behavioural divergence from
+  # the old engine (TODO.md §1d Gap 5, "accepted divergence"): the second token is
+  # left unredacted. Accepted because it only arises for directly-abutting secrets
+  # with no separator (rare in real text), the old output was itself a rewrite
+  # artifact, and the planned 1.0 longest-match policy redacts the whole region.
+  describe "overlap resolution — rewrite-created-boundary divergence (accepted)" do
+    it "DIVERGENCE: an SSN abutting an IPv4 (no separator) leaves the SSN unredacted under the v19 engine" do
+      # 123-45-6789 has no boundary char after '6789' (next byte is '1'), so us_ssn
+      # cannot match the original text. The old glibc engine redacted 192.168.1.1
+      # first, creating a '[' that then bounded the SSN → "[REDACTED][REDACTED]".
+      # The v19 single-pass engine never sees that created boundary, so only ipv4
+      # is redacted. This is the accepted Gap-5 divergence.
+      input = "123-45-6789192.168.1.1"
+      expect(DataRedactor.redact(input)).to eq("123-45-6789[REDACTED]")
+    end
+
+    it "a greedy earlier match can leave a mangled half-token (rewrite destroys a boundary)" do
+      # ipv4 greedily consumes "192.168.1.1", leaving "123-45-6789"; but the
+      # leading digits were eaten, so only "3-45-6789" remains after [REDACTED].
+      input = "192.168.1.1123-45-6789"
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]3-45-6789")
+    end
+
+    it "an alnum run after a prefixed key: aws_secret_access_key (idx 15) claims 40 chars before github (idx 19)" do
+      # aws_secret_access_key [A-Za-z0-9/+=]{40} runs before github_classic_pat and
+      # matches 40 chars starting just after 'ghp_', swallowing into the digit run:
+      # ghp_[REDACTED]1612345. Another earlier-index-wins case, not a clean ghp_ hit.
+      input = "ghp_ABCDEFGHIJabcdefghij0123456789ABCDEF85121612345"
+      expect(DataRedactor.redact(input)).to eq("ghp_[REDACTED]1612345")
+    end
   end
 
   # Specs marked `pending` describe the INTENDED 1.0 matcher behaviour

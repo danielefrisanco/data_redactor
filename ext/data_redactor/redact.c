@@ -2,6 +2,8 @@
 #include "patterns.h"
 #include "placeholder.h"
 #include "custom_patterns.h"
+#include "matcher.h"
+#include "tags.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -104,6 +106,79 @@ static inline int enable_bit(VALUE rb_enable_bits, long i) {
     return RTEST(v) && NUM2INT(v) != 0;
 }
 
+/* Copy the first NUM_PATTERNS entries of the enable_bits Array into a C int[].
+ * Only the built-in slice is needed: the v19 engine runs built-ins only; custom
+ * patterns are gated separately in the glibc loop. Caller frees. */
+static int *builtin_enable_bits(VALUE rb_enable_bits) {
+    int *bits = (int *)malloc((size_t)NUM_PATTERNS * sizeof(int));
+    if (!bits) return NULL;
+    long alen = RARRAY_LEN(rb_enable_bits);
+    for (int i = 0; i < NUM_PATTERNS; i++) {
+        if (i < alen) {
+            VALUE v = rb_ary_entry(rb_enable_bits, i);
+            bits[i] = (RTEST(v) && NUM2INT(v) != 0) ? 1 : 0;
+        } else {
+            bits[i] = 0;
+        }
+    }
+    return bits;
+}
+
+/* Redact the built-in patterns from `input` (len bytes) with the v19 engine,
+ * resolved to today's sequential semantics. Returns a newly malloc'd
+ * NUL-terminated C string (caller frees) and writes its length to *out_len_p.
+ * `bits` gates the built-ins (length NUM_PATTERNS). */
+static char *redact_builtins(const char *input, size_t in_len, const int *bits,
+                             int ph_mode, const char *ph_str_plain,
+                             size_t *out_len_p) {
+    /* Scan + resolve. Grow and rescan if the buffer fills exactly (possible
+     * truncation), so no built-in match is ever silently dropped. */
+    size_t cap = in_len / 4 + 16;
+    mm_match_t *ev = NULL;
+    size_t n;
+    for (;;) {
+        mm_match_t *grown = (mm_match_t *)realloc(ev, cap * sizeof(mm_match_t));
+        if (!grown) { free(ev); return NULL; }
+        ev = grown;
+        n = mm_scan(input, in_len, bits, (size_t)NUM_PATTERNS, ev, cap);
+        if (n < cap) break;
+        cap *= 2;
+    }
+    n = mm_resolve(ev, n);
+
+    placeholder_t ph;
+    ph.mode = ph_mode;
+    /* Size against the widest placeholder (longest tag name) so one allocation
+     * covers any per-event tag. Each input byte maps to at most (ph_max+1) out
+     * bytes (verbatim, or one byte of a CORE span replaced by ph_max). */
+    ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN) ? ph_str_plain : "NATIONAL_ID";
+    size_t ph_max = max_placeholder_len(&ph);
+
+    size_t out_cap = in_len * (ph_max + 1) + 1;
+    char *output = (char *)malloc(out_cap);
+    char *ph_buf = (char *)malloc(ph_max + 1);
+    if (!output || !ph_buf) { free(output); free(ph_buf); free(ev); return NULL; }
+
+    size_t out_len = 0, cur = 0;
+    for (size_t i = 0; i < n; i++) {
+        size_t s = ev[i].start, l = ev[i].length;
+        if (s > cur) { memcpy(output + out_len, input + cur, s - cur); out_len += s - cur; }
+        ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
+                     ? ph_str_plain
+                     : tag_name_for_bit(pattern_tags[ev[i].pattern_id]);
+        size_t pl = write_placeholder(ph_buf, &ph, input + s, l);
+        memcpy(output + out_len, ph_buf, pl); out_len += pl;
+        cur = s + l;
+    }
+    if (cur < in_len) { memcpy(output + out_len, input + cur, in_len - cur); out_len += in_len - cur; }
+    output[out_len] = '\0';
+
+    free(ph_buf);
+    free(ev);
+    *out_len_p = out_len;
+    return output;
+}
+
 VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
                               VALUE rb_ph_mode, VALUE rb_ph_str,
                               VALUE rb_enable_bits) {
@@ -114,34 +189,25 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
     int ph_mode = NUM2INT(rb_ph_mode);
     const char *ph_str_plain = StringValueCStr(rb_ph_str);
 
-    const char *input = StringValueCStr(rb_text);
-    char *working = strdup(input);
-    if (!working) rb_raise(rb_eNoMemError, "strdup failed");
+    const char *input = RSTRING_PTR(rb_text);
+    size_t in_len = (size_t)RSTRING_LEN(rb_text);
 
+    /* Stage 1: built-ins through the fast v19 engine (single pass, resolved to
+     * earlier-index-wins). */
+    int *bits = builtin_enable_bits(rb_enable_bits);
+    if (!bits) rb_raise(rb_eNoMemError, "enable_bits allocation failed");
+    size_t work_len = 0;
+    char *working = redact_builtins(input, in_len, bits, ph_mode, ph_str_plain, &work_len);
+    free(bits);
+    if (!working) rb_raise(rb_eNoMemError, "built-in redaction allocation failed");
+
+    /* Stage 2: custom patterns through the glibc regexec path, on the buffer the
+     * built-ins already rewrote — preserving the sequential built-ins→customs
+     * order and full UTF-8 matching for user regex (see Gap 2 hybrid split). The
+     * "[REDACTED…]" placeholders introduce none of any custom pattern's literals
+     * incidentally beyond what today already did. */
     placeholder_t ph;
     ph.mode = ph_mode;
-
-    for (int i = 0; i < NUM_PATTERNS; i++) {
-        if (!enable_bit(rb_enable_bits, i)) continue;
-        /* Literal pre-filter: if the pattern has a required substring and it's
-         * not in the current buffer, skip regexec entirely. Saves the per-call
-         * O(N) state-log allocation that glibc regex makes before any matching.
-         * "[REDACTED]" introduces none of our literals, so checking the
-         * working buffer (rather than the original input) is correct across
-         * iterations. */
-        const char *lit = pattern_required_literal[i];
-        if (lit && !strstr(working, lit)) continue;
-
-        ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
-                     ? ph_str_plain
-                     : tag_name_for_bit(pattern_tags[i]);
-        char *result = replace_all_matches(&compiled_patterns[i], working,
-                                           boundary_wrapped[i], &ph);
-        free(working);
-        if (!result) rb_raise(rb_eNoMemError, "replace_all_matches allocation failed");
-        working = result;
-    }
-
     for (int i = 0; i < custom_count; i++) {
         if (!enable_bit(rb_enable_bits, NUM_PATTERNS + i)) continue;
         ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
@@ -156,5 +222,12 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
 
     VALUE rb_result = rb_str_new_cstr(working);
     free(working);
+    /* Preserve the input's encoding. We go through Ruby's force_encoding rather
+     * than the C rb_enc_* API because pulling in ruby/encoding.h drags in
+     * onigmo.h, whose regex_t collides with the POSIX <regex.h> this TU uses for
+     * the custom-pattern path. Placeholders are pure ASCII, valid in every
+     * encoding the gem accepts. */
+    rb_funcall(rb_result, rb_intern("force_encoding"), 1,
+               rb_funcall(rb_text, rb_intern("encoding"), 0));
     return rb_result;
 }
