@@ -12,16 +12,18 @@ Open question: would **v7 (AC + BM + PCRE2 JIT)** meaningfully improve on v5 for
 always-candidates (pure-digit patterns: SSN, PESEL, credit card, IPv4)?
 Published benchmarks suggest 2–5× faster confirmation for those patterns.
 
-**Decision: ship v7 (AC + BM + PCRE2 JIT).** Result: 2.79× over pure-Ruby, 25.5× over
-today's C. Cleared the ≥2× go/no-go threshold. PCRE2 JIT is the confirmation engine.
+**~~Decision: ship v7 (AC + BM + PCRE2 JIT).~~ SUPERSEDED — see §1d.** v7 cleared the
+≥2× bar (2.79× over pure-Ruby) but requires `libpcre2-dev` with JIT, violating the
+gem's zero-runtime-dependency rule (CLAUDE.md). The v8→v19 arc then built a
+**zero-dependency** pure-C engine that beats Onigmo: **v19 is 2.3× over pure-Ruby,
+~11× over today's C, no external link**, and byte-for-byte correct vs Ruby `gsub`.
+v19 is the engine to port. Porting plan and open design gaps are tracked in §1d.
 
-**Decision checklist:**
+**Historical checklist (v7 — kept for the record):**
 - [x] Build and benchmark prototype v7 (AC + BM + PCRE2 JIT) — 2.79× over pure-Ruby. ✅
-- [x] Go/no-go: v7 ≥ 2× → ship v7 over v5. ✅
-- [ ] Evaluate portability trade-off: v7 requires `libpcre2-dev` with JIT enabled.
-      v7 silently falls back to interpreter on Alpine, musl, sandboxed containers.
-      Decide: require system package, or vendor PCRE2 (see `docs/research_log.md §11.6`).
-- [ ] Wire v7 architecture into `ext/data_redactor/` replacing the current glibc `regexec` loop.
+- [x] Go/no-go: v7 ≥ 2× → cleared the bar. ✅
+- [x] ~~Portability trade-off for PCRE2~~ → resolved by abandoning the dependency (v19).
+- [ ] ~~Wire v7 into the gem~~ → superseded by §1d (port v19 instead).
 
 ### 1b. Bound greedy tails in built-in patterns (perf + worst-case)
 
@@ -89,6 +91,70 @@ buffer-end IBAN matches.)
 - [x] Buffer-edge cases (digit runs, dashed IDs, IBANs ending at `len`, after `\n`)
       are in `verify19.rb` (digit-eos9/digit-runs/iban-eob etc.).
 - [x] `verify19.rb` shows zero diffs vs v15 (escape hatch removed).
+
+### 1d. Port the v19 engine into the gem (replace the glibc `regexec` confirmation loop)
+
+**Goal.** Replace the gem's current per-pattern POSIX `regexec` engine in
+`ext/data_redactor/` with the v19 pipeline (NFA → bytecode → per-pattern lazy DFA +
+the two selective merges). v19 is **zero-dependency, 2.3× over pure-Ruby, ~11× over
+today's C, byte-for-byte equal to Ruby `gsub`** (`prototypes/multi_matcher_v1/`,
+`docs/research_log.md` §v19). This is the production payoff of the whole research arc.
+
+**Do this as its own branch (`feat/v19-engine`), not bundled with the research merge.**
+Start with a design spike on the four gaps below — they, not the matching algorithm,
+are where prototype→production ports fail. The 244-example rspec suite is the
+correctness gate the ported engine must pass unchanged.
+
+**Gap 1 — pattern source-of-truth + the existing public `add_pattern` API.** The
+prototype matches a fixed generated `MM88_PATTERNS` table. The gem already ships
+(0.3.0, §"User-supplied custom patterns") a public `DataRedactor.add_pattern` /
+`remove_pattern` / `clear_custom_patterns!` API backed by per-pattern `regcomp`, with
+patterns stored in a process-local dynamic array and executed after built-ins in
+registration order. v19 must drive that **dynamic** set, not a compile-time constant:
+- [ ] Built-in patterns still live in `ext/data_redactor/patterns.{h,c}` (CLAUDE.md
+      tiers). v19's engine table is built from them at init.
+- [ ] `add_pattern` must build a v19 engine (parse → bytecode → lazy-DFA slot) for the
+      new pattern at registration time and append it, preserving specific→generic order.
+- [ ] `remove_pattern` / name-collision-replace must free that engine's DFA + scratch.
+
+**Gap 2 — v19's parser vs the gem's POSIX-ERE subset contract.** `add_pattern` today
+compile-tests with `regcomp` and rejects anything outside POSIX ERE (no `\d \s \w \b`,
+no `(?:)`, lookaround, non-greedy, named groups) via `InvalidPatternError` at
+registration. v19 has its **own** regex parser (`parse_regex`):
+- [ ] Decide the contract: either (a) keep `regcomp` as the registration-time
+      *validator* (fail-fast gate) and feed accepted patterns to v19's parser for
+      *matching*, or (b) make v19's parser the single source of truth and reproduce
+      the same rejection set + `regerror`-quality messages. (a) is lower-risk for v1.
+- [ ] Confirm v19's parser accepts every built-in pattern and the documented custom
+      examples; add a parser-coverage test mirroring the `add_pattern` validation specs.
+
+**Gap 3 — thread-safety / re-entrancy (correctness, not perf).** The prototype uses
+file-scope mutable globals: `g_engines`, `g_dfa`, and crucially the per-scan cursors
+`g_digit_last_end[]` / `g_iban_last_end[]` and `g_gen[]`. Under threaded Ruby (Puma,
+Sidekiq) concurrent `redact` calls would race on these:
+- [ ] Separate **immutable, shared** state (compiled programs, DFA transition tables —
+      safe to share once built) from **per-scan mutable** state (match cursors,
+      generation stamps, clist/nlist scratch) which must be stack-local or per-call.
+- [ ] Decide the model: per-call scratch (allocate/reuse on the C stack or a passed-in
+      context struct) vs a GVL assumption. Do NOT assume the GVL serializes redaction —
+      `redact` may release it for large inputs. Document the chosen guarantee.
+- [ ] Add a concurrency stress test (N threads redacting distinct inputs, compare to
+      single-threaded results) — mirrors prototype `stress-600` but parallel.
+
+**Gap 4 — selective merges over a dynamic set.** The digit group and IBAN union pass
+are detected by `parse_pure_digit` / `parse_iban_prefix` over the built-in set:
+- [ ] Run that detection at `add_pattern` time too, so a user pattern that is literally
+      `[0-9]{lo,hi}` or a country-code-prefixed IBAN joins the merged pass — or
+      explicitly decide user patterns always take the per-pattern path (simpler, safe,
+      slightly slower). Recommend the simple path for v1; document it.
+
+**Ship hygiene (once the four gaps are closed):**
+- [ ] 244-example rspec suite green against the new engine (the correctness gate).
+- [ ] `extconf.rb` builds with no new dependency; verify on glibc + musl/Alpine.
+- [ ] SemVer: engine swap with no public API change → **minor** bump; update
+      `lib/data_redactor/version.rb` + CHANGELOG `[Unreleased]` in the feature commit.
+- [ ] Bench the gem end-to-end (not just the C core) to confirm the 2.3× survives the
+      Ruby↔C marshalling boundary on real `redact` / `redact_deep` calls.
 
 ### 2. Write and publish the paper
 
