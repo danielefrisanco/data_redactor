@@ -1,21 +1,19 @@
-matcher
-matcher.so
-matcher2
-matcher2.so
-matcher3
-matcher3.so
-matcher4
-matcher4.so
-matcher5
-matcher5.so
-matcher6
-matcher6.so
-matcher7
-matcher7.so
-matcher7_plain
-matcher7_plain.so
-matcher7_plain_onig.so
-bench_malloc
-bench_bm_inner
-bench_realistic
+# Build artifacts — the Makefile regenerates all of these. Only source
+# (*.c, *.h, *.rb, Makefile, this file) is tracked.
+#
+# The artifact globs (matcher*, bench_*, smoke*) would also match source like
+# matcher19.c, so the !*.c/!*.h/!*.rb negations below re-include source.
+
+*.so
+matcher*
+bench_*
+smoke*
+
+!*.c
+!*.h
+!*.rb
+!Makefile
+!.gitignore
+
+# Generated header — re-ignored after the !*.h negation above.
 patterns_generated.h
