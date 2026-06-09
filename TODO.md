@@ -110,23 +110,38 @@ prototype matches a fixed generated `MM88_PATTERNS` table. The gem already ships
 (0.3.0, §"User-supplied custom patterns") a public `DataRedactor.add_pattern` /
 `remove_pattern` / `clear_custom_patterns!` API backed by per-pattern `regcomp`, with
 patterns stored in a process-local dynamic array and executed after built-ins in
-registration order. v19 must drive that **dynamic** set, not a compile-time constant:
-- [ ] Built-in patterns still live in `ext/data_redactor/patterns.{h,c}` (CLAUDE.md
-      tiers). v19's engine table is built from them at init.
-- [ ] `add_pattern` must build a v19 engine (parse → bytecode → lazy-DFA slot) for the
-      new pattern at registration time and append it, preserving specific→generic order.
-- [ ] `remove_pattern` / name-collision-replace must free that engine's DFA + scratch.
+registration order.
+- [x] Built-in patterns live in `ext/data_redactor/patterns.{h,c}` (CLAUDE.md tiers);
+      v19's engine table is built from them at `mm_init()`.
+- [x] **Customs do NOT go through v19** (hybrid split — see Gap 2). `redact`/`scan` run
+      the v19 engine over built-ins, then the existing glibc `regexec` loop over customs
+      on the (already built-in-redacted) buffer — preserving registration order and the
+      sequential built-ins→customs semantics exactly. So the engine has no dynamic
+      add/remove of custom slots to keep in lockstep; `mm_add`/`mm_remove`/
+      `mm_clear_custom` exist but are unused by the gem (kept for a possible future move
+      of customs onto v19).
 
-**Gap 2 — v19's parser vs the gem's POSIX-ERE subset contract.** `add_pattern` today
-compile-tests with `regcomp` and rejects anything outside POSIX ERE (no `\d \s \w \b`,
-no `(?:)`, lookaround, non-greedy, named groups) via `InvalidPatternError` at
-registration. v19 has its **own** regex parser (`parse_regex`):
-- [ ] Decide the contract: either (a) keep `regcomp` as the registration-time
-      *validator* (fail-fast gate) and feed accepted patterns to v19's parser for
-      *matching*, or (b) make v19's parser the single source of truth and reproduce
-      the same rejection set + `regerror`-quality messages. (a) is lower-risk for v1.
-- [ ] Confirm v19's parser accepts every built-in pattern and the documented custom
-      examples; add a parser-coverage test mirroring the `add_pattern` validation specs.
+**Gap 2 — v19's parser vs the gem's POSIX-ERE subset contract + multibyte UTF-8.**
+`add_pattern` today compile-tests with `regcomp` and rejects anything outside POSIX
+ERE. v19 has its own **byte-oriented** parser/matcher (`parse_regex`), and that byte
+orientation is the deciding factor:
+- **RESOLVED by the hybrid split (decision 2026-06-09).** The v19 engine handles ONLY
+  the 88 built-in patterns (all pure ASCII — verified). **Custom patterns keep running
+  through the existing glibc `regexec` path** (`replace_all_matches`), unchanged. So
+  the v19 parser never has to accept arbitrary user regex, and the POSIX-subset
+  contract / `regerror` messages are exactly as today (still `regcomp` at registration).
+- **Why the split is necessary, not just convenient — multibyte UTF-8 in character
+  classes.** `DataRedactor.name_pattern` emits classes like `[oOòóôõöø…]` whose members
+  are multibyte UTF-8 sequences. glibc's locale-aware `regexec` matches `José`/`Muñoz`
+  against these; the v19 byte-level engine parses each `[...]` as a 256-bit set and a
+  multibyte char as separate bytes, so `[…é…]` (one class atom) cannot match the 2-byte
+  `é` — a real **false negative on PII**. The `redact` diacritics spec (`José Muñoz`)
+  caught this when the engine went live. Routing customs through glibc preserves today's
+  match exactly.
+- [ ] (Deferred, only if customs ever move onto v19) Teach the parser to treat a
+      multibyte UTF-8 sequence inside `[...]` as a single multi-byte alternative, and
+      add UTF-8 class-matching tests. Larger change; not needed while customs stay on
+      glibc. Tracked here so the limitation is explicit.
 
 **Gap 3 — thread-safety / re-entrancy (correctness, not perf).** The prototype uses
 file-scope mutable globals: `g_engines`, `g_dfa`, and crucially the per-scan cursors
@@ -142,19 +157,111 @@ Sidekiq) concurrent `redact` calls would race on these:
       single-threaded results) — mirrors prototype `stress-600` but parallel.
 
 **Gap 4 — selective merges over a dynamic set.** The digit group and IBAN union pass
-are detected by `parse_pure_digit` / `parse_iban_prefix` over the built-in set:
-- [ ] Run that detection at `add_pattern` time too, so a user pattern that is literally
-      `[0-9]{lo,hi}` or a country-code-prefixed IBAN joins the merged pass — or
-      explicitly decide user patterns always take the per-pattern path (simpler, safe,
-      slightly slower). Recommend the simple path for v1; document it.
+are detected by `parse_pure_digit` / `parse_iban_prefix` over the built-in set.
+- [x] **Moot under the hybrid split.** Custom patterns run on glibc, not v19, so they
+      never join the digit/IBAN merges by construction. The merges operate only over the
+      fixed built-in set, detected once at `mm_init()`. If customs ever move onto v19,
+      revisit (a user `[0-9]{lo,hi}` could then join the digit pass).
 
-**Ship hygiene (once the four gaps are closed):**
-- [ ] 244-example rspec suite green against the new engine (the correctness gate).
+**Gap 5 — cross-pattern overlap: mm_scan is single-pass, the gem is sequential-rewrite.**
+This is the subtle correctness gap, NOT covered by the prototype's `verify19.rb`.
+`verify19.rb` proved v19 == v15, but **v15 is also a single-sweep multi-pattern NFA**,
+not the gem's engine. The gem runs patterns *sequentially*, each `gsub`-ing the buffer
+the previous pattern already rewrote — so a lower-index pattern's `[REDACTED]` can
+*block* a higher-index pattern from matching bytes it otherwise would. The canonical
+case is the spec at `spec/data_redactor_spec.rb:1299` (AKIA): `aws_access_key_id`
+(idx 14) redacts the leading 20 chars; `aws_secret_access_key` (idx 15, `{40}`) then
+sees only 20 chars after `[REDACTED]` and cannot match — so 20 chars are left
+unredacted. A naive emit-all-events over the *original* buffer would instead match the
+full 40 and redact everything, flipping that passing spec.
+- [x] **Decision (2026-06-09): index-order greedy claim.** Resolve `mm_scan`'s raw
+      events with `mm_resolve`: iterate events in `(pattern_id, start)` order; keep an
+      event iff its CORE span does not overlap an already-kept span; else drop it. This
+      reproduces "earlier-index pattern wins any region it can match" — byte-identical
+      to today. Verified character-independent (suffix A/B/Z/9/mixed/lower/`/` all give
+      the same 20-char redaction). ~30-line post-pass; keeps the full event list intact
+      so the deferred longest-match-wins policy is a drop-in swap of the resolve rule.
+- [x] **Differential-tested (2026-06-09).** A Fiddle harness drove `mm_scan`+`mm_resolve`
+      vs `DataRedactor.redact` over 4000+ randomized adjacency-heavy inputs plus fixed
+      overlap shapes. Found one — and only one — divergence class, below.
+- [ ] **Accepted divergence — rewrite-created/destroyed boundary (~2% of adjacency-heavy
+      random inputs; all 84/4000 divergences were this class).** When two sensitive
+      tokens abut with **no separator between them**, today's sequential rewrite replaces
+      the lower-index token with `[REDACTED]`, and the `[`/`]` of that placeholder becomes
+      the boundary an adjacent **boundary-wrapped** pattern needs — so it matches on the
+      *rewritten* buffer. A single pass over the *original* buffer can never see that
+      created boundary, so the second token is missed (or, symmetrically, a greedy
+      lower-index match destroys a boundary and leaves a mangled half-token, e.g.
+      `192.168.1.1123-45-6789` → today `[REDACTED]3-45-6789`). Examples:
+      `123-45-6789192.168.1.1` (today redacts both; engine redacts only ipv4),
+      `ghp_…85121612345` (the 11-digit ID after a key).
+      **Decision: accept, do NOT model the rewrite.** Rationale: (1) it only fires on
+      directly-abutting secrets with no separator — rare in real text, which is
+      whitespace/punctuation-delimited; (2) today's output in these cases is itself a
+      glibc-rewrite artifact (mangled partial tokens), not behaviour worth preserving;
+      (3) the decided 1.0 longest-match-wins policy redacts the whole region and fixes
+      these properly. No existing spec asserts a no-separator back-to-back redaction, so
+      the suite stays green. This is the single documented behavioural difference of the
+      ported engine vs the original — see the divergence ledger (§ "Where the ported
+      engine differs"). If a future need arises, a bounded re-scan around each `[REDACTED]`
+      edge would recover byte-identical behaviour without a full multi-pass.
+
+**Ship hygiene (once the gaps are closed):**
+- [x] 256-example rspec suite green against the new engine (the correctness gate). ✅
 - [ ] `extconf.rb` builds with no new dependency; verify on glibc + musl/Alpine.
-- [ ] SemVer: engine swap with no public API change → **minor** bump; update
-      `lib/data_redactor/version.rb` + CHANGELOG `[Unreleased]` in the feature commit.
-- [ ] Bench the gem end-to-end (not just the C core) to confirm the 2.3× survives the
-      Ruby↔C marshalling boundary on real `redact` / `redact_deep` calls.
+- [x] SemVer: engine swap with no public API change → **minor** bump; `0.9.0` → `0.10.0`. ✅
+- [x] Bench the gem end-to-end: 1 MB log: **0.87 i/s → 7.27 i/s** (~8.4× throughput
+      gain; from 4× slower than pure Ruby to 2.25× faster). Small strings: 3–4.6×
+      slower → 1.7–2.3× faster. The 2.3× prototype win survives the Ruby↔C boundary. ✅
+
+**Phase 1 — ported but NOT done yet (tracked for future work):**
+- [ ] **Longest-match-wins overlap policy** — the decided 1.0 policy (keep the longest
+      CORE span at each position; pattern-id breaks ties). Currently deferred; `mm_resolve`
+      keeps the index-order greedy claim to reproduce today's sequential semantics. Changing
+      the resolver is ~40 lines + spec work to unmark the two `pending` 1.0 specs. The event
+      list is preserved intact so this is a drop-in swap.
+- [ ] **Full per-call thread re-entrancy** — `mm_scan` mutates per-engine fields
+      (`iban_last_end`, `digit_last_end`, DFA scratch). Phase 1 is safe only because MRI's
+      GVL serialises C extension calls (no `rb_thread_call_without_gvl` is ever used).
+      Full re-entrancy requires moving the mutable scan scratch into a per-call context
+      struct (alloca/stack or caller-supplied). Needed before releasing the GVL for large
+      inputs or before supporting Ractors.
+- [ ] **Custom patterns in selective merges** — pure-digit or IBAN-prefix custom patterns
+      won't join the group passes; they're handled per-pattern by glibc. Acceptable for
+      Phase 1 (customs are rare hot paths); revisit if perf matters.
+- [ ] **Streaming `mm_scan_chunk`** — scan across caller-managed chunks for large inputs
+      without buffering the full string in C. Not needed while callers buffer Ruby strings.
+- [ ] **Hopcroft minimisation** — lazy-DFA states are not minimised; minimisation would
+      reduce transition table size and improve cache behaviour on large pattern sets.
+- [ ] **Fuzz / ASan CI harness** — see `docs/standalone_matcher_design.md` risk table.
+      The `OP_EOL` OOB read (fixed) was found by ASan; a CI fuzz job would catch regressions.
+- [ ] **musl/Alpine build verification** — `memmem` availability and `_GNU_SOURCE` behaviour
+      on musl libc. Current guard: `#ifndef _GNU_SOURCE / #define _GNU_SOURCE` at top of
+      `matcher.c`. Needs a CI matrix job.
+
+**Where the ported engine differs from the original gem (divergence ledger):**
+
+1. **Single-pass original-frame emission** — `mm_scan` scans the original input once and
+   emits CORE-frame `(pattern_id, start, length)` directly. The old engine ran N `regexec`
+   passes, each on the buffer the previous already rewrote, and used `repl_log` /
+   `WORKING_TO_ORIG` to map coordinates back. The new approach is simpler and faster;
+   the only observable difference is the rewrite-boundary class below.
+
+2. **Rewrite-created / rewrite-destroyed boundary** (Gap 5, accepted) — when two secrets
+   directly abut with no separator, the `[REDACTED]` placeholder from the lower-index
+   match can create (or destroy) the word boundary a higher-index boundary-wrapped pattern
+   needs. A single-pass scan over the original buffer cannot see the rewritten boundary.
+   ~2% of adjacency-heavy synthetic inputs; irrelevant in real text (always separator-
+   delimited). Pinned by DIVERGENCE specs; fixed by the future longest-match-wins resolver.
+
+3. **Custom patterns bypass the selective merges** — customs always go through glibc
+   `replace_all_matches`, even if their regex is a pure digit run or an IBAN prefix.
+   Built-in digit/IBAN patterns continue to use the group passes. Acceptable because
+   customs are a small minority of calls.
+
+4. **Overlap policy is still index-order greedy** — see item 1 of "Phase 1 not done yet".
+   The 1.0 longest-match-wins policy is deferred; for now the resolver reproduces today's
+   sequential-rewrite behaviour exactly.
 
 ### 1b. Legal check before shipping BM implementation
 
@@ -221,6 +328,30 @@ Distinctive-prefix API keys with low false-positive risk, grouped under `:creden
 - DataDog API Key — **deferred**: 32 hex chars with no prefix; needs a context-aware prefix (e.g. `dd[-_]?api[-_]?key=`) to avoid false positives
 - PagerDuty API Key — **skipped**: REST tokens are 20-char alphanum without a stable distinctive prefix; v2 routing keys are 32 hex chars → both FP-prone
 - HashiCorp — ✅ **DONE**: Vault service tokens (`hvs.`), Vault batch tokens (`hvb.`), Terraform Cloud API tokens (`atlasv1`). `hcp.` prefix not found in public pattern databases — skipped.
+
+### Assignment-style secret patterns (key-name anchored) — WANTED
+
+Patterns that redact a secret by the **name of the field it is assigned to**, not by
+the secret's own format. Requested 2026-06-09. The secret value itself has no
+distinctive shape, so the key name is the only anchor:
+
+- [ ] `%PWD%`, `%PASSWORD%` (env-var-template style)
+- [ ] `PASSWORD="..."` / `PASSWORD=...` (assignment / dotenv style)
+- [ ] generalize to common secret key names: `password`, `passwd`, `pwd`, `secret`,
+      `token`, `api_key`, `apikey`, `access_key`, `client_secret`, etc., across the
+      common separators (`=`, `:`, `=>`) and quoting styles.
+
+**Open design questions (resolve before implementing):**
+- Redact only the **value**, keep the key (`PASSWORD=[REDACTED]`) — almost certainly
+  the right call, so logs stay greppable.
+- Case-insensitivity: POSIX ERE has no `/i`. Need `[Pp][Aa]...` char-class expansion
+  or a parser-level fold — decide which.
+- Value terminator: where does the value end? Quoted (`"..."`/`'...'`) is easy;
+  unquoted runs to whitespace/newline/`;`/`,`. Define the value grammar.
+- FP risk: `password` appears in prose ("reset your password"). Anchoring on the
+  separator (`password\s*[=:]`) mitigates this — require the assignment, not the word.
+- These are a new tier (value-after-key-name); confirm where they sit in the
+  specific→generic ordering and whether they need `boundary_wrapped`.
 
 ## Roadmap to a usable gem
 

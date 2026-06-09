@@ -10,9 +10,10 @@ A Ruby gem with a C extension for high-performance regex-based redaction of sens
 
 DataRedactor scans text for sensitive data — API keys and cloud secrets, IBANs,
 credit cards, national IDs, emails, phone numbers, IPs, and more — and replaces
-each match with a placeholder. The scanning runs in a C extension backed by POSIX
-`regex.h`, so the heavy lifting happens outside the Ruby VM and stays fast enough
-to run inline on large payloads.
+each match with a placeholder. The scanning runs in a C extension backed by a
+zero-dependency Thompson NFA → lazy-DFA multi-pattern engine (v19) that scans
+all 88 built-in patterns in a single pass — 2–2.5× faster than pure-Ruby `gsub`
+on large payloads, with no external library dependencies.
 
 It ships **88 built-in patterns** across 15+ countries, grouped into tags
 (`:credentials`, `:financial`, `:contact`, ...) so you can redact only what you
@@ -488,33 +489,26 @@ See [`benchmark/README.md`](benchmark/README.md) for what each script measures
 and how the pure-Ruby baseline is kept honest (it reads the same patterns the
 C engine uses, via `DataRedactor::BUILTIN_PATTERN_SOURCES`).
 
-### Where we are today (May 2026)
+### Performance (0.10.0 — v19 multi-pattern engine)
 
-Recorded so we know where we started when the next round of perf work lands.
+As of 0.10.0 the C extension runs a **Thompson NFA → lazy-DFA multi-pattern
+engine** (v19) that scans the input once across all 88 built-in patterns,
+with two selective-merge passes (pure-digit group + IBAN union) that further
+reduce work for the most common pattern classes. Custom patterns (`add_pattern`)
+still use the glibc path (required for correct UTF-8 diacritic matching).
 
-| Payload                     | C extension     | Pure-Ruby `gsub` | C vs Ruby      |
-|-----------------------------|-----------------|------------------|----------------|
-| log line (168 B)            | 0.30 ms / call  | 0.07 ms / call   | 3.4× slower    |
-| JSON blob (~580 B)          | 0.92 ms / call  | 0.18 ms / call   | 5.0× slower    |
-| 100 log lines (~17 KB)      | 26.5 ms / call  | 6.1 ms / call    | 4.4× slower    |
-| 1 MB log                    | 1.62 s / call   | 0.38 s / call    | 4.25× slower   |
-| 10 MB log                   | ~15 s           | ~3.8 s           | ~4× slower     |
+| Payload               | v19 engine (0.10.0) | Pure-Ruby `gsub` | Ratio           |
+|-----------------------|---------------------|------------------|-----------------|
+| log line (168 B)      | 41 µs / call        | 71 µs / call     | **1.7× faster** |
+| JSON blob (~580 B)    | 81 µs / call        | 132 µs / call    | **1.6× faster** |
+| 8 log lines (1.3 KB)  | 175 µs / call       | 399 µs / call    | **2.3× faster** |
+| 100 log lines (17 KB) | 2.0 ms / call       | 4.6 ms / call    | **2.3× faster** |
+| 1 MB log              | 138 ms / call       | 294 ms / call    | **2.1× faster** |
+| 10 MB log             | 1.44 s / call       | —                | 6.9 MB/s        |
 
-The C extension is currently **3-5× slower than pure-Ruby `gsub` at every
-size measured.** The cause is structural — glibc's POSIX `regexec` lacks
-the Boyer-Moore literal pre-filter that Ruby's Onigmo engine has built in —
-and is documented in detail under [Known limitations](#known-limitations).
-Two perf fixes have already shipped (a `strstr` literal pre-filter and
-chunked input above 64 KB), which got us 25-30% faster and restored linear
-scaling, but the absolute gap remains.
-
-The long-term plan is a combined multi-pattern matcher
-([design doc](docs/standalone_matcher_design.md),
-[execution plan](docs/combined_matcher_plan.md)) that compiles all 88
-patterns into one automaton and walks the input once. That's expected to
-make the C extension genuinely the fastest option in Ruby; until it ships,
-use the gem on small payloads where absolute latency is acceptable
-(< 1 ms for typical log lines).
+All payload sizes pass a correctness check (redaction count matches pure-Ruby `gsub`).
+The previous engine (per-pattern `regexec`) was **4.25× slower** than pure Ruby on the
+1 MB payload — a ~9× swing. Old numbers are in git history (`CHANGELOG.md` [0.9.0]).
 
 ## How it works
 

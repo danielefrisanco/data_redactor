@@ -3,6 +3,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* Custom patterns deliberately do NOT use the v19 engine: they keep the glibc
+ * regexec path (replace_all_matches), because user regex can contain multibyte
+ * UTF-8 inside character classes (e.g. name_pattern's [oOòóô…]) that the
+ * byte-level v19 engine cannot match the way glibc's locale-aware matcher does.
+ * See TODO.md §1d Gap 2 for the hybrid-split rationale. */
 custom_pattern_t *custom_patterns = NULL;
 int custom_count = 0;
 int custom_cap   = 0;

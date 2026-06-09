@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-09
+
+### Changed
+- **Engine rewrite (v19 hybrid)** — `redact` and `scan` now run through a
+  Thompson NFA → bytecode → lazy-DFA multi-pattern engine (v19) for all 88
+  built-in patterns, replacing the previous per-pattern POSIX `regexec` loop.
+  Custom patterns (`add_pattern`) continue to use the glibc path (hybrid split
+  — required for correct UTF-8 multibyte character-class matching in user regex).
+- Throughput on a 1 MB log: **~8.4× faster** than the previous C engine
+  (0.87 i/s → 7.27 i/s); **2.25× faster** than pure-Ruby `gsub` (was 4×
+  slower). Small per-call strings: 1.7–2.3× faster (was 3–4.6× slower).
+- Overlap resolution: built-in matches are now resolved by an index-order
+  greedy claim (`mm_resolve`) that reproduces today's sequential per-pattern
+  rewrite semantics exactly. The one accepted divergence (rewrite-created
+  boundary when two secrets abut with no separator) is documented in
+  `TODO.md §1d` and pinned by `DIVERGENCE` specs.
+- `rb_data_redactor_scan`: coordinate mapping (`repl_log` / `WORKING_TO_ORIG`)
+  replaced by direct original-frame offset emission from the v19 engine; custom
+  patterns use a lightweight offset-walk over the built-in event list.
+
+### Fixed
+- **Swiss AHV false-negative** — boundary-wrapped patterns with a
+  start-anchored required literal now correctly set `max_back = 1` (not 0) so
+  the literal-skip does not overshoot the boundary byte. `756.1234.5678.90`
+  now matches as expected. (Pre-existing bug in the old engine, caught by
+  going live.)
+
 ## [0.9.0] - 2026-05-22
 
 ### Added

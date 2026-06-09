@@ -7,8 +7,12 @@
 #include "redact.h"
 #include "scan.h"
 #include "custom_patterns.h"
+#include "matcher.h"
 
 void Init_data_redactor(void) {
+    /* Build the v19 multi-pattern engines from the gem's pattern arrays. */
+    mm_init();
+
     /* Compile all built-in regex patterns at load time. */
     for (int i = 0; i < NUM_PATTERNS; i++) {
         const char *pat;

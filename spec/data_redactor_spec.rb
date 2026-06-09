@@ -1341,12 +1341,18 @@ RSpec.describe DataRedactor do
       expect(result[:matches].map { |m| m[:name] }).to eq(["credit_card"])
     end
 
-    it "non-overlapping matches from different patterns all fire independently" do
-      # When patterns match disjoint spans, both fire under either policy.
+    # DIVERGENCE (scan, rewrite-dependent): on the original buffer idx-15
+    # ([A-Za-z0-9/+=]{40}) matches the full 60-char span [0,60), which overlaps
+    # idx-14's [0,20). mm_resolve drops it. The old sequential engine rewrote
+    # chars 0-19 first, leaving the 40 x's in isolation for idx-15 to match at
+    # working pos 10 → original pos 20. Single-pass can't see that second match.
+    it "DIVERGENCE — scan: aws_secret match exposed by rewrite is invisible to single-pass engine" do
       input = "AKIAIOSFODNN7EXAMPLE" + ("x" * 40)  # AKIA (20) + 40 alphanum
       result = DataRedactor.scan(input)
-      names = result[:matches].map { |m| m[:name] }.sort
-      expect(names).to eq(["aws_access_key_id", "aws_secret_access_key"].sort)
+      names = result[:matches].map { |m| m[:name] }
+      # Old sequential engine: ["aws_access_key_id", "aws_secret_access_key"]
+      # v19 single-pass engine: only aws_access_key_id (idx-15 [0,60) overlaps idx-14 [0,20))
+      expect(names).to eq(["aws_access_key_id"])
     end
 
     it "consumes the 'specific prefix' even when only it matches; later patterns see leftovers verbatim" do
@@ -1355,6 +1361,70 @@ RSpec.describe DataRedactor do
       input = "key=AKIAIOSFODNN7EXAMPLEextrabytesfor20"
       result = DataRedactor.scan(input)
       expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
+    end
+
+    # The AKIA-prefix behaviour must be independent of WHICH characters follow,
+    # not an artefact of repeated 'A's. aws_secret_access_key is [A-Za-z0-9/+=]{40}
+    # so any of these 20-char suffixes COULD form a 40-char secret on the original
+    # buffer — yet today's sequential rewrite redacts only the 20-char AKIA prefix
+    # because aws_access_key_id (idx 14) rewrites it before idx 15 ever runs.
+    # This is the contract the ported engine's overlap resolver (mm_resolve,
+    # "index-order greedy claim") must reproduce byte-for-byte. See TODO.md §1d Gap 5.
+    {
+      "repeated A"  => "A" * 20,
+      "repeated B"  => "B" * 20,
+      "repeated Z"  => "Z" * 20,
+      "repeated 9"  => "9" * 20,
+      "mixed alnum" => "B3xQ7mK9pL2wR5tZ8nV4",
+      "lowercase"   => "abcdefghijklmnopqrst",
+      "with slashes" => "B/B/B/B/B/B/B/B/B/B/",
+    }.each do |label, suffix|
+      it "redacts only the 20-char AKIA prefix regardless of the following bytes (#{label})" do
+        input = "AKIAIOSFODNN7EXAMPLE" + suffix
+        # Only the AKIA prefix is claimed; the 40-char-secret pattern is blocked by
+        # the prior rewrite, so the suffix survives verbatim.
+        expect(DataRedactor.redact(input)).to eq("[REDACTED]" + suffix)
+        result = DataRedactor.scan(input)
+        expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
+        expect(result[:matches].first[:value]).to eq("AKIAIOSFODNN7EXAMPLE")
+      end
+    end
+  end
+
+  # Rewrite-created/destroyed boundary cases — two sensitive tokens that ABUT with
+  # NO separator between them. The glibc engine rewrote patterns sequentially, so a
+  # lower-index pattern's [REDACTED] could introduce a '['/']' boundary that an
+  # adjacent boundary-wrapped pattern then matched on the rewritten buffer. The v19
+  # engine scans the ORIGINAL buffer in one pass and cannot see a boundary the
+  # rewrite would create — this is its ONE documented behavioural divergence from
+  # the old engine (TODO.md §1d Gap 5, "accepted divergence"): the second token is
+  # left unredacted. Accepted because it only arises for directly-abutting secrets
+  # with no separator (rare in real text), the old output was itself a rewrite
+  # artifact, and the planned 1.0 longest-match policy redacts the whole region.
+  describe "overlap resolution — rewrite-created-boundary divergence (accepted)" do
+    it "DIVERGENCE: an SSN abutting an IPv4 (no separator) leaves the SSN unredacted under the v19 engine" do
+      # 123-45-6789 has no boundary char after '6789' (next byte is '1'), so us_ssn
+      # cannot match the original text. The old glibc engine redacted 192.168.1.1
+      # first, creating a '[' that then bounded the SSN → "[REDACTED][REDACTED]".
+      # The v19 single-pass engine never sees that created boundary, so only ipv4
+      # is redacted. This is the accepted Gap-5 divergence.
+      input = "123-45-6789192.168.1.1"
+      expect(DataRedactor.redact(input)).to eq("123-45-6789[REDACTED]")
+    end
+
+    it "a greedy earlier match can leave a mangled half-token (rewrite destroys a boundary)" do
+      # ipv4 greedily consumes "192.168.1.1", leaving "123-45-6789"; but the
+      # leading digits were eaten, so only "3-45-6789" remains after [REDACTED].
+      input = "192.168.1.1123-45-6789"
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]3-45-6789")
+    end
+
+    it "an alnum run after a prefixed key: aws_secret_access_key (idx 15) claims 40 chars before github (idx 19)" do
+      # aws_secret_access_key [A-Za-z0-9/+=]{40} runs before github_classic_pat and
+      # matches 40 chars starting just after 'ghp_', swallowing into the digit run:
+      # ghp_[REDACTED]1612345. Another earlier-index-wins case, not a clean ghp_ hit.
+      input = "ghp_ABCDEFGHIJabcdefghij0123456789ABCDEF85121612345"
+      expect(DataRedactor.redact(input)).to eq("ghp_[REDACTED]1612345")
     end
   end
 
@@ -1389,6 +1459,72 @@ RSpec.describe DataRedactor do
       # 'one secret' or 'two adjacent secrets', redact more rather than less.
       input = "AKIAIOSFODNN7EXAMPLE" + "B" * 20  # 40 alphanum
       expect(DataRedactor.redact(input)).to eq("[REDACTED]")
+    end
+  end
+
+  describe "thread safety (GVL serialisation)" do
+    # Phase 1 does not release the GVL during mm_scan, so concurrent redact/scan
+    # calls are serialised by MRI. These specs verify that N threads running
+    # distinct inputs in parallel each produce the same result as single-threaded
+    # execution. If the engine had unguarded shared mutable state a race would
+    # produce wrong output or a crash.
+    N_THREADS = 8
+    N_ITERS   = 50
+
+    it "redact is safe under concurrent threads" do
+      payloads = [
+        ["token ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA end",
+         "token [REDACTED] end"],
+        ["key=AKIAIOSFODNN7EXAMPLE rest",
+         "key=[REDACTED] rest"],
+        ["iban: DE89370400440532013000 here",
+         "iban: [REDACTED] here"],
+        ["email test@example.com done",
+         "email [REDACTED] done"],
+        ["ip 192.168.1.1 ok",
+         "ip [REDACTED] ok"],
+        ["card 4111111111111111 end",
+         "card [REDACTED] end"],
+        ["ssn 123-45-6789 here",
+         "ssn [REDACTED] here"],
+        ["plain text no secrets",
+         "plain text no secrets"],
+      ]
+
+      errors = []
+      threads = payloads.map do |(input, expected)|
+        Thread.new do
+          N_ITERS.times do
+            got = DataRedactor.redact(input)
+            errors << "#{input.inspect}: expected #{expected.inspect}, got #{got.inspect}" unless got == expected
+          end
+        end
+      end
+      threads.each(&:join)
+      expect(errors).to be_empty
+    end
+
+    it "scan is safe under concurrent threads" do
+      payloads = [
+        ["token ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA end", "github_classic_pat"],
+        ["key=AKIAIOSFODNN7EXAMPLE rest",                      "aws_access_key_id"],
+        ["iban: DE89370400440532013000 here",                  "iban_de"],
+        ["email test@example.com done",                        "email"],
+        ["ip 192.168.1.1 ok",                                  "ipv4"],
+      ]
+
+      errors = []
+      threads = payloads.map do |(input, expected_name)|
+        Thread.new do
+          N_ITERS.times do
+            result = DataRedactor.scan(input)
+            names  = result[:matches].map { |m| m[:name] }
+            errors << "#{input.inspect}: expected [#{expected_name}], got #{names.inspect}" unless names == [expected_name]
+          end
+        end
+      end
+      threads.each(&:join)
+      expect(errors).to be_empty
     end
   end
 end
