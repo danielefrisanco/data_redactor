@@ -497,16 +497,18 @@ with two selective-merge passes (pure-digit group + IBAN union) that further
 reduce work for the most common pattern classes. Custom patterns (`add_pattern`)
 still use the glibc path (required for correct UTF-8 diacritic matching).
 
-| Payload          | v19 engine (0.10.0) | Pure-Ruby `gsub` | Ratio          |
-|------------------|---------------------|------------------|----------------|
-| log line (168 B) | ~0.09 ms / call     | ~0.07 ms / call  | 1.3× **faster** |
-| 1 MB log         | 0.14 s / call       | 0.38 s / call    | **2.25× faster** |
+| Payload               | v19 engine (0.10.0) | Pure-Ruby `gsub` | Ratio           |
+|-----------------------|---------------------|------------------|-----------------|
+| log line (168 B)      | 41 µs / call        | 71 µs / call     | **1.7× faster** |
+| JSON blob (~580 B)    | 81 µs / call        | 132 µs / call    | **1.6× faster** |
+| 8 log lines (1.3 KB)  | 175 µs / call       | 399 µs / call    | **2.3× faster** |
+| 100 log lines (17 KB) | 2.0 ms / call       | 4.6 ms / call    | **2.3× faster** |
+| 1 MB log              | 138 ms / call       | 294 ms / call    | **2.1× faster** |
+| 10 MB log             | 1.44 s / call       | —                | 6.9 MB/s        |
 
-The previous engine (per-pattern `regexec`) was 3–5× **slower** than pure Ruby
-at every size. The v19 engine is now **2–2.5× faster** on throughput-bound
-workloads and **1.3–1.7× faster** on typical per-call sizes.
-
-The previous table (May 2026) is retained in git history for reference.
+All payload sizes pass a correctness check (redaction count matches pure-Ruby `gsub`).
+The previous engine (per-pattern `regexec`) was **4.25× slower** than pure Ruby on the
+1 MB payload — a ~9× swing. Old numbers are in git history (`CHANGELOG.md` [0.9.0]).
 
 ## How it works
 
