@@ -17,6 +17,7 @@
  *         make matcher4.so (for bench4.rb)
  */
 
+#define _GNU_SOURCE  /* memmem */
 #include "matcher4.h"
 #include "patterns_generated.h"
 
@@ -221,6 +222,37 @@ static ast_node_t *parse_regex(const char *src) {
     pctx_t ctx = { src, src + strlen(src) };
     return parse_alt(&ctx);
 }
+
+/* ========================================================================
+ * 2b. Minimum-match-length computation (AST walk)
+ * ======================================================================== */
+
+static size_t ast_min_len(const ast_node_t *n) {
+    if (!n) return 0;
+    switch (n->type) {
+    case AST_LITERAL:     return 1;
+    case AST_CCLASS:      return 1;
+    case AST_DOT:         return 1;
+    case AST_ANCHOR_BOL:  return 0;
+    case AST_ANCHOR_EOL:  return 0;
+    case AST_CONCAT:      return ast_min_len(n->left) + ast_min_len(n->right);
+    case AST_ALT: {
+        size_t l = ast_min_len(n->left);
+        size_t r = ast_min_len(n->right);
+        return l < r ? l : r;
+    }
+    case AST_REPEAT: {
+        if (n->lo == 0) return 0;
+        return (size_t)n->lo * ast_min_len(n->left);
+    }
+    }
+    return 0;
+}
+
+/* Per-pattern minimum match lengths and prefix lengths; populated in mm4_init(). */
+static size_t g_pat_min_len[MM88_NUM_PATTERNS];
+static size_t g_pat_pfx_len[MM88_NUM_PATTERNS];  /* strlen(prefix) or 0 */
+static size_t g_pat_bml_len[MM88_NUM_PATTERNS];  /* strlen(bm_literal) or 0 */
 
 /* ========================================================================
  * 3. Thompson NFA
@@ -481,6 +513,8 @@ static int dcache_step(int d, unsigned char c) {
  * 6. Public API
  * ======================================================================== */
 
+static void build_prefix_table(void);  /* defined in §7 */
+
 static int g_initialized = 0;
 
 #define WRAP_PREFIX  "(^|[^0-9A-Za-z])("
@@ -504,6 +538,7 @@ void mm4_init(void) {
         if (MM88_PATTERNS[p].boundary_wrapped)
             src = to_free = make_wrapped(src);
         ast_node_t *ast = parse_regex(src);
+        g_pat_min_len[p] = ast_min_len(ast);
         free(to_free);
         frag_t frag = build_nfa(ast);
         ast_free(ast);
@@ -536,6 +571,15 @@ void mm4_init(void) {
 
     /* Allocate lazy DFA cache */
     g_dc = xcalloc(DCACHE_CAP, sizeof(*g_dc));
+
+    /* Pre-compute prefix and BM literal lengths to avoid strlen in hot path */
+    for (int p = 0; p < MM88_NUM_PATTERNS; p++) {
+        const mm88_pattern_def_t *pd = &MM88_PATTERNS[p];
+        g_pat_pfx_len[p] = (pd->prefix && !pd->prefix_is_infix) ? strlen(pd->prefix) : 0;
+        g_pat_bml_len[p] = pd->bm_literal ? strlen(pd->bm_literal) : 0;
+    }
+
+    build_prefix_table();
 
     /* Pre-compute start NFA set (ε-closure of master) */
     nset_t seed; nset_clear(&seed); nset_set(&seed,g_nfa_start);
@@ -587,17 +631,20 @@ size_t mm4_scan(const char *input, size_t len, mm4_match_t *out, size_t max) {
         }
 
         if (best_slot >= 0) {
+            size_t span = best_end - i;
             uint64_t a0 = g_dc[best_slot].accept[0];
             uint64_t a1 = g_dc[best_slot].accept[1];
             while (a0 && count<max) {
                 int bit=__builtin_ctzll(a0);
-                out[count++]=(mm4_match_t){bit,i,best_end-i};
                 a0&=a0-1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++]=(mm4_match_t){bit,i,span};
             }
             while (a1 && count<max) {
                 int bit=64+__builtin_ctzll(a1);
-                out[count++]=(mm4_match_t){bit,i,best_end-i};
                 a1&=a1-1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++]=(mm4_match_t){bit,i,span};
             }
         }
     }
@@ -641,7 +688,193 @@ const char *mm4_pattern_name(int id) {
 }
 
 /* ========================================================================
- * 7. Self-test
+ * 7. v4.1: per-position restart with required-literal pre-filter
+ *
+ * For each starting position i, before running the inner DFA loop, check
+ * whether any pattern's required prefix literal occurs in input[i..end].
+ * If none does, skip position i entirely.  This is the same gate the
+ * production gem uses (memmem over pattern_required_literal[]).
+ *
+ * On sparse/medium payloads most positions have no literal nearby, so the
+ * inner loop almost never runs.  On env payloads every literal is present
+ * everywhere, so this adds zero filtering — the O(N²) cost remains.
+ * ======================================================================== */
+
+/* Table built once at init: non-NULL prefix strings from MM88_PATTERNS. */
+static const char *g_prefixes[MM88_NUM_PATTERNS];
+static size_t      g_prefix_lens[MM88_NUM_PATTERNS];
+static int         g_n_prefixes = 0;
+
+static void build_prefix_table(void) {
+    g_n_prefixes = 0;
+    for (int p = 0; p < MM88_NUM_PATTERNS; p++) {
+        const char *pfx = MM88_PATTERNS[p].prefix;
+        if (pfx && !MM88_PATTERNS[p].prefix_is_infix) {
+            g_prefixes[g_n_prefixes]   = pfx;
+            g_prefix_lens[g_n_prefixes] = strlen(pfx);
+            g_n_prefixes++;
+        }
+    }
+}
+
+/* Returns 1 if any prefix literal occurs in input[pos..pos+rem). */
+static int any_prefix_nearby(const char *input, size_t pos, size_t len) {
+    const char *hay = input + pos;
+    size_t      rem = len - pos;
+    for (int k = 0; k < g_n_prefixes; k++) {
+        if (g_prefix_lens[k] <= rem &&
+            memmem(hay, rem, g_prefixes[k], g_prefix_lens[k]))
+            return 1;
+    }
+    return 1; /* always-candidates (NULL prefix) — never skip */
+}
+
+size_t mm4_scan_v41(const char *input, size_t len,
+                    mm4_match_t *out, size_t max) {
+    size_t count = 0;
+    uint64_t gen = g_flush_gen;
+    int start_slot = dcache_find_or_insert(&g_start_nset);
+
+    for (size_t i = 0; i < len && count < max; i++) {
+        /* Pre-filter: skip positions where no prefix exists ahead. */
+        if (!any_prefix_nearby(input, i, len))
+            continue;
+
+        int slot = start_slot;
+        int best_slot = -1;
+        size_t best_end = i;
+
+        for (size_t j = i; j < len; j++) {
+            int next = dcache_step(slot, (unsigned char)input[j]);
+            if (g_flush_gen != gen) {
+                gen = g_flush_gen;
+                start_slot = dcache_find_or_insert(&g_start_nset);
+                slot = start_slot; best_slot = -1; best_end = i;
+                j = i - 1;
+                continue;
+            }
+            if (next == 0) break;
+            slot = next;
+            if (g_dc[slot].is_accept) { best_slot = slot; best_end = j + 1; }
+        }
+
+        if (best_slot >= 0) {
+            size_t span = best_end - i;
+            uint64_t a0 = g_dc[best_slot].accept[0];
+            uint64_t a1 = g_dc[best_slot].accept[1];
+            while (a0 && count < max) {
+                int bit = __builtin_ctzll(a0);
+                a0 &= a0 - 1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++] = (mm4_match_t){bit, i, span};
+            }
+            while (a1 && count < max) {
+                int bit = 64 + __builtin_ctzll(a1);
+                a1 &= a1 - 1;
+                if (span >= g_pat_min_len[bit])
+                    out[count++] = (mm4_match_t){bit, i, span};
+            }
+        }
+    }
+    return count;
+}
+
+/* ========================================================================
+ * 8. v4.2: single-pass leftmost-longest scan
+ *
+ * One sweep left-to-right; each input byte is visited at most twice
+ * (once advancing the DFA, once when we reset after a dead state).
+ * Guaranteed O(N) regardless of match density.
+ *
+ * Algorithm (standard "greedy lex" DFA scan):
+ *   - Maintain: current DFA slot, match-start position, best accept seen.
+ *   - On each byte:
+ *       next = step(slot, byte)
+ *       if next == dead:
+ *           if best accept was recorded → emit it, restart from best_end
+ *           else → advance match_start by 1, restart from current position
+ *       else:
+ *           slot = next
+ *           if slot is accepting → record as best
+ *   - At end of input: emit any pending best accept.
+ *
+ * Trade-off vs mm4_scan: emits at most one match per "token" (leftmost wins),
+ * whereas mm4_scan reports all patterns that match from every position.
+ * For redaction this is fine — we only need to find and cover each token once.
+ * ======================================================================== */
+
+size_t mm4_scan_v42(const char *input, size_t len,
+                    mm4_match_t *out, size_t max) {
+    size_t count = 0;
+    uint64_t gen = g_flush_gen;
+    int start_slot = dcache_find_or_insert(&g_start_nset);
+
+    size_t i          = 0;   /* current read position */
+    size_t match_start = 0;  /* where current attempt started */
+    int    slot        = start_slot;
+    int    best_slot   = -1;
+    size_t best_end    = 0;
+
+    while (i <= len && count < max) {
+        /* Feed one byte, or trigger end-of-input flush. */
+        int next = 0;
+        if (i < len) {
+            next = dcache_step(slot, (unsigned char)input[i]);
+            if (g_flush_gen != gen) {
+                /* Cache flushed — re-derive start slot, restart attempt. */
+                gen = g_flush_gen;
+                start_slot = dcache_find_or_insert(&g_start_nset);
+                slot = start_slot; best_slot = -1; best_end = 0;
+                i = match_start;
+                continue;
+            }
+        }
+
+        if (next == 0 || i == len) {
+            /* Dead state or end of input. */
+            if (best_slot >= 0) {
+                /* Emit patterns that accepted at best_end, meet min-length,
+                 * and whose prefix/BM literal is present in the span. */
+                size_t span = best_end - match_start;
+                const char *sp = input + match_start;
+                uint64_t a0 = g_dc[best_slot].accept[0];
+                uint64_t a1 = g_dc[best_slot].accept[1];
+                while (a0 && count < max) {
+                    int bit = __builtin_ctzll(a0);
+                    a0 &= a0 - 1;
+                    if (span >= g_pat_min_len[bit])
+                        out[count++] = (mm4_match_t){bit, match_start, span};
+                }
+                while (a1 && count < max) {
+                    int bit = 64 + __builtin_ctzll(a1);
+                    a1 &= a1 - 1;
+                    if (span >= g_pat_min_len[bit])
+                        out[count++] = (mm4_match_t){bit, match_start, span};
+                }
+                /* Advance past the span. */
+                i = best_end;
+                match_start = best_end;
+            } else {
+                /* No accept found from match_start — skip one byte. */
+                if (i < len) {
+                    match_start = i + 1;
+                    i = match_start;
+                } else {
+                    break;
+                }
+            }
+            slot = start_slot; best_slot = -1; best_end = 0;
+        } else {
+            slot = next;
+            if (g_dc[slot].is_accept) { best_slot = slot; best_end = i + 1; }
+            i++;
+        }
+    }
+    return count;
+}
+
+/* ========================================================================
+ * 9. Self-test
  * ======================================================================== */
 
 #ifdef MM4_MAIN

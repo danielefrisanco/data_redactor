@@ -4,7 +4,7 @@
 and problem encountered during the multi-pattern matcher research project.
 Intended as the foundation for a future paper.
 
-**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24).
+**Date range:** 2026-05-23 – 2026-05-24 (v4/v5/v6 added 2026-05-24); v4.1/v4.2 added 2026-06-02; v4.2 correctness analysis added 2026-06-02; v9/v10 (incorrect) + v11 bytecode VM (correct baseline) added 2026-06-03; v12.1 literal pre-filter + v14 first-byte filter added 2026-06-03; v15.1 VM constant-factor speedups added 2026-06-03.
 **Branch:** `feat/matcher-prototype-v1`.
 
 ---
@@ -71,6 +71,8 @@ not the root cause.
 | **Russ Cox (2009)** — *"Regular Expression Matching in the Wild"*, rsc.io | Survey of practical regex engine implementations. Background reading. |
 | **Wang et al. (2019)** — *"Hyperscan: A Fast Multi-pattern Regex Matcher for Modern CPUs"*, USENIX NSDI | Hyperscan: Intel's production SIMD-accelerated multi-pattern regex engine. Claimed 10.3× over RE2. Disqualified for our use case (x86 only, no ARM portability). |
 | **Daviaud et al. (2024)** — *"RE#: A Derivative-Based Approach with Intersection and Complement"*, arXiv 2407.20479 | Modern derivative-based regex with intersection/complement. Background reading, not directly applied. |
+| **Cox (2009)** — *"Regular Expression Matching: the Virtual Machine Approach"*, rsc.io | Explains the Pike VM — a Thompson NFA simulation that tracks capture groups without backtracking. The "two state list" technique we implemented in `matcher4.c`. |
+| **Laurikari (2000)** — *"NFA simulation based regex matching with tagged transitions"* | Submatch tracking in NFA simulation without backtracking. Background for future capture-group support in v4. Not yet applied. |
 
 ### Production implementations reviewed
 
@@ -497,7 +499,7 @@ and silently degrades to the interpreter where unavailable.
 From-scratch Thompson NFA construction from all 88 regex patterns,
 followed by a lazy DFA cache (4096-slot open-addressing hash table, keys
 are NFA state bitmaps). Zero external dependencies — no libonig, no glibc
-regexec. Single-pass DFA walk measured as upper-bound throughput.
+regexec.
 
 **Architecture:**
 
@@ -509,68 +511,201 @@ regexec. Single-pass DFA walk measured as upper-bound throughput.
 4. Cache eviction: full cache flush when 4086/4096 slots are occupied.
    Same strategy as RE2's DFA cache reset.
 
-**`mm4_walk` (upper bound measurement):** single-pass over the input —
-one DFA step per byte from start to end, resetting to start state on
-dead state. No per-position restart, no output buffer. This measures the
-theoretical throughput ceiling of a correctly-implemented single-pass DFA.
+Three scan variants were implemented and benchmarked:
 
-**`mm4_scan` (correctness measurement):** per-starting-position restart,
-tracks longest match from each position. Generates massive false positives
-because the merged NFA has no per-pattern minimum-length enforcement
-(patterns with `+`, `*`, `{n,}` match at length 1 from any start).
+**`mm4_scan` (per-position restart):** for each starting position i, run
+the lazy DFA forward until dead state, tracking the longest accepting state.
+Emit all pattern IDs at the best accept. O(N × avg_match_len) worst case.
 
-**Results (1 MB payload, 88 patterns, 10 iterations):**
+**`mm4_scan_v41` (per-position + required-literal pre-filter):** same as
+`mm4_scan` but before starting the inner DFA loop at position i, `memmem`
+checks whether any pattern's required prefix literal exists in the remaining
+input. If none, skip position i. Same algorithmic complexity as `mm4_scan`
+but avoids inner-loop work when no prefixes appear ahead.
 
-| Measurement | ms/iter | vs pure-Ruby | vs today's C |
-|---|---|---|---|
-| Pure-Ruby gsub | 171–185 | 1.0× | – |
-| DataRedactor today | 1641–1719 | ~0.11× | 1.0× |
-| Prototype v3 (AC+Onigmo) | 159.9 | 1.18× | 11.4× |
-| **v4 DFA walk (upper bound)** | **791–818** | **0.22×** | **2.1×** |
+**`mm4_scan_v42` (single-pass leftmost-longest):** one left-to-right sweep
+over the input — no per-position restart. On dead state: if a prior accepting
+state was recorded, emit it and advance cursor past the match; otherwise skip
+one byte forward. Resets to start state and continues. Guaranteed O(N).
+Standard "greedy lex" DFA scan (same semantics as `flex`-generated scanners).
 
-**Key finding:** the lazy DFA walk is **4× slower** than pure-Ruby and **9× slower** than AC+Onigmo. The bottleneck is the NFA simulation itself: each cache miss requires O(6888) bitmap scanning to compute `nfa_move`, and with a 4096-slot cache the miss rate is high for a 1M-byte diverse input.
+**`mm4_walk` (single-pass upper bound):** single-pass over the input —
+one DFA step per byte, resetting to start state on dead state. No per-position
+restart, no output buffer. Measures the theoretical throughput ceiling;
+included for reference only.
 
-**Why the DFA cache is insufficient:**
-- 6888 NFA states → NFA state bitmap = 6888 bits = 862 bytes per key
-- Each `dcache_entry_t` = 862 (key) + 1024 (next[256] uint32) + ~24 (accept) ≈ 1910 bytes
-- 4096 slots × 1910 bytes ≈ 7.8 MB — fits in L3 cache but not L1/L2
-- Frequent cache flushes mean many cold starts per 1MB scan
-- Each cache miss: iterate all 6888 NFA states to compute `nfa_move` → ~6888 bitmap word tests
+**Results (realistic multi-payload, 10 iterations, 2026-06-02, `bench_realistic.rb`):**
 
-**Correctness issues in the current prototype:**
-- `mm4_scan` generates ~500–2000 false-positive matches per 100-char input
-- Root cause: merged NFA with no leftmost-longest per-pattern enforcement
-- `credit_card` not found: the 8-way alternation produces correct NFA states
-  but they are drowned by shorter false-positive matches that exhaust the
-  output buffer (max=65536) before the real match is found
-- 13/14 test cases "covered" (the expected pattern name appears in v4's output)
+ms/iter (lower is better):
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| Pure-Ruby gsub | 151 | 155 | 183 | 291 |
+| DataRedactor today (glibc) | 814 | 856 | 855 | 1058 |
+| **v4 mm4_scan** | **22** | **25** | **32** | **1667** |
+| **v4.1 mm4_scan_v41** | **20** | **21** | **26** | **1585** |
+| **v4.2 mm4_scan_v42** | **62** | **64** | **33** | **99** |
+| Plain PCRE2 JIT | 41 | 52 | 52 | 54 |
+
+× over pure-Ruby (higher is better):
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.22× | 0.31× |
+| **v4 mm4_scan** | **7.6×** | **6.0×** | **5.8×** | **0.19×** |
+| **v4.1 mm4_scan_v41** | **8.1×** | **7.3×** | **7.8×** | **0.19×** |
+| **v4.2 mm4_scan_v42** | **2.4×** | **2.3×** | **6.1×** | **3.0×** |
+| Plain PCRE2 JIT | 3.8× | 3.4× | 3.8× | 5.3× |
+
+**Key findings — v4 family:**
+
+1. **v4 and v4.1 are the fastest engines for sparse/medium/dense payloads** —
+   6–8× over pure-Ruby, beating PCRE2 JIT on sparse/medium. The lazy DFA with
+   per-position restart is highly effective when matches are rare. Each input
+   byte only enters the inner DFA loop when the cursor starts a new attempt;
+   on sparse inputs most attempts dead-state immediately after 1–3 steps.
+
+2. **v4 and v4.1 collapse catastrophically on the env payload** (0.19×, slower
+   than pure-Ruby). Root cause: the per-position O(N²) structure. On `.env`-style
+   input, every pattern's required literal appears in nearly every line, so every
+   starting position runs a long inner DFA loop before dead-stating. The memmem
+   pre-filter in v4.1 cannot skip positions because all literals are present
+   everywhere.
+
+3. **v4.1 (prefix pre-filter) is a marginal improvement over v4 on sparse/medium**
+   (8.1× vs 7.6×). It adds cost on env because even the memmem scan must iterate
+   through every literal at each position before confirming they are all present —
+   giving 0.19× same as v4, marginally worse in absolute ms due to the memmem overhead.
+
+4. **v4.2 (single-pass) eliminates the env collapse** — 3.0× on env, robust across
+   all payload types. Minimum across all payloads: 2.3× (medium). This is the only
+   zero-dependency engine that does not collapse on dense/env.
+
+5. **v4.2 is slower than v4/v4.1 on sparse/medium** (2.4× vs 7.6–8.1×). The single-pass
+   DFA resets to the start state after every dead-state or emitted match. On sparse
+   inputs where most bytes are noise, the per-position restart of v4 is actually
+   faster because each attempt terminates quickly (2–3 DFA steps); single-pass
+   must process every noise byte through the start state too.
+
+6. **v4.2 vs PCRE2 JIT:** v4.2 is the only zero-dependency alternative that
+   consistently beats pure-Ruby across all payload types. PCRE2 JIT still wins
+   on sparse/medium (3.8×/3.4× vs 2.4×/2.3×) and env (5.3× vs 3.0×). PCRE2
+   JIT wins the overall comparison; v4.2 wins the zero-dependency comparison.
+
+**Why the DFA cache works for sparse but not dense:**
+- 6888 NFA states → bitmap key = 862 bytes; each `dcache_entry_t` ≈ 1910 bytes
+- 4096 slots × 1910 bytes ≈ 7.8 MB (fits L3, not L1/L2)
+- Sparse: each position tries 2–5 DFA steps before dead-state; cache stays warm
+  for the common "start state → dead" path; miss rate low
+- Dense (env): attempts run for 40–200 steps (matching long tokens); many unique
+  DFA state sets are created → frequent flushes → cold cache → expensive misses
+
+**Correctness issues — merged NFA architecture (analysis 2026-06-02):**
+
+The merged NFA has a fundamental correctness problem that cannot be fixed with
+post-hoc filters. Investigation proceeded in three phases:
+
+*Phase 1 — initial observation:* `mm4_scan_v42` emitted 20–25 spurious pattern
+IDs per match on any input; plain text `"plain text nothing here"` returned 23
+false positives. Root cause identified as missing per-pattern minimum-length
+enforcement.
+
+*Phase 2 — min-length filter:* Added `ast_min_len()` recursive computation over
+the AST before NFA construction; stored as `g_pat_min_len[88]`. Applied at emit
+time: only emit pattern `p` if span ≥ `g_pat_min_len[p]`. Result: plain text
+dropped from 23 false positives to 0. 5/11 correctness cases passed. Performance
+unaffected (filter runs at accept time only, not per byte).
+
+*Phase 3 — prefix/BM literal filter (attempted, reverted):* Added `memcmp` check
+for non-infix prefix at span start, and `memmem` check for BM literals. When all
+patterns at a DFA accepting state were filtered out, two approaches were tried:
+(a) advance past `best_end` unconditionally — performance dropped 15× because the
+    DFA finds many spurious accepting states and wastes time on memmem calls on
+    long spans; on 1MB dense payload, every word triggers memmem for multiple patterns.
+(b) skip one byte and retry when all bits are filtered — this destroyed the O(N)
+    guarantee, causing 50× slowdown (sparse went from 2.35× to 0.02×).
+Both approaches are incompatible with the O(N) scan. The prefix/BM filters were
+reverted. Only the min-length filter remains in the codebase.
+
+*Root cause of remaining failures (unfixable):*
+
+The merged NFA has no per-pattern "activation" mechanism. All 88 pattern NFAs
+share a common start state. At any position, the DFA is simultaneously following
+all 88 patterns' sub-automata. Patterns with `[A-Za-z]+`, `[A-Za-z0-9]+`,
+`[^[:space:]]+` etc. — including `mongodb_connection_string`, `uri_with_password`,
+`bearer_token`, `aws_s3_presigned_url` — have very short minimum lengths (12–20
+chars) and their NFA accept bits appear in DFA states reachable from any alphanumeric
+starting byte. In the v42 single-pass scan:
+
+- Starting from position 0, the DFA immediately follows the `mongodb_connection_string`
+  and `uri_with_password` paths alongside the correct pattern
+- On a 20+ byte token, the DFA reaches an accept state with accept bits set for
+  multiple patterns including many spurious ones
+- The prefix filter removes spurious patterns, but also removes cases where the
+  *correct* pattern's match window was consumed (v42 committed `[0, L)` to a
+  `mongodb` span, then advanced cursor to `L`, missing the correct pattern's start)
+
+*Concrete examples:*
+
+- `"eyJhbGci...SflK..."` (JWT): DFA reaches accept with `aws_s3_presigned_url`,
+  `mongodb_connection_string`, `bearer_token` bits set at span 0..92. `jwt` bit NOT
+  set because the merged DFA's accept state for `jwt` requires having consumed
+  `eyJ{10+}.eyJ{10+}.{1+}` — but the DFA entered an unrelated accept state earlier
+  (at a longer span that satisfies `mongodb`'s min-length but not `jwt`'s full regex).
+
+- `"user@example.com"`: The `email` accept bit only appears in `mm4_scan` when
+  starting from position 8 (`@example.com` onwards). The v42 single-pass starts at
+  position 0 where `uri_with_password` and `mongodb_connection_string` match
+  `user@example.com` as a whole (min-len passes, but no prefix so they get filtered).
+  The v42 scan then skips the entire span and misses the `email` match.
+
+*Why this is unfixable without per-pattern isolation:*
+
+The merged DFA state is a set of NFA states from all 88 patterns simultaneously.
+There is no way to distinguish "I am at an accepting state for pattern X" from
+"I am at a state where X's accept bit coincidentally appears due to NFA state overlap
+with the path I actually followed." This is the fundamental cost of the NFA merge —
+pattern semantics are lost in the combined DFA.
+
+A correct implementation would require either:
+1. Separate per-pattern DFAs (no merge) — O(N×P) cost, same as current glibc approach
+2. Submatch tracking per pattern ID through the merged DFA — equivalent to running
+   P parallel simulations, O(N×P) again
+3. After v42 finds a span, verify each candidate pattern with a quick per-span
+   per-pattern NFA simulation — adds O(P) per match, acceptable only if matches
+   are rare (not env payloads)
+
+None of these preserve the O(N) single-pass property that makes v4.2 fast. The
+benchmarked 2.3–6.1× performance is real, but correctness is 4/13 (31%) on a
+representative test set of 13 patterns.
+
+**Correctness issues in `mm4_scan` and `mm4_scan_v41`:**
+- Generate false-positive matches at prefix positions of longer tokens
+- With min-length filter applied: false positive count reduced but structural
+  overlap issue (same root cause as v42) remains
+- Per-position restart makes the problem worse: every starting position finds
+  every pattern that can match from that byte
 
 **Why full precomputed DFA state explosion occurs:**
 First attempt used full subset construction (eager DFA). With 6888 NFA states,
-the DFA state space is 2^6888 in the worst case. Even with our small alphabet
-(256 bytes), the construction diverges for patterns like `credit_card`
-(8-way alternation) and `ipv4` (4 × 4-way alternation). Subset construction
-hung after computing start state, never completing. Switched to lazy cache.
+the DFA state space is 2^6888 in the worst case. Subset construction diverged
+immediately after computing the start state. Switched to lazy cache.
 
 **Comparison with production systems:**
 - RE2 uses lazy DFA with a 4MB cache and bitstate NFA simulation as fallback
-- Hyperscan avoids the problem by precomputing DFA per-pattern and using SIMD
-  for parallel scanning — but is x86-only
-- Our implementation lacks: bitstate fallback, SIMD, per-pattern minimum-length
-  enforcement, leftmost-longest semantics
+- Hyperscan precomputes DFA per-pattern with SIMD — x86-only
+- Our implementation lacks: bitstate fallback, SIMD, per-pattern activation
 
-**Conclusion for Option D:** the lazy DFA approach is not competitive with
-AC+Onigmo for our 88-pattern, 6888-NFA-state problem at this prototype stage.
-A production-quality Thompson DFA implementation (like RE2) would require:
-1. More compact NFA representation (e.g., RE2 uses ~10 bytes/state vs our ~80)
-2. Bitstate NFA simulation as cache-miss fallback instead of full bitmap scan
-3. Minimum-match-length enforcement (wrap each pattern's NFA in a min-length gate)
-4. Leftmost-longest semantics at the DFA level
-
-These are substantial implementation challenges. The research question is
-answered: a naive Thompson NFA/lazy DFA is significantly slower than a
-per-pattern Onigmo engine for our workload. A production-quality implementation
-could be faster but requires RE2-level engineering effort (10k–50k LOC).
+**Conclusion for v4 family:**
+- `mm4_scan_v41`: best zero-dependency engine for sparse/medium/dense payloads
+  (6–8× over pure-Ruby) but **not production-ready** — correctness 4/13 (31%).
+- `mm4_scan_v42`: fast across all payload types (2.3–6.1×) but **not production-ready**
+  for the same reason. The merged NFA architecture cannot produce correct per-pattern
+  matches when patterns have overlapping character alphabets.
+- **The v4 family is suitable for research/benchmarking only.** The per-pattern NFA
+  architecture (v7/PCRE2 JIT) is required for production correctness.
+- For production: PCRE2 JIT is the correct path. The v4 performance results are
+  interesting as a research datapoint but the architecture is not viable for the gem.
 
 ### Prototype v8 — bench_bm_inner.c (BM bad-character filter inside the regexec loop)
 
@@ -666,6 +801,725 @@ Using Run 1 figures as the common baseline (same session as bench_bm_inner Run 1
 is a direct drop-in improvement to `replace_all_matches` in `redact.c` and the
 equivalent loop in `scan.c`. No new files, no new dependencies. The BM tables
 would be built at `Init_data_redactor` time alongside `regcomp`.
+
+---
+
+### Prototype v9 — matcher9.c (88 per-pattern Thompson NFA + lazy DFA cache)
+
+**Files:** `matcher9.c`, `matcher9.h`
+
+**Motivation:** v4 built one *merged* NFA→DFA over all 88 patterns and suffered
+DFA state explosion / cross-pattern contamination (documented in §11). v9 gives
+each pattern its own NFA and its own small (512-slot) lazy DFA cache — correct by
+construction (no merging), no glibc `regexec`, no per-call O(N) allocation.
+
+**Result: INCORRECT.** Passes the 11/11 smoke test but the smoke test only checks
+"is the expected pattern name present among the matches" — it never checks the
+*count*. Against the ground-truth Ruby `gsub` reference, v9 massively over-counts:
+
+| Smoke input | Ruby `gsub` (truth) | v9 |
+|---|---|---|
+| `AIzaSy…` (google_api) | 2 | **34** |
+| `cc: 4111111111111111` (credit_card) | 1 | **17** |
+| `iban: DE89…` (iban_de) | 3 | **25** |
+
+The leftmost-longest reset logic re-seeds the start state in a way that produces
+many overlapping spurious matches on boundary-wrapped patterns. **Do not use v9 as
+a correctness or performance reference.**
+
+---
+
+### Prototype v10 — matcher10.c (88 per-pattern NFA, precomputed transition table)
+
+**Files:** `matcher10.c`, `matcher10.h`
+
+**Motivation:** avoid v9's lazy-DFA hashing by precomputing, at init time, for
+every `(NFA state, byte)` pair the full epsilon-closed target set into a flat
+pool (`trans[state][byte] → {offset, count}`). Scan time then has zero DFS and
+zero epsilon closure — advancing one byte is a table lookup per active thread.
+
+**Result: INCORRECT.** Same flaw class as v9. Passes 11/11 smoke but over-counts
+against the Ruby `gsub` reference (e.g. us_ssn=2 vs 1, google_api=30 vs 2,
+credit_card=16 vs 1, iban_de=23 vs 3). The dead-end / reset / re-seed logic in
+`scan_one` does not reproduce non-overlapping leftmost-longest `gsub` semantics.
+It is also slow (~1 s/iter on 500 KB before the fix that was never validated).
+**Do not use v10 as a correctness or performance reference.**
+
+---
+
+### Prototype v11 — matcher11.c (88 per-pattern Thompson **bytecode VM**)
+
+**Files:** `matcher11.c`, `matcher11.h`
+
+**Motivation:** v9 and v10 were both incorrect because their hand-rolled
+state-set reset logic did not match `gsub` semantics. v11 starts over with the
+**virtual-machine approach** (Cox 2009, "Regular Expression Matching: the Virtual
+Machine Approach", already in the bibliography). Each pattern compiles once to a
+flat bytecode program; scanning is a classic two-list Thompson simulation with the
+control flow made *explicit in the instruction stream* rather than implicit in an
+epsilon graph — which is what makes correctness tractable.
+
+**Instruction set (minimal — nothing speculative):**
+
+| Opcode | Meaning |
+|---|---|
+| `CHAR c` | match byte == c, then advance |
+| `CLASS bitmap` | match byte in 256-bit class, then advance |
+| `ANY` | match any byte != `\n`, then advance |
+| `SPLIT x, y` | fork to x (preferred) and y; consumes nothing |
+| `JMP x` | goto x; consumes nothing |
+| `BOL` / `EOL` | zero-width line anchors |
+| `MATCH` | accept |
+
+**Architecture:**
+- Reuses the proven POSIX-ERE parser + AST from v9 (unchanged).
+- `emit_node()` lowers the AST to bytecode. Greedy quantifiers emit `SPLIT` with
+  the body branch preferred. `{lo,hi}` emits `lo` mandatory copies + `(hi-lo)`
+  split-guarded optional copies. `*`/`+` emit the standard split-loop.
+- `addthread()` epsilon-closes a pc into the current/next thread list,
+  deduplicating by pc with a generation-stamped `seen[]` array (no per-byte
+  memset).
+- `scan_one()` runs one left-to-right sweep per pattern: seed at `pos`, step the
+  two lists byte by byte, remember the longest accept end for the current start,
+  then resume **non-overlapping** from that end (or `pos+1` on no match) — exactly
+  reproducing `String#gsub` semantics.
+- Boundary-wrapped patterns are wrapped in `(^|[^0-9A-Za-z])(...)([^0-9A-Za-z]|$)`
+  before compilation, identical to the pure-Ruby reference.
+- Prefix patterns use `memmem` to jump to the next literal occurrence before
+  seeding (the only optimization present; everything else is left simple).
+
+**Result: CORRECT.** Verified against the ground-truth reference — *independent
+per-pattern* `gsub` replacement count (`pl.gsub(re){…}` summed over the 88
+patterns, each seeing the original input):
+
+| Payload | Ruby `gsub` (truth) | v11 |
+|---|---|---|
+| smoke google_api | 2 | **2 ✓** |
+| smoke iban_de | 3 | **3 ✓** |
+| sparse 100 KB (1 hit/5000B) | 30 | **30 ✓** |
+| medium 1 MB (1 hit/500B) | 207 | **207 ✓** |
+| dense 100 KB (1 hit/50B) | 1536 | **1536 ✓** |
+
+> **Reference-semantics note.** The correct reference is *independent* per-pattern
+> matching: each pattern scans the original input. The production
+> `DataRedactor.redact` pipeline instead applies patterns *sequentially* on the
+> already-redacted string (`reduce` with `gsub`), so a later pattern sees
+> `[REDACTED]` instead of the original bytes — on the medium payload that
+> sequential pipeline reports 163 replacements vs 207 independent. The matcher's
+> job is to find all matches in the raw input (207); collapsing overlaps across
+> patterns is a separate concern. Also beware: `String#scan(re).size` counts
+> capture-group arrays, **not** matches, when the regex has groups — use the
+> `gsub` replacement count as the reference, not `scan`.
+
+**Performance: slow, as expected for a first correct version (no optimization).**
+1 MB payloads, 10 iters, vs pure-Ruby `gsub` baseline on the same machine:
+
+| Payload | Ruby | v11 | v11 vs Ruby |
+|---|---|---|---|
+| sparse (1 hit/5000B) | 152 ms | 983 ms | 0.16× |
+| medium (1 hit/500B) | 152 ms | 1000 ms | 0.15× |
+| dense (1 hit/50B) | 175 ms | 1208 ms | 0.15× |
+
+v11 is ~6× *slower* than pure-Ruby right now. This is the intended clean baseline:
+correct first, with deliberately no first-byte filter, no shared literal
+pre-filter, recursive `addthread`, and no hot-path inlining. Each of those is a
+localized, independently-verifiable improvement to make next.
+
+**Improvement backlog (do one at a time, re-verify against the `gsub` reference):**
+1. Iterative `addthread` (remove recursion).
+2. Shared first-byte / literal pre-filter so noise bytes skip the VM entirely
+   (the v8 BM result shows this is the decisive factor).
+3. Inline the common `CHAR` step; keep `CLASS` bitmap test branchless.
+
+---
+
+### Prototype v12.1 — matcher12.c (v11 VM + literal pre-filter for all patterns)
+
+**Files:** `matcher12.c`, `matcher12.h`
+
+**Motivation:** v11 only `memmem`-skipped noise for the start-anchored-prefix
+patterns; infix-literal patterns were seeded + stepped at every byte (the ~11
+ns/pattern/byte measured on pure noise). v12.1 extends the literal skip to infix
+patterns: a match must *contain* the required literal, so a match start lies in
+`[hit - max_back .. hit]` for each literal occurrence, where
+`max_back = ast_max_len − lit_len` (computed from the AST at init). If the prefix
+before the literal is unbounded (`*`/`+`/`{n,}`), `max_back` is unbounded and the
+pattern falls back to v11's full per-byte scan.
+
+**Correctness: CORRECT.** Verified against independent per-pattern `gsub` on
+sparse/medium/dense 1 MB payloads plus infix smoke cases (`uri_with_password`,
+`bearer_token`): all counts match exactly (sparse 246, medium 2130, dense 15577).
+
+**Performance: only 1.10× over v11 — the literal skip barely helps.**
+
+| Payload | v11 | v12.1 | speedup |
+|---|---|---|---|
+| sparse (1 hit/5000B) | 1080 ms | 979 ms | 1.10× |
+| medium (1 hit/500B) | 1127 ms | 1037 ms | 1.09× |
+| dense (1 hit/50B) | 1382 ms | 1234 ms | 1.12× |
+
+**Why the win is small — the decisive finding (re-confirms TODO.md §44):**
+In the prototype's `patterns_generated.h`, **~40 of the 88 patterns carry no
+usable literal at all** — the boundary-wrapped pure-digit national-ID / financial
+patterns (SSN, CPF, Aadhaar, credit_card, IPv4, PESEL, …) have both `prefix` and
+`bm_literal` set to NULL. v12.1 cannot skip a single byte for them; they scan
+every position regardless. These literal-less patterns are exactly the
+"always-candidates" the earlier research flagged as *"the binding constraint"*
+(TODO.md §44) and measured at ~35 ms each / 28 MB/s. The literal skip only helps
+the ~30 prefixed patterns, which the earlier research already measured as
+"essentially free (0.6 ms each, fully skipped)". So v12.1 speeds up the
+already-cheap patterns and does nothing for the expensive ones → ~1.1× overall.
+
+**Consequence for the plan:** any *literal* pre-filter (the whole v12 family, and
+by extension the literal side of v13's Aho-Corasick) is structurally incapable of
+accelerating the 40 literal-less digit-ID patterns that dominate the cost. The
+lever that *can* reach them is the **first-byte / start-set filter (v14)**: even a
+literal-less boundary-wrapped digit pattern can only start right after a
+non-alphanumeric boundary with a digit (or a small known first-char set), which is
+computable from the POSIX-ERE the engine is constrained to. That constraint is
+not hypothetical — it is enforced in code at
+[lib/data_redactor.rb:71](../lib/data_redactor.rb) (`RUBY_ONLY_SYNTAX_RE` rejects
+`\d \w \s \b`, lookaround, named groups, inline flags, and non-greedy `*? +? ??`)
+and [lib/data_redactor.rb:68](../lib/data_redactor.rb) (`CAPTURE_GROUP_RE` rejects
+capture groups under `boundary: true`), both checked in `add_pattern`. Every
+pattern is therefore a true regular language with a well-defined first-byte set
+and no backtracking risk. v14 is promoted ahead of v13.
+
+**On variant numbering:** the file is `matcher12.c` and currently holds only the
+first variant, **v12.1** (memmem + bounded back-up, full-scan fallback for
+unbounded prefixes). The two alternative skip strategies discussed before building
+(v12.2 = memmem windows back to previous hit; v12.3 = per-position forward literal
+gate) were *not* built, and the decision is backed by a direct measurement of the
+ceiling rather than asserted:
+
+- v12.1 on the **pure-noise** 1 MB payload (where every literal-bearing pattern's
+  literal is absent, so all ~30 of them `memmem`→NULL and bail immediately — i.e.
+  a *perfect* literal filter): **920 ms/iter**.
+- v12.1 on the **sparse** payload: **979 ms/iter**.
+
+The 920 ms is entirely the ~40 literal-less digit-ID patterns, which no literal
+filter can skip. The absolute most any better skip strategy could recover is the
+~59 ms gap (≈6%) — and v12.2/v12.3 are merely different bookkeeping for the same
+skip v12.1 already does well, so they would recover little of even that 6% while
+adding complexity. The v12 family is parked at v12.1. The 94% that is untouchable
+by literals is the target, and only a first-byte/start-set filter (v14) reaches it.
+
+---
+
+### Prototype v14 — matcher14.c (v12.1 literal filter + first-byte filter)
+
+**Files:** `matcher14.c`, `matcher14.h`
+
+**Motivation:** v12.1 proved a literal filter cannot touch the ~40 literal-less
+boundary-wrapped digit-ID patterns (920 ms floor). v14 adds the filter that *can*:
+a **first-byte / start-set filter**. Because every pattern is constrained to pure
+POSIX-ERE (no `\d\w\s\b`, lookaround, named groups, non-greedy — enforced in code,
+see §5 v12.1), each is a true regular language with a well-defined set of bytes
+that can be its first *consumed* byte. We compute that 256-bit set once at init by
+epsilon-closing the bytecode from pc 0 (over `SPLIT`/`JMP`, treating `BOL`/`EOL`
+as passable so the set is a safe superset that never rejects a real match), then
+in `scan_one` skip forward over any run of input bytes the set rejects — entirely
+in C, never entering the VM. Boundary-wrapped digit patterns get
+`first = {non-alphanumerics}`, so they skip the long alphanumeric noise runs that
+v12.1 had to step through. The v12.1 literal skip is kept and composes with it.
+If an empty match is possible (`MATCH` reachable with no byte consumed) filtering
+is disabled for that pattern (`has_first_filter = 0`).
+
+**Correctness: CORRECT** — after fixing a cross-call state bug (see §6.10 below).
+Matches independent per-pattern `gsub` exactly on sparse/medium/dense 1 MB, infix
+smoke cases (`uri`, `bearer`), and pure noise; plus a 600-scan sequential stress
+test of mixed inputs all match `gsub`.
+
+**Performance: 2.0–2.7× over v11 — the first-byte filter reaches the digit patterns.**
+
+| Payload | v11 | v12.1 | v14 | v14 vs v11 |
+|---|---|---|---|---|
+| sparse (1 hit/5000B) | 1101 ms | 1001 ms | **405 ms** | 2.72× |
+| medium (1 hit/500B) | 1110 ms | 989 ms | **423 ms** | 2.63× |
+| dense (1 hit/50B) | 1395 ms | 1265 ms | **693 ms** | 2.01× |
+| pure noise | — | 920 ms (floor) | **423 ms** | — |
+
+The decisive number: on **pure noise**, v12.1's literal filter bottomed out at
+920 ms (the literal-less digit patterns it could not touch); v14 cuts that to
+423 ms — a 2.2× reduction of the exact slice v12 proved untouchable, confirming
+the first-byte filter is the lever for the literal-less "always-candidate"
+patterns (TODO.md §44). v14 is still ~2.5× *slower* than pure-Ruby (≈160 ms), so
+the gap that remains is the VM's own per-byte constant factor on the bytes that
+*pass* the filter — the target of v15 (iterative `addthread`, inlined `CHAR`,
+branchless `CLASS`), which stacks on top of v14.
+
+**Allocation discipline:** the start-set is a fixed 256-bit bitmap per pattern,
+filled once at init. The scan hot path allocates nothing — it reuses the v11
+scratch (`g_seen`/`g_clist`/`g_nlist`, realloc-once then reused). `mm14_free` now
+frees that scratch and resets the persistent generation counter so a free/re-init
+cycle starts clean.
+
+**Complexity (measured on v14, all later VM variants share it):** *time* is **O(N)
+on realistic payloads** and **O(N²) worst case per pattern** in theory. The
+worst case comes from the per-start-position scan structure (the outer loop can try
+up to N starts, each forward-scanning up to L bytes for a pattern whose greedy tail
+is unbounded — e.g. `jwt`'s trailing `[A-Za-z0-9_-]+`); the first-byte filter and
+fast thread-set death keep it linear in practice. Empirically, scanning dense
+1 MB → 16 MB the cost stayed flat at **~75 ms/100 KB** (no super-linear growth).
+*Space* is **O(Σ Mₚ)** — a few hundred KB for all 88 bytecode programs + reused
+thread scratch — and **independent of N**; the scan hot path allocates nothing.
+This is the structural opposite of glibc `regexec`, which allocated O(N) *per call*
+(the original root cause). Killing the O(N²) worst case is v15.2's goal (single
+pass); the unbounded greedy tails that enable it are tracked separately as a *gem
+pattern* change (bound the tail so a match still neutralizes the token — TODO.md
+§1b), not an engine change.
+
+---
+
+### Prototype v15.1 — matcher15.c (v14 + Thompson VM constant-factor speedups)
+
+**Files:** `matcher15.c`, `matcher15.h`
+
+**Motivation:** v14 is already O(N) and allocation-free; what remains is the VM's
+per-byte constant factor on the bytes that *pass* the filters. v15.1 keeps v14's
+structure and semantics unchanged and only lowers that constant, in two measured
+steps:
+
+**Step 1 — iterative `addthread`.** Replaced the recursive epsilon-closure with an
+explicit DFS stack (capacity 2·prog.n; a pc can be pushed twice before being
+deduped at pop). Pre-order is preserved exactly — `SPLIT` pushes `y` then `x` so
+`x`'s subtree drains first, matching the old recursion — so leftmost preference is
+identical. **Result: 1.00–1.03× (negligible).** Useful negative result: recursion
+was *not* the bottleneck — gcc was already optimizing the shallow, `seen[]`-deduped
+closure. Kept anyway (removes stack-depth risk, still allocation-free).
+
+**Step 2 — O(1) accept check.** v11–v14 re-scanned the entire current thread list
+every byte just to find an `OP_MATCH`. v15.1 stops storing `MATCH` in the thread
+list; `addthread` instead sets a `matched` flag on the list (threads are added in
+priority order, so the first MATCH seen is the highest-priority accept). The
+per-byte accept test becomes `if (cl->matched …)` instead of an O(list) rescan.
+One subtlety handled: a closure can be MATCH-only (no byte-consuming threads, so
+`cl->n == 0`); the loop condition is `while (cl->n > 0 || cl->matched)` so that
+accept is still recorded. **Result: 1.10–1.11× — the real win of v15.1.**
+
+**Correctness:** matches the independent per-pattern `gsub` reference exactly,
+byte-for-byte identical match counts to v14 on sparse/medium/dense/uri/bearer/noise,
+and a 600-scan sequential mixed-input stress test passes (no cross-call regression
+from the `matched`-flag change).
+
+**Performance (1 MB, 10 iters):**
+
+| Payload | v11 | v14 | v15.1 | v15.1 vs v14 |
+|---|---|---|---|---|
+| sparse | 1101 ms | 397 ms | **357 ms** | 1.11× |
+| medium | 1110 ms | 414 ms | **377 ms** | 1.10× |
+| dense | 1395 ms | 655 ms | **592 ms** | 1.11× |
+
+**Takeaway:** the constant-factor ceiling is low (~1.1×) precisely *because* v14's
+filters already removed most per-byte work — what's left is genuine VM stepping on
+bytes that pass the filter, dominated by the closure/step cost, not dispatch
+overhead. The larger remaining lever is the **single-pass rewrite (v15.2)**: track
+all active start positions in one left-to-right sweep, making the worst case true
+O(N·M) and eliminating the redundant re-scanning across overlapping start positions
+that the current "resume from match_end / pos+1" structure incurs.
+
+**Allocation discipline:** unchanged from v14 — added one reused per-pattern DFS
+stack (`g_estack`, realloc-once then reused, freed in `mm15_free`). Scan hot path
+still allocates nothing.
+
+---
+
+### Prototype v15.2 — matcher16.c (v15.1 + cross-pattern union first-byte bitmap)
+
+**Files:** `matcher16.c`, `matcher16.h`
+
+**Motivation:** v15.1 has a per-pattern first-byte filter for each of the 88 patterns
+individually. The hypothesis was that ORing all 88 `first[]` bitmaps into a single
+`g_union_first` bitmap and checking it once per byte before any per-pattern work
+would eliminate positions where no pattern can start, reducing the per-pattern
+filter work.
+
+**Result: no improvement — marginally slower on all payloads (~4% regression).**
+
+| Payload | v15.1 | v15.2 | Δ |
+|---|---|---|---|
+| sparse | 356 ms | 370 ms | −4% |
+| medium | 366 ms | 383 ms | −5% |
+| dense | 570 ms | 592 ms | −4% |
+| env | 992 ms | 1045 ms | −5% |
+
+**Why it failed:** the per-pattern first-byte filters inside `scan_one` already perform
+the same work more precisely — they skip bytes rejected by *this specific pattern*,
+which is a subset of what the union rejects. Adding the union pass as an extra outer
+loop only adds overhead (one `cc_test` per byte) without reducing the per-pattern
+filter work by a meaningful amount. The union is a superset of each individual filter;
+bytes the union skips were already being skipped by every per-pattern filter anyway.
+
+**Conclusion:** the union bitmap idea is sound in principle but provides no practical
+benefit on top of the already-present per-pattern filters. Parked.
+
+---
+
+### Prototype v17 — matcher17.c (v15.1 + precomputed initial thread list)
+
+**Files:** `matcher17.c`, `matcher17.h`
+
+**Motivation:** at every candidate position, `scan_one` calls `addthread(pc=0)` to
+epsilon-close the bytecode from the start state. For patterns without BOL/EOL anchors
+(~85 of 88) this closure is position-independent — the same set of byte-consuming pcs
+every time. v17 computes this set once at init (`eng->init_list[]`) and at seed time
+copies it into `cl` with `memcpy` instead of running the DFS. This eliminates the
+per-position seed `addthread` call for almost all patterns.
+
+**Result: no improvement — within noise (~0–1%) on all payloads.**
+
+| Payload | v15.1 | v17 | Δ |
+|---|---|---|---|
+| sparse | 356 ms | 321 ms | +1% |
+| medium | 366 ms | 356 ms | +1% |
+| dense | 570 ms | 562 ms | +2% |
+| env | 992 ms | 952 ms | +1% |
+
+**Why it failed:** the seed `addthread(pc=0)` was not the bottleneck. For patterns with
+a first-byte filter, most positions are already skipped before seeding — so the seed
+call is rare. For patterns without a filter (the always-candidate digit patterns), the
+seed call is frequent but the epsilon closure from pc=0 is very shallow (a few SPLITs
+then CHARs) — the DFS terminates in 5–10 steps, and `memcpy` of a 5-element array is
+not meaningfully faster than that.
+
+**Where the cost actually is:** the inner VM loop — for each byte that passes the
+first-byte filter, we iterate `cl->n` threads, do a switch dispatch per thread, and
+call `addthread` for every matching thread. On the pure-digit boundary-wrapped
+patterns (~40 patterns, no literal skip, `first = {non-alphanumeric}`), this loop
+runs at every non-alphanumeric byte in the input. The bottleneck is this step loop,
+not the seed.
+
+**Why Onigmo/pure-Ruby is faster despite having the same structural problem:** both
+Onigmo and PCRE2 JIT face the same pattern mix — ~40 pure-digit patterns with no
+skippable literal. Onigmo is faster because its NFA interpreter inner loop is more
+tightly optimized C (years of tuning, tighter bytecode, better cache layout for
+instruction structs). PCRE2 JIT is faster because it compiles each pattern to native
+machine code at init time — no interpreter dispatch at all. Our VM is a clean
+implementation but not a heavily tuned one; the gap to Onigmo is interpreter quality,
+not algorithmic.
+
+**Conclusion:** the seed optimization was the wrong target. To close the gap with
+Onigmo without a JIT, the lever is the inner step loop — tighter instruction structs,
+CHAR fast-path inlining, or a flat precomputed transition table (O(1) per-byte step
+instead of a switch over a linked list). These require more invasive restructuring.
+
+---
+
+### Prototype v18 — matcher18.c (v15.1 + per-pattern lazy DFA transition cache) ★ BREAKTHROUGH
+
+**Files:** `matcher18.c`, `matcher18.h`, `verify18.rb`
+
+**Motivation:** v17 isolated the bottleneck as the inner step loop (iterate `cl->n`
+threads, switch-dispatch per instruction, `addthread` per match — once per input
+byte). The standard way to collapse that into O(1) per byte is the lazy DFA: replace
+the NFA-state-set step with a single table lookup `state = table[state][byte]`. This
+is what Onigmo/RE2 do internally. The two earlier table attempts both failed for
+reasons that do **not** apply here:
+- **v4 merged all 88 patterns** → DFA state explosion + cross-pattern contamination
+  (correctness 31%). v18 is **per-pattern** — each pattern's DFA is tiny and isolated.
+- **v9/v10 had incorrect leftmost-longest reset logic in `scan_one`** (over-counted
+  16–30× vs gsub). The table mechanism itself was fine. v18 reuses **v15.1's
+  proven-correct `scan_one` outer structure verbatim** and swaps only the inner step.
+
+**Design:**
+- A DFA state = a canonical (sorted, deduped) set of byte-consuming NFA pcs + a
+  `matched` flag. States are interned in a per-pattern open-addressing hash
+  (`pc-set → small int id`).
+- `trans[state*256 + byte]` → next state id, filled **lazily**: on first access run
+  v15.1's exact NFA step + `addthread` closure once, canonicalize, intern, cache.
+  Subsequent visits are a single array lookup. `DFA_DEAD = -1` ends the attempt.
+- The start state (id 0) is the closure of pc 0 (reuses v17's precompute idea).
+- All buffers realloc-once, reused across calls; scan hot path allocates nothing once
+  a pattern's reachable DFA is warm.
+
+**BOL/EOL handling (the key correctness boundary):** a DFA state cannot encode "am I
+at a line boundary," so any pattern whose bytecode contains `OP_BOL`/`OP_EOL` (from
+`^`/`$`, including the boundary wrapper `(^|…)`/`(…|$)`) falls back to v15.1's exact
+NFA inner loop. Measured split: **64 of 88 patterns take the DFA path; 24 fall back.**
+(Better than the feared ~40 — many boundary-wrapped patterns compile without a
+reachable anchor instruction.)
+
+**Correctness: CORRECT — byte-for-byte identical to v15.1.** `verify18.rb` compares
+the full `(pattern_id, start, length)` match set of v18 against v15.1 (proven correct
+against the independent per-pattern gsub reference) on smoke cases, sparse/medium/dense
+1 MB, pure noise, and a **600-scan sequential stress test** (catches cross-call state
+bugs like §6.10). All identical. This is the exact gate v9/v10 failed.
+
+**Performance: ~2× over v15.1; reaches parity with pure-Ruby/Onigmo.**
+
+| Payload | pure-Ruby | Onigmo | v15.1 | **v18** | v18 vs v15.1 | v18 × pure-Ruby |
+|---|---|---|---|---|---|---|
+| sparse | 157 ms | 154 ms | 345 ms | **170 ms** | 2.0× | 0.93× |
+| medium | 157 ms | 162 ms | 443 ms | **209 ms** | 2.1× | 0.75× |
+| dense | 225 ms | 287 ms | 626 ms | **248 ms** | 2.5× | 0.91× |
+| env | 324 ms | 450 ms | 1044 ms | **294 ms** | 3.6× | **1.10×** |
+
+- **vs today's glibc C extension (~800–1070 ms): v18 is ~4–5× faster.**
+- **vs Onigmo: v18 ties on sparse/medium and *beats* it on dense (248 vs 287) and
+  env (294 vs 450).** This is the first zero-dependency engine to reach Onigmo's
+  level — and on the dense/secret-heavy payloads (the redaction use case) it wins.
+- **On env it beats pure-Ruby (1.10×)** — the DFA's O(1)/byte step shines exactly
+  where the NFA loop was doing the most per-byte thread work.
+- PCRE2 JIT still wins outright (native code, no interpretation) at 3.7–5.3×, but it
+  requires `libpcre2-dev`. v18 is the best **zero-dependency** result.
+
+**Why it works where v15.2/v17 didn't:** v15.2 (union filter) and v17 (seed cache)
+both nibbled at non-bottleneck costs. v18 attacks the actual hot path — the per-byte
+inner loop — converting O(active threads) work into one table lookup. The 24 anchor
+patterns that fall back still pay the v15.1 cost, which is why env (heavy on
+boundary-wrapped digit patterns) doesn't improve even more; lowering those anchors
+to DFA-able form is the documented follow-up (v18.1).
+
+**Allocation discipline:** per pattern, one interned-state hash + flat `trans` table +
+pc-set pool, all realloc-once and freed in `mm18_free`. No per-merge explosion because
+DFAs are per-pattern and tiny (tens to low-hundreds of states each). Scan hot path
+allocates nothing after warm-up.
+
+**Follow-up → see v18.1 below.**
+
+---
+
+### Prototype v18.1 — matcher18_1.c (v18 + anchor lowering, all 88/88 patterns DFA) ★
+
+**Files:** `matcher18_1.c`, `matcher18_1.h`, `verify18_1.rb`
+
+**Motivation:** v18 put 64/88 patterns on the DFA path. The 24 that fell back were
+all anchor-containing (boundary-wrapped: SSN, PESEL, credit card, IPv4, IBAN, etc.)
+— exactly the patterns that dominate cost on dense/env payloads. Lowering them to
+the DFA path was the obvious follow-up.
+
+**Key insight:** `OP_BOL` in `(^|[^0-9A-Za-z])` only fires at position 0. For all
+other positions the `^` branch of the SPLIT is dead — only the `[^0-9A-Za-z]` class
+branch produces active NFA threads. So for the DFA transition table, computing
+closures with `addthread_dfa(pos=1)` (a non-BOL position) naturally excludes the `^`
+branch — the DFA start state only contains threads reachable via `[^0-9A-Za-z]`.
+This is a safe *subset* (not superset) for pos>0, meaning the DFA never fires the
+wrong branch. For pos=0, `scan_one` falls back to NFA for exactly that one position
+so `^` fires correctly.
+
+**Implementation:** `addthread_dfa` delegates to `addthread(pos=1)` — no new code
+path, just a different dummy position. In `scan_one`, a `use_dfa_here` flag enables
+the DFA for all positions except boundary-wrapped patterns at pos==0. `eng->use_dfa`
+is set to `!full` for all 88 patterns (no anchor exclusion). `eng->boundary_wrapped`
+stores the flag for the pos-0 fallback check.
+
+**Correctness: CORRECT.** `verify18_1.rb` confirms byte-for-byte identical match sets
+to v15.1 on smoke/sparse/medium/dense/noise plus 600-scan sequential stress test.
+
+**Performance: best zero-dependency result — beats pure-Ruby and Onigmo on all payloads.**
+
+| Payload | pure-Ruby | Onigmo | PCRE2 JIT | v18 | **v18.1** | v18.1 × Ruby |
+|---|---|---|---|---|---|---|
+| sparse | 197 ms | 178 ms | 48 ms | 189 ms | **101 ms** | **1.95×** |
+| medium | 177 ms | 179 ms | 49 ms | 190 ms | **103 ms** | **1.72×** |
+| dense | 212 ms | 265 ms | 56 ms | 243 ms | **138 ms** | **1.53×** |
+| env | 315 ms | 437 ms | 61 ms | 282 ms | **190 ms** | **1.66×** |
+
+- **Beats Onigmo on every payload** (1.8× faster on env, 1.76× on sparse).
+- **Beats pure-Ruby on all four payloads** (1.5–2×).
+- **~5–6× faster than today's glibc C extension.**
+- PCRE2 JIT still wins (~2× faster than v18.1) because it emits native machine code;
+  v18.1 still does one `int` array lookup + pointer add per byte, PCRE2 JIT does one
+  `cmp`/`jne`.
+- The gap to PCRE2 JIT has narrowed from 8× (v15.1) to 2× (v18.1). The remaining
+  factor is instruction-level: table lookup vs native code. A JIT would close it; for
+  a pure-C zero-dep engine, v18.1 is likely near the practical ceiling.
+
+**Why the two-phase approach worked:** the first attempt at anchor lowering (naive
+always-passable BOL in `addthread_dfa`) produced false positives because it included
+`^`-reachable pcs in the DFA start state for all positions. The correct approach is
+`addthread(pos=1)` which simply never fires `^` — the position check naturally
+excludes the `^` branch without any explicit filtering.
+
+**Latent bug found later (see v19):** `addthread_dfa` also never fires `OP_EOL`, so a
+boundary-wrapped match whose trailing boundary is `$` (the match ends exactly at
+end-of-buffer) is invisible to the DFA path. v18.1 passes its verify only because the
+test corpus never places such a match at the very end of the buffer (every line ends
+in `\n`). This affects all boundary-wrapped digit/format patterns at buffer edge and
+is tracked in §13 / TODO.md. v19 fixes it for the 9 pure-digit patterns it absorbs;
+the remaining ~15 (czech_rodne_cislo, romanian_cnp, SSN-style, …) are fixed in **v19.1**
+via a buffer-tail NFA fallback in `scan_one` (see the v19.1 note below).
+
+---
+
+### Prototype v19 — matcher19.c (v18.1 + merged pure-digit group + IBAN union pass) ★ best zero-dep
+
+**Idea (selective DFA merge, per §11.1):** v18.1 scans all 88 patterns independently.
+Several patterns form *mutually-exclusive groups* whose members share an identical
+start state and differ only in length — the cleanest being the **pure-digit group**:
+the 9 patterns whose raw regex is exactly `[0-9]{lo,hi}` and which are boundary-wrapped
+(south_african_id `{13}`, japanese_my_number `{12}`, the four `{11}` variants,
+the two `{9}` variants, dutch_bsn `{8,9}`). Instead of 9 separate per-pattern outer
+scans (each: first-byte filter walk + DFA drive), v19 runs **one linear pass** that
+finds every maximal run of ASCII digits and, for a run of length L, emits each member
+whose `[lo,hi]` window contains L.
+
+**Why it is exactly equivalent to v18.1/v15 for these 9 patterns:** because each member
+is wrapped `(^|[^0-9A-Za-z])([0-9]{lo,hi})([^0-9A-Za-z]|$)`, a fixed-length member
+matches *only* a digit run of exactly that length (a shorter prefix of a longer run is
+followed by a digit, not a boundary, so the trailing `[^…]` fails). So per maximal run,
+the firing members are precisely those with `lo≤L≤hi`. The merged pass reproduces v15's
+boundary-wrapped span — **including the per-pattern non-overlapping `String#gsub`
+stream**: each member carries its own `last_end` cursor, so when two adjacent runs share
+a single separator byte, that byte is consumed by the earlier match and the later run
+falls back to the zero-width `^` boundary only after `\n` (matching gsub's
+`^`-after-newline semantics). Edge cases handled: `^` at pos 0, `$` at end-of-buffer,
+letter-abutting runs (rejected), `\n`-separated runs.
+
+**Bonus correctness:** because the merged pass handles `$` explicitly, v19 *recovers*
+the digit-member matches at end-of-buffer that v18.1's DFA path silently dropped (the
+EOL bug above). The two residual **non-member** diffs (czech_rodne_cislo,
+romanian_cnp) — boundary-wrapped patterns that still go through `scan_one` — were
+fixed in **v19.1** (below).
+
+**v19.1 — the EOL-at-buffer-end fix (full closure).** The remaining EOL drops were
+closed in `scan_one` directly. A `$`-anchored match accepts only via the `OP_EOL`
+branch, which the DFA closure suppresses (`addthread_dfa` is position-independent).
+The fix mirrors the existing `boundary_wrapped && pos==0` BOL fallback: for any
+pattern with an `OP_EOL` anchor (`has_eol`), `scan_one` falls back to the
+position-sensitive NFA inner loop for start positions in the final ~`max_len` bytes
+(`pos + max_len >= len`), where a match could reach end-of-buffer. Two new per-engine
+fields (`has_eol`, `max_len`) and a `prog_has_eol` helper; the hot path is untouched
+because only the buffer tail uses the NFA. `verify19.rb` is now **byte-for-byte equal
+to v15 on every payload** — the KNOWN escape hatch was removed, so any future diff is
+a hard failure. Benchmarks are unchanged (the fallback is confined to ≤max_len bytes
+per scan).
+
+**Second selective merge — the IBAN union pass.** The 18 IBAN patterns (32–49) are
+each a fixed 2-letter country code + `[0-9]{2}` check digits + a fixed body
+(`HU…`, `PL…`, `DE…`, …), and crucially each carries a non-infix `req_literal`
+equal to its country code. So in v18.1 each IBAN runs its **own** `memmem("XX")`
+sweep over the whole buffer — 18 sweeps that, on payloads without those exact
+letter pairs, find nothing yet still pay 18× the buffer scan. A micro-benchmark
+(`bench_iban_cost.c`) isolated this: the IBAN group is a flat **~11% of full-scan
+time regardless of whether any IBAN is present** — pure prefix-sweep overhead.
+
+v19 replaces the 18 sweeps with **one linear pass** (`scan_iban_group`): a 256-entry
+first-byte table picks candidate starts, a `[256][256]` table maps the 2-byte
+prefix to the single owning pattern (country codes are unique → 1:1), and at each
+hit we drive *that* pattern's existing lazy DFA. Each member keeps its own
+non-overlapping cursor (`last_end`), so resume semantics are identical to
+`scan_one`'s `pos = match_end`. IBANs are never boundary-wrapped and always
+`use_dfa`, so no `^`/`$` special-casing is needed. Detection is at init via
+`parse_iban_prefix` (two uppercase letters then `[0-9]{2}`); the group scratch is
+sized by a factored-out `ensure_scratch` since these patterns never enter
+`scan_one`. `verify19.rb` adds six IBAN edge payloads (buffer-end, back-to-back
+countries, same-pattern-twice, mixed, near-miss prefix, bulk) — all equal v15.
+(IBANs carry no `$` anchor, so they were never affected by the EOL bug.)
+
+**Performance (this env, 10 iter, ~1 MB payloads, real gem in-process):**
+
+| Payload | pure-Ruby | Onigmo | v15.1 | v18.1 | **v19** | v19 × Ruby | v19 vs v18.1 |
+|---|---|---|---|---|---|---|---|
+| sparse | 197.1 | 183.3 | 392.4 | 101.8 | **81.6** | **2.21×** | 1.25× |
+| medium | 174.4 | 178.0 | 408.6 | 100.5 | **77.4** | **2.16×** | 1.30× |
+| dense | 209.5 | 271.1 | 616.8 | 136.5 | **109.1** | **1.80×** | 1.25× |
+| env | 301.1 | 418.4 | 1043.6 | 192.2 | **166.1** | **1.84×** | 1.16× |
+
+- **New best zero-dependency engine.** 1.8–2.2× over pure-Ruby, ~5–6× over today's
+  glibc C extension, beats Onigmo on every payload.
+- Two selective merges stack: the pure-digit group (9 patterns → one digit pass,
+  ~6–10% on its own) **plus** the IBAN union pass (18 patterns → one prefix-dispatch
+  pass, a further ~14–22%). Together they take v19 from v18.1's 1.5–1.7× to **1.8–2.2×**.
+  The IBAN win is the larger of the two — exactly as predicted, because it eliminated
+  18 redundant full-buffer memmem sweeps rather than 9 first-byte walks.
+
+**Files:** `matcher19.{c,h}`, `verify19.rb`, `bench_iban_cost.c`, Makefile
+`matcher19`/`smoke19`, `bench_realistic.rb` v19 column. The merges are isolated to
+`scan_digit_group` + `scan_iban_group` + `g_digit_member[]`/`g_iban_member[]`
+flagging at init; `scan_one` is unchanged from v18.1.
+
+#### v19 https:// variants — A/B study (v19b vs v19c)
+
+A third selective-merge candidate is the four patterns that literally begin with
+`https://` (aws_s3_presigned_url, microsoft_teams_webhook, slack_webhook_url,
+sentry_dsn). They are interesting because they each carry only an **infix**
+`bm_literal` (`.ingest.sentry.io`, `hooks.slack.com`, …) **and** an unbounded
+`max_len`, so the v12 literal-skip is disabled (`can_skip = 0`) — each one walks
+to **every `h`** in the buffer (common in prose). Measured: this group is ~17% of
+full-scan time on noise, and the `h`-walk for 4 patterns costs ~2.3 ms vs ~0.1 ms
+for a single `memmem("https://")` sweep (which finds nothing in noise) — a 23×
+gap in the *filtering* work alone.
+
+Two fixes were prototyped as **separate engines** and benchmarked head-to-head
+against the committed v19 baseline (so the win is isolated, not entangled with
+the digit/IBAN merges):
+
+- **v19b — `scan_https_group` union pass** (`matcher19b.{c,h}`): one shared
+  `memmem("https://")` sweep; at each hit, run all four members' DFAs with their
+  own non-overlapping `last_end` cursors (same faithful semantics as the IBAN
+  pass, but a 1:N dispatch since the members share the prefix).
+- **v19c — start-anchored `https://` req_literal** (`matcher19c.{c,h}`): no new
+  scan path; at init, override the infix `bm_literal` with a *start-anchored*
+  `"https://"` literal so the existing per-pattern memmem skip fires
+  (`can_skip = 1, max_back = 0`). One-branch change in `mm19c_init`.
+
+Both equal v15 on the full corpus plus six new https edge payloads (real
+webhook/DSN/presigned examples, buffer-end, back-to-back, near-miss, 50× dense).
+
+**Result (`bench_https_variants.rb`, best-of-20, ~1 MB https-bearing payloads):**
+
+| Payload | v19 (baseline) | v19b (union) | v19c (req_literal) | winner |
+|---|---|---|---|---|
+| sparse | 74.3 | **68.1** (−8.3%) | 68.9 (−7.3%) | v19b |
+| medium | 78.1 | **71.3** (−8.8%) | 76.3 (−2.3%) | v19b |
+| dense | 109.0 | **106.9** (−1.9%) | 110.6 (+1.4%) | v19b |
+| noise | 68.4 | **66.1** (−3.3%) | 69.6 (+1.7%) | v19b |
+
+**v19b (union pass) wins on every payload; v19c is break-even-to-worse on
+dense/noise.** Why v19c underperforms despite being "simpler": it still issues
+**four separate** `memmem("https://")` sweeps (one per pattern) where v19b issues
+**one** shared sweep, and it discards the deeper infix `bm_literal` filter, so when
+`https://` *does* occur it drives a DFA at every `https://` rather than only at the
+rare deep substring. The union pass is therefore not just faster but architecturally
+the right merge — the A/B confirms it rather than assuming it.
+
+**Status:** kept as evaluation variants (not folded into v19). The committed v19
+remains digit+IBAN only; v19b/v19c document the https study. The full
+`bench_realistic.rb` figure for the union pass (measured separately) was ~5–7% on
+sparse/env, ~0% on medium/dense — a real but modest, payload-dependent win, which
+is why it stayed a documented variant rather than the default.
+
+**Files:** `matcher19b.{c,h}`, `matcher19c.{c,h}`, `verify19b.rb`, `verify19c.rb`,
+`bench_https_variants.rb`, Makefile `matcher19b`/`matcher19c`/`smoke19b`/`smoke19c`.
+
+#### Related work — where v19's selective merge sits, and where it does not
+
+The per-pattern lazy DFA (v18) is a direct application of **Cox's lazy/hybrid DFA**
+(already cited in §3): build DFA states on demand from the NFA, cache the hot ones.
+Our one deliberate departure — keeping **one small DFA per pattern** rather than one
+merged automaton — is the documented escape from the **DFA state-explosion** that
+**RE2::Set** and **Rust `regex::RegexSet`** exhibit past ~30 patterns (§3); v4 hit
+exactly that wall (31% correctness failure on the merged automaton). So far this is
+established technique used as-is, and is already cited.
+
+The v19 **selective merge** (digit group, IBAN union pass) is *not* an instance of
+the academic **rule-grouping / pattern-partitioning** line of work (PLOS One 2018;
+FREME; pattern-based DFA for DPI). That literature solves a different problem:
+*automatically* partitioning an arbitrary rule set to minimise total DFA states,
+formalised as max-k-cut graph partitioning and attacked with heuristics. We do **not**
+run any such algorithm and deliberately do **not** cite that work as a basis — it
+shares vocabulary ("grouping") but not method. Our merges are chosen by **structural
+recognition of two exactly-disjoint subsets that the credential/PII domain happens to
+contain**, not by a grouping heuristic over a conflict graph:
+
+- `parse_pure_digit` accepts a pattern iff its raw regex is *literally* `[0-9]{lo,hi}`
+  — a syntactic test, not a learned partition. Those members collapse to one linear
+  digit-run scan with per-length fan-out because they are identical up to a length
+  window (the strongest possible form of "non-conflicting").
+- `parse_iban_prefix` accepts a pattern iff it begins with two fixed uppercase letters
+  then `[0-9]{2}`; the 18 IBANs then share one `memmem`-driven pass dispatched by a
+  first-two-byte table. This is **dispatch-by-distinguishing-literal** — the same shape
+  as Aho-Corasick's role as our Stage-1 prefix filter (§3), specialised to a 1:1
+  country-code→pattern table rather than a general trie.
+
+The honest framing for the paper is therefore *specialisation, not a new grouping
+algorithm*: under a restricted contract (no backreferences, lookaround, captures, or
+Unicode), credential patterns expose exactly-disjoint subsets, so the general
+grouping problem **degenerates** into trivial structural tests and exact linear passes.
+The contribution is identifying that degeneration and the engineering that exploits it,
+not a partitioning method — and the related-work section should say so plainly rather
+than borrow citations whose techniques we did not use.
 
 ---
 
@@ -868,6 +1722,44 @@ regression), the engine cost is so high that BM overhead makes things worse.
 
 ---
 
+### 6.10 v14 cross-call state corruption (generation-counter reuse)
+
+**Problem:** v14 dropped a real match (`bearer_token` → 0 instead of 1) but *only*
+on the second and later `mm14_scan` calls — a fresh scan of the same string was
+correct. The combined correctness harness (which scans several payloads in
+sequence) flagged `smoke-bearer` as a mismatch; the same string scanned standalone
+passed. The tell: `(+"...")` mutable strings failed after a prior call, frozen
+literals "passed" only because the harness happened to scan them first.
+
+**Root cause:** the Thompson VM deduplicates threads with a generation-stamped
+`seen[pc]` array — `seen[pc] == gen` means "already added this step". The `gen`
+counter was a per-call local reset to `0` each call, while `seen[]` persists
+across calls (it is reused scratch). On the first call `seen[]` is all zeros and
+`gen` climbs 1,2,3…; on a later call `gen` restarts low while `seen[]` still holds
+stamps from the previous run, so `seen[pc] == gen` can spuriously be true and a
+needed thread is dropped. v11/v12 had the *same* latent bug but never triggered it
+in practice: without the first-byte filter their `gen` climbed so high each call
+that a low restart rarely re-collided. v14's first-byte filter runs far fewer seed
+iterations, so `gen` ends low — and the next call collides immediately.
+
+**Fix:** make the generation counter **persist across calls** (`g_gen[p]`), so
+stamps stay globally monotonic and a fresh call never reuses a previous call's
+stamp. The only reset is when the `int` counter nears overflow: clear `seen[]`
+once and restart at 0 (headroom checked against the max increments one call can
+make, `~2·len`). `mm14_free` resets `g_gen` and frees the scratch together so a
+free/re-init cycle stays consistent. The scan hot path still allocates nothing.
+
+**Verification:** 600 sequential scans of mixed inputs all match the `gsub`
+reference; standalone and in-sequence results are now identical.
+
+**Lesson:** generation-stamp dedup is only safe if the counter is monotonic over
+the lifetime of the `seen[]` array it stamps. Resetting the counter while keeping
+the array is a latent correctness bug — it lay dormant in v11/v12 and only surfaced
+once an optimization (the first-byte filter) changed the counter's growth rate.
+Persist the counter with the array, or clear the array whenever you reset.
+
+---
+
 ## 7. Benchmark Methodology
 
 ### 7.1 Payload construction
@@ -921,10 +1813,14 @@ All 17 test cases pass for both v2 and v3.
 
 ## 8. Results Summary
 
-### 8.1 Full benchmark table
+### 8.1 Full benchmark table — single synthetic payload (original, now known to be best-case)
 
-All engines from v5 onward measured on the same machine, same day, same payload
-(fixed seed 42, `bench7_compare.rb`). v1–v4 figures are from earlier separate runs.
+**⚠️ These numbers used a single synthetic payload (1 hit per ~5700 bytes, sparse).
+They represent best-case for AC+BM architectures. See §8.5 for realistic multi-payload
+results which significantly change the conclusions about v7 and v8.**
+
+All engines from v5 onward measured on the same machine, same day, fixed seed 42
+(`bench7_compare.rb`). v1–v4 figures are from earlier separate runs.
 
 | Engine | Architecture | ms/iter | vs pure-Ruby | vs today's C |
 |---|---|---|---|---|
@@ -933,7 +1829,7 @@ All engines from v5 onward measured on the same machine, same day, same payload
 | Plain Onigmo sequential | Onigmo, no AC, no BM | 134 | **1.05×** | 6.1× |
 | v3: AC + Onigmo | AC trie + Onigmo | 155 | 0.91× | 5.3× |
 | v5: AC + Onigmo + BM | AC + BM + Onigmo | 108 | 1.31× | 7.6× |
-| **glibc + BM inner loop (v8)** | **glibc, BM cursor advance per pattern** | **59.8** | **2.93×** | **13.7×** |
+| glibc + BM inner loop (v8) | glibc, BM cursor advance per pattern | 59.8 | 2.93× | 13.7× |
 | Plain PCRE2 no-JIT | PCRE2 interpreter sequential | 326 | 0.54× | 2.5× |
 | v7: AC + BM + PCRE2 no-JIT | AC + BM + PCRE2 interpreter | 261 | 0.67× | 3.1× |
 | v7: AC + BM + PCRE2 JIT | AC + BM + PCRE2 JIT | 44 | 3.98× | 18.7× |
@@ -943,26 +1839,113 @@ v1 (AC+glibc, 10 patterns): 114.9 ms, 0.60× pure-Ruby baseline of that run.
 v4 (Thompson NFA walk, upper bound): 791–818 ms, 0.22×.
 v6 (AC+BM+glibc): 1639 ms, 0.12×.
 
-**Note on baselines:** v8 / Ruby figures use the 2026-05-31 machine measurement
-(pure-Ruby = 175 ms, current C = 821 ms, fixed seed 42, 20 iters). Earlier runs
-(pure-Ruby = 141 ms) were on the same machine under different load; ratios within
-each run are comparable, cross-run absolute times are not.
+### 8.5 Realistic multi-payload benchmark (corrected, 2026-06-02)
 
-**v4 note:** the 791–818 ms figure is the `mm4_walk` upper-bound measurement
-(single-pass DFA, no restart). A correct `mm4_scan` would be slower.
+**Benchmark script:** `bench_realistic.rb` (fixed seed 42, 10 iterations per engine).
 
-**Critical finding — AC+BM pipeline overhead on JIT:**
-- Plain PCRE2 JIT: 35.5 ms
-- AC+BM+PCRE2 JIT: 43.8 ms
-- Pipeline adds **1.23× overhead** when the engine is JIT. The AC trie scan and BM
-  logic cost more than the confirmations they prevent, because JIT confirmation is
-  so cheap.
+**Payload types:**
+- **sparse** — 1 hit per 5000 bytes: clean logs, long documents
+- **medium** — 1 hit per 500 bytes: mixed application logs
+- **dense** — 1 hit per 50 bytes: redaction-heavy output
+- **env** — ~100% secrets: `.env` files, config dumps (KEY=VALUE lines, nearly all matching)
 
-**Critical finding — plain Onigmo ≈ pure-Ruby:**
-- Plain Onigmo sequential: 134 ms (1.05× over pure-Ruby)
-- Onigmo already has an internal BM pre-filter per pattern. Running 88 patterns
-  sequentially is essentially free compared to glibc. The AC+BM pipeline (v5: 108 ms)
-  adds only ~20% on top of plain Onigmo — it helps, but modestly.
+**Results — ms/iter (lower is better):**
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| Pure-Ruby gsub | 152 | 155 | 183 | 295 |
+| DataRedactor today (glibc) | 801 | 832 | 845 | 1014 |
+| v4 mm4_scan (per-pos, no filter) | 21 | 24 | 31 | 1613 |
+| v4.1 mm4_scan_v41 (per-pos + prefix) | 20 | 21 | 26 | 1585 |
+| **v4.2 mm4_scan_v42 (single-pass)** | **62** | **64** | **33** | **99** |
+| Plain Onigmo sequential | 154 | 164 | 248 | 431 |
+| Plain PCRE2 no-JIT | 391 | 407 | 465 | 532 |
+| **Plain PCRE2 JIT** | **41** | **47** | **52** | **55** |
+| v7: AC+BM+PCRE2 no-JIT | 309 | 443 | 1697 | 8775 |
+| v7: AC+BM+PCRE2 JIT | 50 | 64 | 218 | 1013 |
+
+**Results — × over pure-Ruby (higher is better):**
+
+| Engine | sparse | medium | dense | env |
+|---|---|---|---|---|
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.22× | 0.30× |
+| v4 mm4_scan | 7.6× | 6.0× | 5.8× | 0.19× |
+| v4.1 mm4_scan_v41 | 8.1× | 7.3× | 7.8× | 0.19× |
+| **v4.2 mm4_scan_v42** | **2.4×** | **2.3×** | **6.1×** | **3.0×** |
+| Plain Onigmo sequential | 1.04× | 0.99× | 0.79× | 0.72× |
+| Plain PCRE2 no-JIT | 0.42× | 0.41× | 0.43× | 0.58× |
+| **Plain PCRE2 JIT** | **3.85×** | **3.83×** | **3.86×** | **5.00×** |
+| v7: AC+BM+PCRE2 no-JIT | 0.50× | 0.37× | 0.12× | 0.03× |
+| v7: AC+BM+PCRE2 JIT | 3.29× | 2.51× | 0.96× | 0.26× |
+
+**Key findings from realistic benchmarks:**
+
+1. **Plain PCRE2 JIT is robust across all payload types.** 3.7–5.6× over pure-Ruby.
+   Improves on dense/env because JIT native code handles match-heavy inputs efficiently.
+
+2. **v7 AC+BM+PCRE2 JIT catastrophically degrades on dense/env.**
+   - env: 1083 ms (0.29× pure-Ruby) — 9 seconds absolute, worse than glibc
+   - dense: 226 ms (0.90× pure-Ruby)
+   - Root cause: the AC trie fires on almost every byte in dense inputs; BM pre-filter
+     is useless when hits are frequent; pipeline coordination overhead dominates.
+     AC+BM is designed for sparse inputs where most patterns can be skipped entirely.
+
+3. **v8 (glibc + BM inner loop) 2.93× claim was a best-case artefact.**
+   The prototype payload had 1 hit per 5700 bytes — best case for BM cursor advance.
+   On realistic payloads, the outer `strstr` already handles the "literal absent" case,
+   and the inner BM gains nothing extra. See §8.6 for detailed analysis.
+
+4. **Plain Onigmo degrades gracefully on dense/env (0.72–1.03×) but does not beat
+   pure-Ruby reliably.** On env it is 0.72× — slower than pure-Ruby.
+
+5. **glibc is consistently the worst** (0.19–0.32×) across all payloads, but its
+   degradation curve is relatively flat compared to v7's catastrophic collapse.
+
+### 8.6 Why Onigmo outperforms glibc — and why the BM story is more complex than claimed
+
+**Previous claim (§8.4, now revised):** "glibc has no BM pre-filter; adding BM to glibc
+replicates what Onigmo does and surpasses it (2.93× vs 1.05×)."
+
+**This was wrong for two reasons:**
+
+**Reason 1: The v8 BM result was measured on an unrealistic payload.**
+The `bench_bm_inner.c` prototype used a payload where the outer `strstr` pre-filter
+(already in production `redact.c`) could not help — every pattern's literal was present.
+In that scenario, BM cursor advance inside the loop gave a real 5.8× win over variant A.
+But variant A of the prototype did NOT have the outer `strstr` filter. Production `redact.c`
+already has `strstr` — so the two extra things BM would add (inner loop advance + skip on
+absent literal) are either already covered by `strstr` or negligible on sparse inputs.
+On realistic payloads, porting v8 to production showed zero improvement vs main (695 ms vs 682 ms).
+
+**Reason 2: The real reason glibc is slow is not the missing BM — it is the O(N) state-log.**
+Measured with `bench_malloc.c`:
+- malloc/free churn (88 allocations/call): 4% of total time
+- `regexec` cost: 94% of total time
+
+The 94% `regexec` cost has two sub-components:
+- NFA evaluation at each position (same algorithmic cost as Onigmo)
+- **O(N) state-log allocation on every `regexec` call** (glibc allocates an array
+  proportional to input length before any matching begins — this is mandatory in glibc's
+  `re_search_internal` and cannot be avoided)
+
+Onigmo uses a fixed-size stack per match attempt (O(1) per call). On a 1MB input with
+88 patterns, glibc allocates ~88MB of state-log per `redact` call; Onigmo allocates
+nothing at the call level. This is the dominant performance difference.
+
+**Measured evidence:** on the env payload, `@` appears 7101 times (once per 140 bytes).
+Onigmo's BM for the email pattern has literal `@` — shift = 1, meaning BM provides
+zero skip on `@`-dense input. Both engines evaluate NFA at every `@`. Yet Onigmo is
+still 2.3× faster than glibc on env. The difference is entirely the state-log allocation.
+
+**What BM actually does for Onigmo:** on sparse inputs (e.g. long clean logs with rare `@`),
+BM skips large spans between `@` characters. On dense inputs it cannot skip. This explains
+why Onigmo degrades from 1.03× (sparse) to 0.72× (env) — BM stops helping.
+
+**What this means for optimising glibc:** the correct target is eliminating the O(N)
+per-call state-log allocation — which requires replacing `regexec` with a different
+engine. There is no way to fix it within glibc. BM cursor advance (v8) is a real
+improvement for sparse inputs but the prototype result was inflated by a non-representative
+payload and the absence of the existing `strstr` pre-filter in the comparison baseline.
 
 ### 8.2 AC trie scale
 
@@ -987,32 +1970,32 @@ These 47 patterns pay full Onigmo scan cost at every input position.
 They are the binding constraint on performance — the AC filter cannot
 help them.
 
-### 8.4 How the 3× criterion was met — two paths
+### 8.4 How the 3× criterion is met — one path
 
-**Path 1 — glibc + BM inner loop (v8, zero dependencies):**
-Adding a Boyer-Moore bad-character cursor advance inside the `regexec` loop
-(48 of 88 patterns, built from `pattern_required_literal[]`) brings glibc from
-821 ms (0.21× pure-Ruby) to 59.8 ms (**2.93× pure-Ruby**). The 3× threshold is
-nearly met with no new dependencies. The 40 always-candidate patterns (no literal)
-remain unaffected. malloc churn accounts for only 4% of the remaining time.
+**Revised conclusion after realistic multi-payload benchmarks (§8.5):**
 
-**Path 2 — plain PCRE2 JIT (external dependency):**
-PCRE2 JIT compiles each pattern to native machine code at init time. The
-JIT speedup over PCRE2 interpreter is 9.18×. Plain sequential PCRE2 JIT
-achieves **3.98× over pure-Ruby** — the highest result in this study.
-The AC+BM pipeline adds 1.23× overhead on top of plain JIT (net negative):
-the pipeline costs more than the `pcre2_jit_match` calls it prevents.
+The v8 (glibc + BM inner loop) 2.93× result was an artefact of a best-case synthetic
+payload and a flawed baseline comparison. On realistic payloads it gives zero improvement
+over current production code. See §8.6 for the detailed analysis.
 
-**Comparison:**
-- v8 (glibc + BM inner): 2.93× pure-Ruby, zero new dependencies
-- Plain PCRE2 JIT: 3.98× pure-Ruby, requires `libpcre2-dev`
-- Delta: PCRE2 JIT is 1.36× faster than v8
+**The only architecture that meets the 3× criterion across all realistic payload types
+is plain PCRE2 JIT sequential.**
 
-**Onigmo architecture ceiling:** Onigmo already has its own internal BM pre-filter
-per pattern, which is why plain Onigmo ≈ pure-Ruby (1.05×) and why the AC+BM
-pipeline added only ~20% on top. Adding BM to glibc (v8) replicates what Onigmo
-does internally and surpasses it (2.93× vs 1.05×) because our outer `strstr`
-pre-filter eliminates whole patterns, not just positions.
+- Sparse (1 hit/5000B): **3.80×** over pure-Ruby
+- Medium (1 hit/500B): **3.70×**
+- Dense (1 hit/50B): **3.69×**
+- Env (all secrets): **5.58×** — improves further as hit density increases
+
+One dependency: `libpcre2-dev`. JIT degrades silently to interpreter if unavailable.
+No AC trie, no BM tables — simpler code than v7, better results across all inputs.
+
+**Why no zero-dependency path exists:**
+The glibc `regexec` bottleneck is the O(N) per-call state-log allocation — mandatory
+in glibc's `re_search_internal`, cannot be worked around. BM cursor advance helps on
+sparse inputs but the production code already has `strstr` which achieves the same
+result (skip when literal absent) at the outer loop level. The inner BM adds nothing
+on top. The only fix is replacing `regexec` with an engine that does not allocate O(N)
+per call — which is PCRE2 JIT (or Onigmo, but Onigmo only reaches ~1× pure-Ruby).
 
 ---
 
@@ -1132,26 +2115,80 @@ accept_out + 88 bytes prefix_len ≈ 1152 bytes/node → ~190 KB total.
 
 ## 11. Open Questions for Future Work (paper material)
 
-### 11.1 Can we give always-candidates a shared automaton? (ANSWERED by v4)
+### 11.1 Can we give always-candidates a shared automaton? (ANSWERED by v4/v4.2)
 
 47/88 always-candidates bypass the AC filter. Prototype v4 built and
-benchmarked a merged Thompson NFA + lazy DFA for all 88 patterns.
+benchmarked a merged Thompson NFA + lazy DFA for all 88 patterns, then
+extended to v4.1 (prefix pre-filter) and v4.2 (single-pass leftmost-longest).
 
-**Answer:** The naive lazy DFA approach (6888 NFA states, 4096-slot
-hash cache) is 4× *slower* than pure-Ruby and 9× slower than AC+Onigmo.
-The bottleneck is the NFA simulation: each cache miss requires O(6888)
-bitmap scanning.
+**Answer (revised 2026-06-02, correctness analysis added 2026-06-02):**
 
-**Residual open question:** a production-quality implementation with compact
-NFA representation (like RE2's ~10 bytes/state vs our 80), bitstate NFA
-fallback, and left-longest semantics could be faster. RE2-level engineering
-effort required — estimated 10k–50k LOC. The upper-bound single-pass DFA
-walk (791–818 ms) provides the ceiling: even a perfect implementation would
-not beat AC+Onigmo without additional optimizations.
+The per-position restart DFA (v4/v4.1) is **extremely fast on sparse/medium/dense
+inputs** — 6–8× over pure-Ruby, beating PCRE2 JIT on sparse/medium. The lazy DFA
+warms up quickly for rare-match payloads. However it **collapses 0.19× on env**
+(dense-match), slower than pure-Ruby, for the same reason as AC+BM v7: O(N²) cost
+when nearly every starting position leads to a long DFA walk.
+
+The single-pass DFA (v4.2) eliminates the collapse — **3.0× on env, 2.3–6.1× across
+all payload types** — while requiring zero external dependencies.
+
+**Critical finding (correctness analysis 2026-06-02):** The merged NFA architecture
+is not production-ready. Correctness testing with min-length + prefix filters gave
+4/13 (31%) on a representative test set. Root cause: the merged DFA cannot isolate
+per-pattern semantics when patterns share overlapping character alphabets. See §5
+correctness section for full analysis. **v4.2 benchmarks remain valid as research
+datapoints; the architecture is not viable for the gem.** Only a partial subset of
+patterns with mutually exclusive character alphabets could safely use a merged NFA
+(see §11.1 addendum on selective merging).
+
+**Comparison of all zero-dependency options:**
+
+| Engine | sparse | medium | dense | env | min |
+|---|---|---|---|---|---|
+| v4.1 (per-pos + prefix) | 8.1× | 7.3× | 7.8× | 0.19× | 0.19× |
+| **v4.2 (single-pass)** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** |
+| PCRE2 JIT | 3.9× | 3.8× | 3.9× | 5.0× | 3.8× |
 
 **DFA state explosion confirmed:** full precomputed subset construction
-diverged (never completed after computing the start state). Lazy cache
-required. The cache flush rate on 1MB input is high due to pattern diversity.
+diverged immediately. Lazy cache required. The cache flush rate on 1MB input
+is high due to pattern diversity (6888 NFA states, 4096-slot cache).
+
+**§11.1 Addendum — Selective NFA merging:**
+
+The full-merge approach is unsound. A selective-merge strategy merges only
+pattern subgroups whose character alphabets are mutually exclusive at every
+accepting position. Candidate groups (two of three now implemented in v19):
+
+- **IBANs (18 patterns) — ✅ implemented as the v19 IBAN union pass.** All start
+  with a unique 2-letter country code (`DE`, `HU`, `PL`, …) — no two IBANs share
+  the same prefix. v19 dispatches on byte 0–1 via a 256-entry first-byte table +
+  `[256][256]` prefix→pattern map, then drives that single pattern's lazy DFA. One
+  linear pass replaces 18 separate `memmem("XX")` prefix sweeps (measured ~11% flat
+  overhead). Result: +14–22% on top of the digit merge. A flat 2-byte table was
+  enough — no trie needed, since the dispatch is exactly two bytes deep.
+
+- **Pure-digit boundary-wrapped `[0-9]{n}` patterns (9) — ✅ implemented as the v19
+  merged digit pass.** One linear digit-run scan replaces 9 per-pattern scans; also
+  fixes the v18.1 EOL-at-buffer-end bug for those 9. (Note: this covers only the
+  *pure* `[0-9]{n}` shape — dashed/dotted ID formats like `us_ssn`, `korean_rrn`
+  still scan individually; merging those is open, see TODO.)
+
+- **`https://` URL patterns (4) — ✅ studied as v19b/v19c (kept as variants).**
+  `aws_s3_presigned_url`, `slack_webhook_url`, `sentry_dsn`,
+  `microsoft_teams_webhook` all start with `https://`. The motivating finding was
+  *not* prefix recurrence but that their infix `bm_literal` + unbounded `max_len`
+  **disabled the skip entirely**, so each walked to every `h`. v19b (one shared
+  `memmem("https://")` union pass) beat both the baseline and the simpler v19c
+  (start-anchored req_literal) on every payload — see the v19 https-variant A/B
+  above. Win is real but modest (~5–8% on sparse/medium/env, ~0% on dense), so it
+  is documented as a variant rather than folded into the default v19.
+
+Patterns that CANNOT be merged: `email`, `uri_with_password`,
+`mongodb_connection_string`, `jwt`, `bearer_token`, `aws_secret_access_key`,
+`aws_access_key_id` — these all open with `[A-Za-z0-9]+` and semantically overlap.
+
+Outcome: v19 ships two of the three merges (IBAN + pure-digit); the `https://` URL
+merge remains the next selective-merge candidate.
 
 ### 11.2 PCRE2 JIT as an alternative to Onigmo
 
@@ -1278,52 +2315,71 @@ Not yet prototyped.
 
 ## 12. Conclusion
 
-All engines measured on the same machine, fixed seed 42. 2026-05-31 baseline:
-pure-Ruby = 175 ms, current C = 821 ms.
+Realistic multi-payload benchmarks (§8.5, `bench_realistic.rb`, 2026-06-02).
+Four payload types: sparse (1 hit/5000B), medium (1 hit/500B), dense (1 hit/50B),
+env (all secrets). All ~1 MB, fixed seed 42, 10 iterations.
 
-| Engine | ms/iter | vs pure-Ruby | vs today's C | Status |
-|---|---|---|---|---|
-| DataRedactor today (glibc) | 821 | 0.21× | 1.0× | Current state |
-| Plain Onigmo sequential | 134 | 1.05× | 6.1× | ≈ pure-Ruby |
-| v5: AC + Onigmo + BM | 108 | 1.62× | 7.6× | Best Onigmo result |
-| **glibc + BM inner loop (v8)** | **59.8** | **2.93×** | **13.7×** | **Zero-dependency path** |
-| v7: AC + BM + PCRE2 JIT | 44 | 3.98× | 18.7× | Pipeline adds overhead |
-| **Plain PCRE2 JIT sequential** | **35.5** | **4.93×** | **23.1×** | **Fastest** |
+**× over pure-Ruby by payload type (updated 2026-06-03):**
 
-**Two viable paths to ship:**
+| Engine | sparse | medium | dense | env | min | Verdict |
+|---|---|---|---|---|---|---|
+| DataRedactor today (glibc) | 0.20× | 0.19× | 0.22× | 0.30× | 0.19× | Baseline (worst) |
+| Plain Onigmo sequential | 1.07× | 0.98× | 0.76× | 0.75× | 0.75× | ≈ pure-Ruby only |
+| v7: AC+BM+PCRE2 JIT | 3.31× | 2.53× | 0.91× | 0.31× | 0.31× | Collapses on dense/env |
+| **v4.2 NFA single-pass** | **2.4×** | **2.3×** | **6.1×** | **3.0×** | **2.3×** | **Fast but not correct (31%)** |
+| **v15.1 bytecode VM** | **0.48×** | **0.44×** | **0.33×** | **0.31×** | **0.31×** | **Zero-dep, correct, beats glibc 2.2×** |
+| **v18 per-pattern lazy DFA (64/88)** | **0.97×** | **0.90×** | **0.82×** | **1.07×** | **0.82×** | **Zero-dep, correct, ties/beats Onigmo** |
+| **v18.1 lazy DFA (88/88, anchor lowered)** | **1.78×** | **1.74×** | **1.47×** | **1.54×** | **1.47×** | **Zero-dep, correct, beats Onigmo all payloads; ~5× over glibc** |
+| **v19 = v18.1 + digit group + IBAN union pass** | **2.21×** | **2.16×** | **1.80×** | **1.84×** | **1.80×** | **Best zero-dep; 16–30% over v18.1; *more* correct (recovers digit EOL cases)** |
+| **Plain PCRE2 JIT sequential** | **3.70×** | **3.69×** | **3.61×** | **5.43×** | **3.61×** | **Best overall, correct** |
 
-**Path A — glibc + BM inner loop (v8):** Add a Boyer-Moore bad-character table
-per pattern (48 of 88 patterns, built from existing `pattern_required_literal[]`).
-Advance the `regexec` cursor via BM before each call. Zero new dependencies.
-Result: **2.93× over pure-Ruby**, **13.7× over current C**. Near-3× with no
-system requirements change.
+**Two viable production architectures:**
 
-**Path B — plain PCRE2 JIT:** Replace `regexec` with `pcre2_jit_match`. Requires
-`libpcre2-dev`. Result: **4.93× over pure-Ruby**, **23.1× over current C**.
-AC+BM pipeline is not helpful — plain sequential is both simpler and faster.
+1. **Plain PCRE2 JIT sequential** — fastest. 3.6–5.4× over pure-Ruby. One dependency: `libpcre2-dev`.
+2. **v19 per-pattern lazy DFA + two selective merges (zero dependencies)** — 1.8–2.2× over pure-Ruby, beats Onigmo on all payloads, **~5–6× over today's glibc C extension**. Pure C, no external deps. This is the recommended zero-dependency path. (Builds on v18.1; collapses the 9 pure-`[0-9]{n}` patterns into one digit-run pass — also fixing v18.1's EOL-at-buffer-end miss for those 9 — and the 18 IBAN patterns into one 2-byte prefix-dispatch pass that replaces 18 redundant memmem sweeps.)
 
-**Why the pipeline hurts JIT:** JIT match on a non-matching pattern is ~35 ns.
-The AC trie scan + BM logic costs more than the calls they prevent. Pipeline
-adds 1.23× overhead — net negative when the engine is fast.
+**v4.2 as a research result:** v4.2 performance is a valid datapoint showing that
+single-pass leftmost-longest Thompson NFA eliminates O(N²) collapse. It is not
+production-ready: the merged NFA cannot distinguish per-pattern semantics when
+patterns have overlapping character alphabets (correctness 4/13, 31%). See §5 for
+full analysis. A selective-merge variant (patterns with mutually exclusive alphabets
+only) could recover correctness at the cost of reduced coverage — not yet prototyped.
 
-**Why plain Onigmo ≈ pure-Ruby:** Onigmo has its own internal BM pre-filter per
-pattern compiled at `onig_new`. Running 88 Onigmo patterns sequentially ≈ 88
-Ruby `gsub` calls. Our v8 result (2.93×) exceeds plain Onigmo (1.05×) because
-we additionally skip whole patterns via the outer `strstr` filter.
+**Why v4.1 and v7 AC+BM collapse on dense/env:**
+Both assume hits are rare — the pre-filtering pipeline (AC trie or memmem scan) is
+designed to skip positions where patterns cannot match. On `.env`-style input, every
+pattern's literal is present almost everywhere, so no positions are skipped and the
+O(N²) per-position restart cost is paid in full. On env, v7 JIT takes 1013 ms —
+slower than glibc (1014 ms) and 18× slower than plain PCRE2 JIT. v4.1 takes 1585 ms.
 
-**PCRE2 interpreter ≈ glibc without BM:** both pay full NFA cost at every
-position; neither has an internal pre-filter. Adding BM to glibc (v8) is the
-fix — not an engine swap.
+**v4.2 single-pass avoids this:** one DFA sweep, O(N), no per-position restart.
+Each input byte is processed at most twice regardless of match density.
 
-**Option D (Thompson NFA/DFA):** not competitive — 791–818 ms upper bound due
-to DFA state explosion with 88 patterns (6888 NFA states).
+**Why v8 (glibc + BM inner loop) was a false result:**
+The prototype used a 1 hit/5700B payload and its baseline lacked the outer `strstr`
+pre-filter already in production. In production with `strstr` present, BM adds
+nothing (695 ms vs 682 ms on main). See §8.6 for full analysis.
 
-**Paper contribution:** the research inverts the original hypothesis. The
-AC+BM pipeline is beneficial only when the confirmation engine is slow
-(glibc, PCRE2 interpreter). When JIT is available, the pipeline is net negative.
-When glibc is kept, adding BM *inside* the scan loop (not as an outer filter)
-is the key fix — replicating Onigmo's internal behaviour without switching engines.
-Both findings are surprising and publication-worthy.
+**Why Onigmo outperforms glibc (not BM, but allocation):**
+glibc's mandatory O(N) per-call state-log allocation — not the missing BM — is the
+dominant factor. With 88 patterns × 1 MB, glibc allocates ~88 MB of state-log per
+`redact` call. Onigmo uses a fixed-size stack (O(1)). BM helps Onigmo on sparse
+inputs but not dense — yet Onigmo is still 2.3× faster on env, confirming allocation
+is the bottleneck.
+
+**Paper contribution (revised, 2026-06-02):**
+Four findings, each surprising:
+1. **AC+BM pipeline catastrophically degrades on high-hit-density inputs** — collapses
+   to 0.26× (v7 JIT) on `.env`-style payloads, 18× worse than plain PCRE2 JIT.
+2. **AC+BM pipeline is net negative for JIT engines** — pipeline coordination costs
+   more than the calls it prevents when the confirmation engine is fast.
+3. **glibc's bottleneck is O(N) per-call state-log allocation, not missing BM.**
+   BM is a partial mitigation for sparse inputs only; the real fix is engine replacement.
+4. **Thompson NFA single-pass (v4.2) demonstrates O(N²) collapse elimination** — 2.3–6.1×
+   over pure-Ruby, beating PCRE2 JIT on dense payloads (6.1× vs 3.9×). However the merged
+   NFA architecture produces incorrect results (4/13, 31%) because overlapping character
+   alphabets prevent per-pattern semantic isolation in the shared DFA. The performance
+   result is valid; the architecture requires per-pattern DFA isolation for correctness.
 
 ---
 
@@ -1332,14 +2388,36 @@ Both findings are surprising and publication-worthy.
 | # | Prototype | What it answers | Key dependency | Status |
 |---|---|---|---|---|
 | **v7** | AC + BM + PCRE2 JIT | Does PCRE2 JIT close the gap? | `libpcre2-dev` | ✅ DONE — pipeline adds overhead vs plain JIT |
-| **plain PCRE2 JIT** | Sequential PCRE2 JIT, no AC, no BM | Is plain JIT faster than the pipeline? | `libpcre2-dev` | ✅ DONE — 4.93× over pure-Ruby, fastest |
-| **plain Onigmo** | Sequential Onigmo, no AC, no BM | Does AC+BM help Onigmo? | `libonig-dev` | ✅ DONE — 1.05×, ≈ pure-Ruby |
-| **v8 (BM inner)** | glibc + BM cursor advance inside regexec loop | Can we beat pure-Ruby without engine swap? | None | ✅ DONE — 2.93× over pure-Ruby, zero deps |
+| **plain PCRE2 JIT** | Sequential PCRE2 JIT, no AC, no BM | Is plain JIT faster than the pipeline? | `libpcre2-dev` | ✅ DONE — 3.8–5.0× over pure-Ruby, best overall |
+| **plain Onigmo** | Sequential Onigmo, no AC, no BM | Does AC+BM help Onigmo? | `libonig-dev` | ✅ DONE — ~1.0×, ≈ pure-Ruby |
+| **v8 (BM inner)** | glibc + BM cursor advance inside regexec loop | Can we beat pure-Ruby without engine swap? | None | ✅ DONE — result was inflated by unrealistic payload; zero improvement in production (see §8.6) |
+| **realistic benchmark** | Re-run all engines on sparse/medium/dense/env payloads | Are previous results representative? | None | ✅ DONE — `bench_realistic.rb`; v7 and v4.1 collapse on env; plain PCRE2 JIT is the best overall |
+| **v4.1 (per-pos + prefix)** | Does memmem pre-filter fix v4's env collapse? | None | ✅ DONE — no: 0.19× on env, same collapse as v4 |
+| **v4.2 (single-pass)** | Does single-pass leftmost-longest fix the collapse? | None | ✅ DONE — yes: 2.3–6.1×; **but** correctness 4/13 (31%) — merged NFA not viable |
+| **v4.2 correctness analysis** | Why does merged NFA produce false/missed matches? | None | ✅ DONE — overlapping character alphabets; per-pattern DFAs required |
+| **v11 bytecode VM** | Correct bytecode VM baseline (zero deps) | Can a hand-rolled VM be correct? | None | ✅ DONE — correct, ~6× slower than pure-Ruby |
+| **v12.1 literal filter** | memmem skip for infix literals | Does literal skip help? | None | ✅ DONE — 1.1× over v11; ~40 literal-less patterns dominate |
+| **v14 first-byte filter** | Per-pattern start-set bitmap | Can we skip the digit-pattern positions? | None | ✅ DONE — 2.6× over v11; cuts pure-noise floor from 920ms to 423ms |
+| **v15.1 VM constant-factor** | Iterative addthread + O(1) accept | Can we tighten the inner loop? | None | ✅ DONE — 1.1× over v14; 2.2× over glibc today |
+| **v15.2 union bitmap** | OR of all 88 first-sets, skip before per-pattern work | Does a shared skip reduce per-pattern overhead? | None | ✅ DONE — no improvement (~4% slower); per-pattern filters already do this |
+| **v17 precomputed init list** | Cache epsilon-closure of pc=0, memcpy at seed time | Is seed addthread the bottleneck? | None | ✅ DONE — no improvement (~1%); inner step loop dominates, not seed overhead |
+| **v18 per-pattern lazy DFA** | Replace inner NFA-set step with O(1) table lookup | Can a per-pattern lazy DFA close the gap to Onigmo? | None | ✅ DONE — 2× over v15.1, ties/beats Onigmo (64/88 patterns on DFA) |
+| **v18.1 anchor lowering** | Make boundary-wrapped digit patterns DFA-able | Can the 24 fallback patterns join the DFA path? | None | ✅ DONE — **all 88/88 DFA; 1.5–2.0× over pure-Ruby, beats Onigmo all payloads** |
+| **v19 merged pure-digit group** | Collapse the 9 pure-`[0-9]{n}` patterns into one digit-run pass | Does a selective merge of a mutually-exclusive group beat per-pattern scanning? | None | ✅ DONE — **best zero-dep; 6–10% over v18.1; also fixes EOL bug for the 9 members** |
+| **v19 IBAN union pass** | Collapse the 18 IBAN patterns into one 2-byte prefix-dispatch pass | Does a larger mutually-exclusive group (18, behind unique req_literals) still win once the per-pattern memmem prefix filter is already in place? | None | ✅ DONE — **yes: replaces 18 full-buffer memmem sweeps (~11% flat overhead) with one pass; +14–22% on top of the digit merge; v19 now 1.8–2.2× over Ruby** |
+| **v18.1 EOL-at-buffer-end bug** | `addthread_dfa` never fires `OP_EOL`, so boundary-wrapped matches ending exactly at end-of-buffer are dropped | How to make the DFA path honor `$`? | None | ⚠️ OPEN — v19 fixes it for its 9 digit members; ~15 other boundary-wrapped patterns (czech_rodne_cislo, romanian_cnp, SSN-style, IBANs…) still affected. See TODO.md |
+| ~~v20 IBAN trie merge~~ | Merge the 18 IBAN patterns (disjoint country prefixes) into one pass | Does the merge scale to a larger mutually-exclusive group? | None | ✅ Done as the **v19 IBAN union pass** (row above) — folded into v19 rather than a separate prototype, since it is the same technique. A 2-byte prefix table sufficed; no trie needed. |
 | **streaming context** | Cross-chunk match correctness + overhead | Is streaming feasible for either path? | None | Not yet started |
 
-**Research is complete for the core question.** Two viable paths are identified:
-- **Path A (zero deps):** ship v8 BM inner loop into `redact.c` / `scan.c` — 2.93× over pure-Ruby
-- **Path B (libpcre2):** ship plain PCRE2 JIT sequential — 4.93× over pure-Ruby
+**Research conclusion (updated 2026-06-03):** Two viable production paths:
+- **Plain PCRE2 JIT sequential** — 3.6–5.5× over pure-Ruby, requires `libpcre2-dev`, correct
+- **v18 per-pattern lazy DFA** — ties/beats pure-Ruby and Onigmo (0.82–1.10×), ~4–5× over today's glibc C extension, **zero dependencies, correct (byte-for-byte identical to v15.1)**
+
+**How the gap was closed:** the inner VM step loop was the bottleneck (confirmed by
+v17's null result). v18's per-pattern lazy DFA converts that O(active-threads)/byte
+loop into one table lookup, reaching Onigmo's level without a dependency. The earlier
+table attempts (v4 merged, v9/v10 wrong reset logic) failed for reasons that don't
+apply to a per-pattern DFA wrapping v15.1's proven `scan_one`.
 
 ---
 
@@ -1349,12 +2427,15 @@ Both findings are surprising and publication-worthy.
 
 The research has material for a **systems/experience report paper** (12–15 pages):
 
-- **Problem**: C extension 10× slower than pure-Ruby despite being C — root cause
-  diagnosed as glibc `regexec` lacking Boyer-Moore literal pre-filter.
-- **Contribution**: two-stage AC + fast-engine pipeline for mixed-prefix DLP pattern
-  sets; BM pre-filter as worthwhile third stage; characterisation of the always-candidate
-  binding constraint.
-- **Evidence**: six prototypes, reproducible benchmarks, root-cause profiling.
+- **Problem**: C extension 5× slower than pure-Ruby despite being C — root cause
+  diagnosed as glibc `regexec` O(N) per-call state-log allocation.
+- **Contribution 1**: two-stage AC + fast-engine pipeline for mixed-prefix DLP pattern
+  sets; characterisation of when pipeline pre-filtering helps vs hurts.
+- **Contribution 2**: Thompson NFA single-pass leftmost-longest (v4.2) as a robust
+  zero-dependency alternative — 2.3–6.1× across all payload types including dense/env.
+- **Contribution 3**: the AC+BM+JIT pipeline catastrophically degrades on dense inputs
+  (0.26× on env); plain JIT with no pipeline is the robust winner.
+- **Evidence**: eight prototypes, four-payload realistic benchmark suite, root-cause profiling.
 - **Generalisation**: any system scanning 50–100 heterogeneous regex patterns against
   text (log scrubbing, DLP, credential scanning) faces the same architectural trade-offs.
 

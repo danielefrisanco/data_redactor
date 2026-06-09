@@ -13,9 +13,9 @@ ONIG_LDFLAGS = -lonig
 PCRE2_CFLAGS  = -DPCRE2_CODE_UNIT_WIDTH=8 $(shell pkg-config --cflags libpcre2-8 2>/dev/null)
 PCRE2_LDFLAGS = -lpcre2-8
 
-.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 generate
+.PHONY: all clean smoke smoke2 smoke3 smoke4 smoke5 smoke6 smoke7 smoke9 smoke10 smoke11 smoke12 smoke14 smoke15 smoke16 smoke17 smoke18 smoke18_1 smoke19 smoke19b smoke19c generate
 
-all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so
+all: matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so matcher4 matcher4.so matcher5 matcher5.so matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so
 
 # Option B generated header (always regenerate from gem source).
 generate: gen_patterns.rb
@@ -108,6 +108,140 @@ smoke7_plain: matcher7_plain
 matcher7_plain_onig.so: matcher7_plain_onig.c matcher7_plain_onig.h patterns_generated.h
 	$(CC) $(CFLAGS) $(ONIG_CFLAGS) -shared -o $@ matcher7_plain_onig.c $(LDFLAGS) $(ONIG_LDFLAGS)
 
+# Prototype v9 — 88 separate per-pattern Thompson NFA + lazy DFA caches. Zero deps.
+matcher9: matcher9.c matcher9.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM9_MAIN -o $@ matcher9.c $(LDFLAGS)
+
+matcher9.so: matcher9.c matcher9.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher9.c $(LDFLAGS)
+
+smoke9: matcher9
+	./matcher9
+
+# Prototype v10 — 88 per-pattern backtracking NFA, fixed O(1) stack. Zero deps.
+matcher10: matcher10.c matcher10.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM10_MAIN -o $@ matcher10.c $(LDFLAGS)
+
+matcher10.so: matcher10.c matcher10.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher10.c $(LDFLAGS)
+
+smoke10: matcher10
+	./matcher10
+
+# Prototype v11 — 88 per-pattern Thompson bytecode VM. Zero deps.
+matcher11: matcher11.c matcher11.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM11_MAIN -o $@ matcher11.c $(LDFLAGS)
+
+matcher11.so: matcher11.c matcher11.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher11.c $(LDFLAGS)
+
+smoke11: matcher11
+	./matcher11
+
+# Prototype v12 — v11 bytecode VM + literal pre-filter for all 88 patterns. Zero deps.
+matcher12: matcher12.c matcher12.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM12_MAIN -o $@ matcher12.c $(LDFLAGS)
+
+matcher12.so: matcher12.c matcher12.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher12.c $(LDFLAGS)
+
+smoke12: matcher12
+	./matcher12
+
+# Prototype v14 — v12.1 literal filter + per-pattern first-byte filter. Zero deps.
+matcher14: matcher14.c matcher14.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM14_MAIN -o $@ matcher14.c $(LDFLAGS)
+
+matcher14.so: matcher14.c matcher14.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher14.c $(LDFLAGS)
+
+smoke14: matcher14
+	./matcher14
+
+# Prototype v15 — v14 + Thompson VM constant-factor speedups. Zero deps.
+matcher15: matcher15.c matcher15.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM15_MAIN -o $@ matcher15.c $(LDFLAGS)
+
+matcher15.so: matcher15.c matcher15.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher15.c $(LDFLAGS)
+
+smoke15: matcher15
+	./matcher15
+
+# Prototype v16 — v15.1 + cross-pattern union first-byte bitmap. Zero deps.
+matcher16: matcher16.c matcher16.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM16_MAIN -o $@ matcher16.c $(LDFLAGS)
+
+matcher16.so: matcher16.c matcher16.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher16.c $(LDFLAGS)
+
+smoke16: matcher16
+	./matcher16
+
+# Prototype v17 — v15.1 + precomputed initial thread list. Zero deps.
+matcher17: matcher17.c matcher17.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM17_MAIN -o $@ matcher17.c $(LDFLAGS)
+
+matcher17.so: matcher17.c matcher17.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher17.c $(LDFLAGS)
+
+smoke17: matcher17
+	./matcher17
+
+# Prototype v18 — v15.1 + per-pattern lazy DFA transition cache. Zero deps.
+matcher18: matcher18.c matcher18.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM18_MAIN -o $@ matcher18.c $(LDFLAGS)
+
+matcher18.so: matcher18.c matcher18.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher18.c $(LDFLAGS)
+
+smoke18: matcher18
+	./matcher18
+
+# Prototype v18.1 — v18 + anchor lowering (all 88 patterns DFA-able). Zero deps.
+matcher18_1: matcher18_1.c matcher18_1.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM18_1_MAIN -o $@ matcher18_1.c $(LDFLAGS)
+
+matcher18_1.so: matcher18_1.c matcher18_1.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher18_1.c $(LDFLAGS)
+
+smoke18_1: matcher18_1
+	./matcher18_1
+
+# Prototype v19 — v18.1 + merged pure-digit-group scan + IBAN union pass. Zero deps.
+matcher19: matcher19.c matcher19.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM19_MAIN -o $@ matcher19.c $(LDFLAGS)
+
+matcher19.so: matcher19.c matcher19.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher19.c $(LDFLAGS)
+
+smoke19: matcher19
+	./matcher19
+
+# Isolates the IBAN group's cost (18 memmem prefix sweeps) vs the full v19 scan.
+bench_iban_cost: bench_iban_cost.c matcher19.c matcher19.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM19_BENCH bench_iban_cost.c matcher19.c -o $@ $(LDFLAGS)
+
+# Prototype v19b — v19 + https:// union pass (scan_https_group). Evaluation variant.
+matcher19b: matcher19b.c matcher19b.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM19B_MAIN -o $@ matcher19b.c $(LDFLAGS)
+
+matcher19b.so: matcher19b.c matcher19b.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher19b.c $(LDFLAGS)
+
+smoke19b: matcher19b
+	./matcher19b
+
+# Prototype v19c — v19 + start-anchored https:// req_literal (no extra scan path).
+matcher19c: matcher19c.c matcher19c.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMM19C_MAIN -o $@ matcher19c.c $(LDFLAGS)
+
+matcher19c.so: matcher19c.c matcher19c.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher19c.c $(LDFLAGS)
+
+smoke19c: matcher19c
+	./matcher19c
+
 # Standalone micro-benchmarks (no .so — direct C executables).
 bench_malloc: bench_malloc.c ../../ext/data_redactor/patterns.c ../../ext/data_redactor/placeholder.c
 	$(CC) $(CFLAGS) -I../../ext/data_redactor \
@@ -126,6 +260,14 @@ bench_bm_inner: bench_bm_inner.c ../../ext/data_redactor/patterns.c ../../ext/da
 clean:
 	rm -f matcher matcher.so matcher2 matcher2.so matcher3 matcher3.so \
 	      matcher4 matcher4.so matcher5 matcher5.so matcher6 matcher6.so \
-	      matcher7 matcher7.so \
-	      bench_malloc bench_bm_inner \
+	      matcher7 matcher7.so matcher9 matcher9.so matcher10 matcher10.so \
+	      matcher11 matcher11.so matcher12 matcher12.so \
+	      matcher14 matcher14.so matcher15 matcher15.so \
+	      matcher16 matcher16.so \
+	      matcher17 matcher17.so \
+	      matcher18 matcher18.so \
+	      matcher18_1 matcher18_1.so \
+	      matcher19 matcher19.so \
+	      matcher19b matcher19b.so matcher19c matcher19c.so \
+	      bench_malloc bench_bm_inner bench_iban_cost \
 	      patterns_generated.h
