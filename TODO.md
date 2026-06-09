@@ -207,12 +207,61 @@ full 40 and redact everything, flipping that passing spec.
       edge would recover byte-identical behaviour without a full multi-pass.
 
 **Ship hygiene (once the gaps are closed):**
-- [ ] 244-example rspec suite green against the new engine (the correctness gate).
+- [x] 256-example rspec suite green against the new engine (the correctness gate). ✅
 - [ ] `extconf.rb` builds with no new dependency; verify on glibc + musl/Alpine.
-- [ ] SemVer: engine swap with no public API change → **minor** bump; update
-      `lib/data_redactor/version.rb` + CHANGELOG `[Unreleased]` in the feature commit.
-- [ ] Bench the gem end-to-end (not just the C core) to confirm the 2.3× survives the
-      Ruby↔C marshalling boundary on real `redact` / `redact_deep` calls.
+- [x] SemVer: engine swap with no public API change → **minor** bump; `0.9.0` → `0.10.0`. ✅
+- [x] Bench the gem end-to-end: 1 MB log: **0.87 i/s → 7.27 i/s** (~8.4× throughput
+      gain; from 4× slower than pure Ruby to 2.25× faster). Small strings: 3–4.6×
+      slower → 1.7–2.3× faster. The 2.3× prototype win survives the Ruby↔C boundary. ✅
+
+**Phase 1 — ported but NOT done yet (tracked for future work):**
+- [ ] **Longest-match-wins overlap policy** — the decided 1.0 policy (keep the longest
+      CORE span at each position; pattern-id breaks ties). Currently deferred; `mm_resolve`
+      keeps the index-order greedy claim to reproduce today's sequential semantics. Changing
+      the resolver is ~40 lines + spec work to unmark the two `pending` 1.0 specs. The event
+      list is preserved intact so this is a drop-in swap.
+- [ ] **Full per-call thread re-entrancy** — `mm_scan` mutates per-engine fields
+      (`iban_last_end`, `digit_last_end`, DFA scratch). Phase 1 is safe only because MRI's
+      GVL serialises C extension calls (no `rb_thread_call_without_gvl` is ever used).
+      Full re-entrancy requires moving the mutable scan scratch into a per-call context
+      struct (alloca/stack or caller-supplied). Needed before releasing the GVL for large
+      inputs or before supporting Ractors.
+- [ ] **Custom patterns in selective merges** — pure-digit or IBAN-prefix custom patterns
+      won't join the group passes; they're handled per-pattern by glibc. Acceptable for
+      Phase 1 (customs are rare hot paths); revisit if perf matters.
+- [ ] **Streaming `mm_scan_chunk`** — scan across caller-managed chunks for large inputs
+      without buffering the full string in C. Not needed while callers buffer Ruby strings.
+- [ ] **Hopcroft minimisation** — lazy-DFA states are not minimised; minimisation would
+      reduce transition table size and improve cache behaviour on large pattern sets.
+- [ ] **Fuzz / ASan CI harness** — see `docs/standalone_matcher_design.md` risk table.
+      The `OP_EOL` OOB read (fixed) was found by ASan; a CI fuzz job would catch regressions.
+- [ ] **musl/Alpine build verification** — `memmem` availability and `_GNU_SOURCE` behaviour
+      on musl libc. Current guard: `#ifndef _GNU_SOURCE / #define _GNU_SOURCE` at top of
+      `matcher.c`. Needs a CI matrix job.
+
+**Where the ported engine differs from the original gem (divergence ledger):**
+
+1. **Single-pass original-frame emission** — `mm_scan` scans the original input once and
+   emits CORE-frame `(pattern_id, start, length)` directly. The old engine ran N `regexec`
+   passes, each on the buffer the previous already rewrote, and used `repl_log` /
+   `WORKING_TO_ORIG` to map coordinates back. The new approach is simpler and faster;
+   the only observable difference is the rewrite-boundary class below.
+
+2. **Rewrite-created / rewrite-destroyed boundary** (Gap 5, accepted) — when two secrets
+   directly abut with no separator, the `[REDACTED]` placeholder from the lower-index
+   match can create (or destroy) the word boundary a higher-index boundary-wrapped pattern
+   needs. A single-pass scan over the original buffer cannot see the rewritten boundary.
+   ~2% of adjacency-heavy synthetic inputs; irrelevant in real text (always separator-
+   delimited). Pinned by DIVERGENCE specs; fixed by the future longest-match-wins resolver.
+
+3. **Custom patterns bypass the selective merges** — customs always go through glibc
+   `replace_all_matches`, even if their regex is a pure digit run or an IBAN prefix.
+   Built-in digit/IBAN patterns continue to use the group passes. Acceptable because
+   customs are a small minority of calls.
+
+4. **Overlap policy is still index-order greedy** — see item 1 of "Phase 1 not done yet".
+   The 1.0 longest-match-wins policy is deferred; for now the resolver reproduces today's
+   sequential-rewrite behaviour exactly.
 
 ### 1b. Legal check before shipping BM implementation
 
