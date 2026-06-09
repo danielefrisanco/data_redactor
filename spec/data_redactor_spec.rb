@@ -1341,12 +1341,18 @@ RSpec.describe DataRedactor do
       expect(result[:matches].map { |m| m[:name] }).to eq(["credit_card"])
     end
 
-    it "non-overlapping matches from different patterns all fire independently" do
-      # When patterns match disjoint spans, both fire under either policy.
+    # DIVERGENCE (scan, rewrite-dependent): on the original buffer idx-15
+    # ([A-Za-z0-9/+=]{40}) matches the full 60-char span [0,60), which overlaps
+    # idx-14's [0,20). mm_resolve drops it. The old sequential engine rewrote
+    # chars 0-19 first, leaving the 40 x's in isolation for idx-15 to match at
+    # working pos 10 → original pos 20. Single-pass can't see that second match.
+    it "DIVERGENCE — scan: aws_secret match exposed by rewrite is invisible to single-pass engine" do
       input = "AKIAIOSFODNN7EXAMPLE" + ("x" * 40)  # AKIA (20) + 40 alphanum
       result = DataRedactor.scan(input)
-      names = result[:matches].map { |m| m[:name] }.sort
-      expect(names).to eq(["aws_access_key_id", "aws_secret_access_key"].sort)
+      names = result[:matches].map { |m| m[:name] }
+      # Old sequential engine: ["aws_access_key_id", "aws_secret_access_key"]
+      # v19 single-pass engine: only aws_access_key_id (idx-15 [0,60) overlaps idx-14 [0,20))
+      expect(names).to eq(["aws_access_key_id"])
     end
 
     it "consumes the 'specific prefix' even when only it matches; later patterns see leftovers verbatim" do
