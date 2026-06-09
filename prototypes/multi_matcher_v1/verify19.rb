@@ -97,17 +97,10 @@ all_ok = true
 
 # Pure-digit members handled by v19's merged pass. Differences on NON-member
 # patterns whose span ends exactly at end-of-buffer are the pre-existing v18.1
-# EOL-at-buffer-end bug (TODO.md §EOL), inherited unchanged via scan_one — not a
-# v19 merge regression. We classify those as KNOWN and still pass the merge gate.
-DIGIT_MEMBERS = [78, 80, 81, 82, 83, 84, 85, 86, 87].freeze
-
-def known_v181_eol?(diffs, payload_bytes)
-  return false if diffs.empty?
-  diffs.all? { |pid, st, ln|
-    !DIGIT_MEMBERS.include?(pid) && (st + ln == payload_bytes)
-  }
-end
-
+# v19.1: the v18.1 EOL-at-buffer-end bug is fixed — scan_one now NFA-falls-back
+# in the final ~max_len bytes for $-anchored patterns, so v19 must equal v15
+# EXACTLY on every payload, including the buffer-edge digit/ID cases below. Any
+# diff is a hard failure (no KNOWN escape hatch — that would mask a regression).
 payloads.each do |name, pl|
   a = matches(V15, pl)
   b = matches(V19, pl)
@@ -117,12 +110,6 @@ payloads.each do |name, pl|
   end
   only_v15 = a - b
   only_v19 = b - a
-  if only_v19.empty? && known_v181_eol?(only_v15, pl.bytesize)
-    puts "  %-14s KNOWN (v18.1 EOL bug, %d non-member edge matches) — TODO" %
-         [name, only_v15.size]
-    only_v15.first(3).each { |m| puts "    inherited-miss: #{m.inspect}" }
-    next
-  end
   all_ok = false
   puts "  %-14s MISMATCH  v15=%d v19=%d" % [name, a.size, b.size]
   only_v15.first(3).each { |m| puts "    only v15:  #{m.inspect}" }
@@ -141,6 +128,6 @@ end
 
 puts
 puts all_ok ?
-  "v19 MERGE CORRECTNESS PASS — equals v15 except known inherited v18.1 EOL cases" :
+  "v19 CORRECTNESS PASS — byte-for-byte equal to v15 on all payloads (EOL fixed)" :
   "FAILURES PRESENT"
 exit all_ok ? 0 : 1

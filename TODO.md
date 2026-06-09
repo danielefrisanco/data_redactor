@@ -52,7 +52,15 @@ redacting that is sufficient for safety. So:
       governed by CLAUDE.md pattern tiers + false-positive rules, separate from the
       matcher-engine prototypes. Any change needs positive + negative spec coverage.
 
-### 1c. Fix v18.1 EOL-at-buffer-end bug (DFA path drops `$`-terminated matches)
+### 1c. Fix v18.1 EOL-at-buffer-end bug (DFA path drops `$`-terminated matches) ✅ FIXED (v19.1)
+
+**Resolution:** implemented the first option below in `matcher19.c`. `scan_one` now
+NFA-falls-back for start positions in the final ~`max_len` bytes whenever the pattern
+carries a `$` anchor (`has_eol`), symmetric to the existing `boundary_wrapped && pos==0`
+BOL fallback. Added per-engine `has_eol` + `max_len` fields and a `prog_has_eol` helper.
+`verify19.rb` is now byte-for-byte equal to v15 on every payload (KNOWN escape hatch
+removed → any diff is a hard failure). Benchmarks unchanged (2.33×/2.30×/1.75×/1.82×):
+the fallback touches only the buffer-tail bytes, never the hot path.
 
 **Bug:** in the lazy-DFA path (v18/v18.1/v19), `addthread_dfa` computes
 position-independent closures by calling `addthread(pos=1)` on a dummy empty string.
@@ -72,15 +80,15 @@ affected: they are fixed-length with a distinctive prefix, carry no `$` anchor, 
 now run through the v19 IBAN union pass — `iban-eob` in `verify19.rb` confirms a
 buffer-end IBAN matches.)
 
-- [ ] In `scan_one`, fall back to the position-sensitive NFA inner loop for start
+- [x] In `scan_one`, fall back to the position-sensitive NFA inner loop for start
       positions within `max_len` of the buffer end (symmetric to the existing
-      `boundary_wrapped && pos==0` BOL fallback). Requires storing per-engine
-      `max_len` + a `has_eol` flag. Cheap: only the final ~max_len bytes use the NFA.
-- [ ] Alternative: give DFA accepting states an EOL-conditional MATCH and check it
-      when `sp==len`. More invasive but keeps the whole scan on the DFA.
-- [ ] Add buffer-edge cases (digit runs, dashed IDs, IBANs ending at `len`, after
-      `\n`) to the v18.1/v19 verify corpus so this can't regress silently again.
-- [ ] Once fixed, `verify19.rb` should show zero KNOWN-classified diffs vs v15.
+      `boundary_wrapped && pos==0` BOL fallback). Stored per-engine `max_len` +
+      `has_eol`. Cheap: only the final ~max_len bytes use the NFA.
+- [ ] ~~Alternative: EOL-conditional MATCH in the DFA~~ — not needed; the fallback
+      above is simpler and has no measurable cost.
+- [x] Buffer-edge cases (digit runs, dashed IDs, IBANs ending at `len`, after `\n`)
+      are in `verify19.rb` (digit-eos9/digit-runs/iban-eob etc.).
+- [x] `verify19.rb` shows zero diffs vs v15 (escape hatch removed).
 
 ### 2. Write and publish the paper
 

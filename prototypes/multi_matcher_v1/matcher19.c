@@ -397,6 +397,14 @@ typedef struct {
     int         use_dfa;
     /* v18.1: boundary-wrapped patterns need a pre-check before DFA seeding */
     int         boundary_wrapped;
+    /* v19.1 EOL fix: the DFA closure suppresses the `$` (OP_EOL) branch, so a
+     * match that can only accept via `$` at end-of-buffer is dropped on the DFA
+     * path. has_eol marks patterns with an OP_EOL anchor; max_len bounds how far
+     * before `len` such a match could start. scan_one falls back to the
+     * position-sensitive NFA loop for start positions in that tail window only
+     * (symmetric to the existing boundary_wrapped && pos==0 BOL fallback). */
+    int         has_eol;
+    size_t      max_len;
 } pat_engine_t;
 
 static pat_engine_t g_engines[MM88_NUM_PATTERNS];
@@ -567,6 +575,15 @@ static int prog_has_anchor(const prog_t *pr) {
     return 0;
 }
 
+/* Returns 1 if the program contains an EOL ($) anchor. The DFA closure cannot
+ * fire $ (it is position-dependent), so scan_one must NFA-fall-back near the
+ * buffer end for such patterns — see the has_eol/max_len fields. */
+static int prog_has_eol(const prog_t *pr) {
+    for (int i = 0; i < pr->n; i++)
+        if (pr->code[i].op == OP_EOL) return 1;
+    return 0;
+}
+
 void mm19_init(void) {
     if (g_initialized) return;
     for (int p = 0; p < MM88_NUM_PATTERNS; p++) {
@@ -631,6 +648,8 @@ void mm19_init(void) {
          * when we enter the DFA the boundary condition always holds. */
         eng->use_dfa = !full;
         eng->boundary_wrapped = MM88_PATTERNS[p].boundary_wrapped;
+        eng->has_eol = prog_has_eol(&eng->prog);
+        eng->max_len = max_len;
 
         /* v19: flag pure-digit members. Detected from the RAW (unwrapped) regex —
          * the wrapper adds the boundary, which is exactly what the merged run pass
@@ -1000,9 +1019,18 @@ static size_t scan_one(int p, const char *input, size_t len,
 
         /* Determine whether to use the DFA or NFA inner loop for this position.
          * v18.1: use DFA for all patterns EXCEPT boundary-wrapped at pos==0,
-         * where ^ must fire correctly (NFA handles it). */
+         * where ^ must fire correctly (NFA handles it).
+         * v19.1: also fall back near the buffer end for patterns with a $ anchor.
+         * The DFA closure suppresses OP_EOL, so a match accepting only via `$` at
+         * end-of-buffer is dropped. A match from `pos` can reach `len` only if
+         * pos + max_len >= len (unbounded max_len → always), so the fallback is
+         * confined to the final ~max_len bytes — the hot path is untouched. */
+        int near_eol = eng->has_eol &&
+                       (eng->max_len == LEN_UNBOUNDED ||
+                        pos + eng->max_len >= len);
         int use_dfa_here = eng->use_dfa &&
-                           !(eng->boundary_wrapped && pos == 0);
+                           !(eng->boundary_wrapped && pos == 0) &&
+                           !near_eol;
 
         if (use_dfa_here) {
             /* DFA inner loop: one table lookup per byte. */

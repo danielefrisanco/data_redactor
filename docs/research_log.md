@@ -1337,8 +1337,8 @@ end-of-buffer) is invisible to the DFA path. v18.1 passes its verify only becaus
 test corpus never places such a match at the very end of the buffer (every line ends
 in `\n`). This affects all boundary-wrapped digit/format patterns at buffer edge and
 is tracked in §13 / TODO.md. v19 fixes it for the 9 pure-digit patterns it absorbs;
-the remaining ~15 (czech_rodne_cislo, romanian_cnp, SSN-style, IBANs, …) still need a
-v18.1-level fix.
+the remaining ~15 (czech_rodne_cislo, romanian_cnp, SSN-style, …) are fixed in **v19.1**
+via a buffer-tail NFA fallback in `scan_one` (see the v19.1 note below).
 
 ---
 
@@ -1368,10 +1368,22 @@ letter-abutting runs (rejected), `\n`-separated runs.
 
 **Bonus correctness:** because the merged pass handles `$` explicitly, v19 *recovers*
 the digit-member matches at end-of-buffer that v18.1's DFA path silently dropped (the
-EOL bug above). `verify19.rb` confirms v19 equals v15 on every digit case; the only
-residual v15 diffs are two **non-member** patterns (czech_rodne_cislo, romanian_cnp)
-that still go through v18.1's `scan_one` and thus inherit the same EOL bug — classified
-as KNOWN and tracked in TODO, not a v19 regression.
+EOL bug above). The two residual **non-member** diffs (czech_rodne_cislo,
+romanian_cnp) — boundary-wrapped patterns that still go through `scan_one` — were
+fixed in **v19.1** (below).
+
+**v19.1 — the EOL-at-buffer-end fix (full closure).** The remaining EOL drops were
+closed in `scan_one` directly. A `$`-anchored match accepts only via the `OP_EOL`
+branch, which the DFA closure suppresses (`addthread_dfa` is position-independent).
+The fix mirrors the existing `boundary_wrapped && pos==0` BOL fallback: for any
+pattern with an `OP_EOL` anchor (`has_eol`), `scan_one` falls back to the
+position-sensitive NFA inner loop for start positions in the final ~`max_len` bytes
+(`pos + max_len >= len`), where a match could reach end-of-buffer. Two new per-engine
+fields (`has_eol`, `max_len`) and a `prog_has_eol` helper; the hot path is untouched
+because only the buffer tail uses the NFA. `verify19.rb` is now **byte-for-byte equal
+to v15 on every payload** — the KNOWN escape hatch was removed, so any future diff is
+a hard failure. Benchmarks are unchanged (the fallback is confined to ≤max_len bytes
+per scan).
 
 **Second selective merge — the IBAN union pass.** The 18 IBAN patterns (32–49) are
 each a fixed 2-letter country code + `[0-9]{2}` check digits + a fixed body
@@ -1393,13 +1405,7 @@ non-overlapping cursor (`last_end`), so resume semantics are identical to
 sized by a factored-out `ensure_scratch` since these patterns never enter
 `scan_one`. `verify19.rb` adds six IBAN edge payloads (buffer-end, back-to-back
 countries, same-pattern-twice, mixed, near-miss prefix, bulk) — all equal v15.
-
-**Bonus correctness:** because the merged pass handles `$` explicitly, v19 *recovers*
-the digit-member matches at end-of-buffer that v18.1's DFA path silently dropped (the
-EOL bug above). `verify19.rb` confirms v19 equals v15 on every digit case; the only
-residual v15 diffs are two **non-member** patterns (czech_rodne_cislo, romanian_cnp)
-that still go through v18.1's `scan_one` and thus inherit the same EOL bug — classified
-as KNOWN and tracked in TODO, not a v19 regression.
+(IBANs carry no `$` anchor, so they were never affected by the EOL bug.)
 
 **Performance (this env, 10 iter, ~1 MB payloads, real gem in-process):**
 
