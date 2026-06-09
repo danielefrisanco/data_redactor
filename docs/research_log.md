@@ -1483,6 +1483,44 @@ is why it stayed a documented variant rather than the default.
 **Files:** `matcher19b.{c,h}`, `matcher19c.{c,h}`, `verify19b.rb`, `verify19c.rb`,
 `bench_https_variants.rb`, Makefile `matcher19b`/`matcher19c`/`smoke19b`/`smoke19c`.
 
+#### Related work — where v19's selective merge sits, and where it does not
+
+The per-pattern lazy DFA (v18) is a direct application of **Cox's lazy/hybrid DFA**
+(already cited in §3): build DFA states on demand from the NFA, cache the hot ones.
+Our one deliberate departure — keeping **one small DFA per pattern** rather than one
+merged automaton — is the documented escape from the **DFA state-explosion** that
+**RE2::Set** and **Rust `regex::RegexSet`** exhibit past ~30 patterns (§3); v4 hit
+exactly that wall (31% correctness failure on the merged automaton). So far this is
+established technique used as-is, and is already cited.
+
+The v19 **selective merge** (digit group, IBAN union pass) is *not* an instance of
+the academic **rule-grouping / pattern-partitioning** line of work (PLOS One 2018;
+FREME; pattern-based DFA for DPI). That literature solves a different problem:
+*automatically* partitioning an arbitrary rule set to minimise total DFA states,
+formalised as max-k-cut graph partitioning and attacked with heuristics. We do **not**
+run any such algorithm and deliberately do **not** cite that work as a basis — it
+shares vocabulary ("grouping") but not method. Our merges are chosen by **structural
+recognition of two exactly-disjoint subsets that the credential/PII domain happens to
+contain**, not by a grouping heuristic over a conflict graph:
+
+- `parse_pure_digit` accepts a pattern iff its raw regex is *literally* `[0-9]{lo,hi}`
+  — a syntactic test, not a learned partition. Those members collapse to one linear
+  digit-run scan with per-length fan-out because they are identical up to a length
+  window (the strongest possible form of "non-conflicting").
+- `parse_iban_prefix` accepts a pattern iff it begins with two fixed uppercase letters
+  then `[0-9]{2}`; the 18 IBANs then share one `memmem`-driven pass dispatched by a
+  first-two-byte table. This is **dispatch-by-distinguishing-literal** — the same shape
+  as Aho-Corasick's role as our Stage-1 prefix filter (§3), specialised to a 1:1
+  country-code→pattern table rather than a general trie.
+
+The honest framing for the paper is therefore *specialisation, not a new grouping
+algorithm*: under a restricted contract (no backreferences, lookaround, captures, or
+Unicode), credential patterns expose exactly-disjoint subsets, so the general
+grouping problem **degenerates** into trivial structural tests and exact linear passes.
+The contribution is identifying that degeneration and the engineering that exploits it,
+not a partitioning method — and the related-work section should say so plainly rather
+than borrow citations whose techniques we did not use.
+
 ---
 
 ## 6. Problems Encountered and How We Solved Them
