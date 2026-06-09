@@ -1,6 +1,6 @@
 /* matcher.c — the v19 multi-pattern engine, ported into the gem.
  *
- * Ported from prototypes/multi_matcher_v1/matcher19.c (the standalone prototype
+ * Ported from prototypes/multi_pattern_matcher/matcher19.c (the standalone prototype
  * proven in docs/research_log.md). The matching core — regex parser -> Thompson
  * bytecode -> per-pattern lazy DFA, the v14 first-byte filter, the v12 literal
  * skip, the v18.1 anchor lowering, the v19 pure-digit and IBAN selective merges,
@@ -22,7 +22,7 @@
  *      TODO.md §1d Gap 5 and the AKIA specs in spec/data_redactor_spec.rb.
  *
  * The infix-literal classification and the BM_INFIX hint table below are ported
- * from prototypes/multi_matcher_v1/gen_patterns.rb (which derived them from the
+ * from prototypes/multi_pattern_matcher/gen_patterns.rb (which derived them from the
  * same gem arrays at codegen time). They are pure optimisation hints — the
  * first-byte filter computed from the program itself is what guarantees
  * correctness — so a stale hint can only cost speed, never miss a match.

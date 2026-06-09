@@ -322,7 +322,7 @@ against the same Onigmo it links.
 
 **Result:** 1.18× faster than pure-Ruby gsub on 1 MB with 88 patterns.
 Beats pure-Ruby; does not meet the 3× kill criterion. See
-`prototypes/multi_matcher_v1/README.md` for full numbers.
+`prototypes/multi_pattern_matcher/README.md` for full numbers.
 
 **Verdict:** architecture proven. The two-stage pipeline works. Decision
 point: ship with Onigmo dep (Option C) or build own automaton (Option D).

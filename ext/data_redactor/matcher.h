@@ -8,7 +8,7 @@
  * interned DFA) with two selective merges (pure-digit run pass, IBAN union
  * pass) and the v19.1 EOL-at-buffer-end fix. Zero dependencies beyond libc.
  * See docs/research_log.md (v15..v19) for the derivation, and
- * prototypes/multi_matcher_v1/ for the standalone prototype this is ported from.
+ * prototypes/multi_pattern_matcher/ for the standalone prototype this is ported from.
  *
  * Built-in pattern engines are sourced from the gem's pattern arrays
  * (pattern_strings[]/boundary_wrapped[]/pattern_required_literal[]), NOT a

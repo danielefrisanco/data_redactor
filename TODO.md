@@ -97,7 +97,7 @@ buffer-end IBAN matches.)
 **Goal.** Replace the gem's current per-pattern POSIX `regexec` engine in
 `ext/data_redactor/` with the v19 pipeline (NFA → bytecode → per-pattern lazy DFA +
 the two selective merges). v19 is **zero-dependency, 2.3× over pure-Ruby, ~11× over
-today's C, byte-for-byte equal to Ruby `gsub`** (`prototypes/multi_matcher_v1/`,
+today's C, byte-for-byte equal to Ruby `gsub`** (`prototypes/multi_pattern_matcher/`,
 `docs/research_log.md` §v19). This is the production payoff of the whole research arc.
 
 **Do this as its own branch (`feat/v19-engine`), not bundled with the research merge.**

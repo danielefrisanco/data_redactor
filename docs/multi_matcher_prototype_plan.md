@@ -76,7 +76,7 @@ regardless.
 
 ```
 prototypes/
-  multi_matcher_v1/
+  multi_pattern_matcher/
     README.md                  # what this is, how to run, what we learned
     matcher.c                  # the Aho-Corasick trie + match driver
     matcher.h                  # public interface for the Ruby FFI bridge
