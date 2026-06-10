@@ -458,11 +458,15 @@ Shipped under `lib/data_redactor/integrations/` as soft-required adapters (zero 
 
 Future work for this area: a `Rack` `:env_logs` surface that scrubs `PATH_INFO` / `QUERY_STRING` for downstream access loggers (deferred — needs to wrap the upstream logger rather than mutate env, which has been blocking the design).
 
-### 10. Claude / OpenAI API integration (planned for 0.8.0)
+### 10. Claude / OpenAI API integration ✅ DONE in 0.11.0
 
-Helpers that sanitize LLM payloads before they leave the process and optionally scrub responses before they're logged or stored.
+Shipped under `lib/data_redactor/integrations/` as soft-required adapters (zero runtime dependencies added):
+- ✅ `DataRedactor::Integrations::Claude` — `.redact_messages` (messages array + top-level `system:`) and `.redact_response` (Messages API `content` text blocks)
+- ✅ `DataRedactor::Integrations::OpenAI` — `.redact_messages` (Chat Completions `messages`, including a `system` message) and `.redact_response` (`choices[].message.content`)
 
-**Proposed API:**
+Both operate on plain Ruby Hashes/Arrays (String or Symbol keys), return a deep copy (never mutate the input), pass non-text content blocks through untouched, and forward `only:`/`except:`/`placeholder:`.
+
+**Shipped API:**
 
 ```ruby
 require "data_redactor/integrations/claude"
@@ -485,9 +489,9 @@ safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 - All helpers forward `only:`, `except:`, `placeholder:` to `DataRedactor.redact`.
 - No runtime dependency on the `anthropic` or `openai` gems — operate on plain Ruby Hashes/Arrays so they work with any HTTP client or SDK version.
 
-**Open questions:**
-- Redact in place (mutate) or return a copy? Prefer a copy — callers shouldn't have to worry about their original payload being changed.
-- Should the response helper return the full response object (patched) or just the text? Full object is more composable.
+**Resolved:**
+- Redact in place (mutate) or return a copy? **Copy** — `redact_messages`/`redact_response` deep-copy and never mutate the caller's payload (matches the gem's "No mutation of caller data" principle).
+- Should the response helper return the full response object (patched) or just the text? **Full object** — more composable; only the text leaves are rewritten.
 
 ### 11. Distribution / quality of life (formerly #10)
 - ~~Publish to RubyGems~~ ✅ DONE — 0.5.0 published 2026-05-08

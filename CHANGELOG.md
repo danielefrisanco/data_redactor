@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Claude / OpenAI LLM integrations** — two new soft-required adapters that
+  scrub PII and secrets from LLM payloads before they leave the process and
+  from responses before they're logged:
+  - `DataRedactor::Integrations::Claude` — `.redact_messages` (handles the
+    `messages` array plus a top-level `system:` prompt; String or
+    array-of-content-block content) and `.redact_response` (Messages API
+    `content` text blocks).
+  - `DataRedactor::Integrations::OpenAI` — `.redact_messages` (Chat
+    Completions `messages`, including a `system` message and array-of-parts
+    content) and `.redact_response` (`choices[].message.content`).
+  Both operate on plain Ruby Hashes/Arrays with String or Symbol keys (no
+  runtime dependency on the `anthropic`/`openai` gems), return a deep copy
+  (never mutate the caller's input), pass non-text content blocks through
+  untouched, and forward `only:`/`except:`/`placeholder:` to
+  `DataRedactor.redact`.
+
 ## [0.10.1] - 2026-06-10
 
 ### Fixed

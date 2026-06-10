@@ -2,7 +2,8 @@ require "data_redactor"
 
 module DataRedactor
   # Namespace for the optional framework adapters under
-  # +lib/data_redactor/integrations/+ ({Logger}, +Rails+, {Rack}).
+  # +lib/data_redactor/integrations/+ ({Logger}, +Rails+, {Rack},
+    # {Claude}, {OpenAI}).
   #
   # Each adapter is soft-required — none load with +require "data_redactor"+;
   # +require+ only the one you need. They add no runtime gem dependencies and
