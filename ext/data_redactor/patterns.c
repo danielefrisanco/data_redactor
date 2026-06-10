@@ -458,8 +458,12 @@ const char *pattern_strings[NUM_PATTERNS] = {
     "-----BEGIN PGP PRIVATE KEY BLOCK-----",
     /* 29: HashiCorp Vault Service Token (hvs. + 90-120 base64url chars) */
     "hvs\\.[A-Za-z0-9_-]{90,120}",
-    /* 30: HashiCorp Vault Batch Token (hvb. + 138-300 base64url chars) */
-    "hvb\\.[A-Za-z0-9_-]{138,300}",
+    /* 30: HashiCorp Vault Batch Token (hvb. + 138+ base64url chars).
+     * Upper bound capped at POSIX RE_DUP_MAX (255), not gitleaks' 300: musl's
+     * regcomp rejects {m,n} with n>255 ("Invalid contents of {}"), so the gem
+     * failed to load on Alpine. 255 still neutralizes the token (prefix + 251+
+     * chars redacted); only an unusually long >255-char token leaves a dead tail. */
+    "hvb\\.[A-Za-z0-9_-]{138,255}",
     /* 31: HashiCorp Terraform Cloud API Token (14 alphanum + .atlasv1. + 60-70 base64url chars) */
     "[A-Za-z0-9]{14}\\.atlasv1\\.[A-Za-z0-9_=-]{60,70}",
 

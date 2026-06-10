@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **musl/Alpine load failure** — the `hashicorp_vault_batch_token` pattern used a
+  `{138,300}` interval whose upper bound exceeds POSIX `RE_DUP_MAX` (255). glibc
+  accepts it, but musl's `regcomp` rejects it ("Invalid contents of {}"), so the
+  native musl gem raised at load (`require "data_redactor"`) on Alpine. Capped the
+  bound at 255; tokens are still neutralized (prefix + 251+ chars redacted).
+
 ## [0.10.0] - 2026-06-09
 
 ### Changed
