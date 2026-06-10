@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-10
+
 ### Added
 - **Claude / OpenAI LLM integrations** — two new soft-required adapters that
   scrub PII and secrets from LLM payloads before they leave the process and
@@ -230,7 +232,8 @@ features as 0.7.1 plus the pipeline fix.
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.8.0...v0.9.0
