@@ -510,6 +510,26 @@ All payload sizes pass a correctness check (redaction count matches pure-Ruby `g
 The previous engine (per-pattern `regexec`) was **4.25× slower** than pure Ruby on the
 1 MB payload — a ~9× swing. Old numbers are in git history (`CHANGELOG.md` [0.9.0]).
 
+#### Linear scaling
+
+Throughput stays flat as input grows — the single-pass engine is O(N), so a 10×
+larger payload takes ~10× longer and MB/s holds steady. The old per-pattern
+`regexec` engine was O(N²) and fell off a cliff on large inputs (a 10 MB log took
+tens of seconds); v19 redacts the same 10 MB in ~1.4 s.
+
+| Size   | Time     | MB/s    |
+|--------|----------|---------|
+| 1 KB   | 0.14 ms  | 7.1     |
+| 100 KB | 13.4 ms  | 7.3     |
+| 1 MB   | 142 ms   | 7.0     |
+| 10 MB  | 1.42 s   | 7.0     |
+| 50 MB  | 7.14 s   | 7.0     |
+
+No published benchmarks exist for comparable Ruby PII-redaction gems, so the
+numbers above are absolute (vs pure-Ruby `gsub`), not a head-to-head against
+another gem. Run `benchmark/scaling.rb` on your own hardware — absolute MB/s is
+machine-dependent, but the flat curve is not.
+
 ## How it works
 
 1. At load time, `Init_data_redactor` compiles all 85 regex patterns once using `regcomp` (POSIX ERE) and stores them as static `regex_t` structs. Patterns marked as boundary-wrapped are expanded with `wrap_boundary()` before compilation.

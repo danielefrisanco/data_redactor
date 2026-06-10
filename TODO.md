@@ -946,24 +946,26 @@ mislead more than inform.
 - Root cause: O(n²) tail re-scan — see the Performance section above.
 
 **Remaining benchmark work (do NOT do until the performance fix lands):**
-- [ ] Re-run all four scripts on the fixed engine and capture real numbers.
-- [ ] Add a `## Benchmarks` section to the README with the post-fix numbers
-      (throughput MB/s, vs-pure-Ruby speedup). Deliberately deferred — publishing
-      pre-fix numbers would advertise the gem losing to pure Ruby.
-- [ ] Note in the README that no other Ruby PII gem publishes benchmarks
-      (factual differentiator).
-- [ ] Add `benchmark/` to the README `## Directory structure` tree.
-- [ ] CHANGELOG `[Unreleased]` entry for the benchmark suite + the two new
-      `BUILTIN_PATTERN_*` constants. No version bump (repo tooling + internal
-      constants).
+- [x] Re-run all four scripts on the fixed engine and capture real numbers.
+      (2026-06-10, v19/0.10.1) vs_pure_ruby: 1.6–2.4× faster small strings,
+      2.1× on 1 MB; throughput ~7 MB/s flat 1 KB→50 MB; scaling confirms O(N).
+- [x] Add a `## Benchmarks` section to the README with the post-fix numbers
+      (throughput MB/s, vs-pure-Ruby speedup). Done when 0.10.0 shipped; the
+      vs-Ruby ratio table was re-verified current on 2026-06-10.
+- [x] Note in the README that no other Ruby PII gem publishes benchmarks
+      (factual differentiator). Added to the new "Linear scaling" subsection.
+- [x] Add `benchmark/` to the README `## Directory structure` tree. (Already done.)
+- [ ] ~~CHANGELOG entry for the benchmark suite + `BUILTIN_PATTERN_*` constants~~ —
+      SKIP. `BUILTIN_PATTERN_SOURCES`/`BOUNDARY` already shipped (defined in C,
+      referenced in README); a retroactive entry now is noise, not signal.
 - [x] Verify `benchmark/` is excluded from the built `.gem` — confirmed, 0
       `benchmark/` entries in `data_redactor-0.9.0.gem`.
 - [x] Fix `benchmark/README.md`: run command is `bundle exec ruby`, not bare
       `ruby` (bare `ruby` hits `incompatible library version` when the system
       Ruby differs from the bundled one).
-- [ ] Reconsider `scaling.rb`'s 50MB step — under the current O(n²) engine it
-      runs for many minutes. After the fix it should be fast; if not, drop the
-      largest size or reduce the repeat count.
+- [x] Reconsider `scaling.rb`'s 50MB step — under v19 it now runs in ~7 s (was
+      "many minutes" under the O(N²) engine). Kept as-is; the 50 MB row is the
+      strongest linearity evidence (flat 7 MB/s all the way up).
 
 **Follow-up (separate task, not part of the benchmark suite):**
 - [ ] CI benchmark integration — a PR job that runs the suite on the branch +
