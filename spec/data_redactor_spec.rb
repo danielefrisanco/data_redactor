@@ -450,6 +450,16 @@ RSpec.describe DataRedactor do
       redacted?("token=#{token} end", token)
     end
 
+    it "redacts a hvb. token longer than the 255-char cap" do
+      # Upper bound is capped at POSIX RE_DUP_MAX (255) for musl portability
+      # (was 300; musl regcomp rejects n>255). A 260-char token is still matched
+      # and redacted — the original long base64url run no longer survives intact.
+      token = "hvb." + "B" * 260
+      result = DataRedactor.redact("token=#{token} end")
+      expect(result).to include("[REDACTED]")
+      expect(result).not_to include("B" * 256)
+    end
+
     it "redacts HashiCorp Terraform Cloud API token (atlasv1)" do
       token = "abcdefghijklmn.atlasv1." + "C" * 65
       redacted?("token=#{token} end", token)

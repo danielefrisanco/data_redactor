@@ -84,6 +84,61 @@ jobs:
           path: pkg/data_redactor-*-x86_64-linux.gem
           if-no-files-found: error
 
+  musl-load:
+    name: musl/Alpine load test
+    runs-on: ubuntu-latest
+    needs: test
+    container: ruby:3.3-alpine
+
+    # Compiles the C extension against musl libc and LOADS the gem. The release
+    # pipeline cross-compiles the .so but never `require`s it, so musl-only
+    # runtime failures shipped undetected (0.10.0: a built-in pattern's {m,n}
+    # interval exceeded POSIX RE_DUP_MAX (255), which musl's regcomp rejects at
+    # module init but glibc accepts). This job runs the same regcomp path on musl.
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install build toolchain
+        run: apk add --no-cache build-base
+
+      - name: Compile extension on musl
+        run: |
+          set -e
+          cd ext/data_redactor
+          ruby extconf.rb
+          make
+          cp data_redactor.so "$GITHUB_WORKSPACE/lib/data_redactor/"
+
+      - name: Load gem and smoke-test redaction on musl
+        run: |
+          set -e
+          ruby -Ilib -e '
+            require "data_redactor"
+            # Exact-output checks for patterns that redact to a single placeholder.
+            exact = {
+              "AWS key"  => [DataRedactor.redact("k=AKIAIOSFODNN7EXAMPLE x"), "k=[REDACTED] x"],
+              "GitHub"   => [DataRedactor.redact("t ghp_16C7e42F292c6912E7710c838347Ae178B4a x"), "t [REDACTED] x"],
+              "SSN(EOL)" => [DataRedactor.redact("ssn 123-45-6789"), "ssn [REDACTED]"],
+              "IBAN(EOL)"=> [DataRedactor.redact("iban DE89370400440532013000"), "iban [REDACTED]"],
+              "email"    => [DataRedactor.redact("to alice@example.com now"), "to [REDACTED] now"],
+            }
+            # The hvb pattern (the one that exceeded RE_DUP_MAX) — assert it
+            # compiles on musl and neutralizes the token, not a specific layout.
+            hvb_token = "hvb." + "B" * 150
+            hvb_out = DataRedactor.redact("t=" + hvb_token + " x")
+            failed = exact.reject { |_, (got, want)| got == want }
+            exact.each_key { |k| puts "  ok  #{k}" unless failed.key?(k) }
+            failed.each { |k, (got, want)| puts "FAIL  #{k}: got #{got.inspect} want #{want.inspect}" }
+            if hvb_out.include?("[REDACTED]") && !hvb_out.include?(hvb_token)
+              puts "  ok  hvb token (neutralized)"
+            else
+              puts "FAIL  hvb token: got #{hvb_out.inspect}"
+              failed["hvb token"] = true
+            end
+            abort "musl smoke test failed" unless failed.empty?
+            puts "ALL #{exact.size + 1} musl checks passed"
+          '
+
 # Note: source-gem publishing was moved to release-binaries.yml as of 0.7.2.
 # That workflow builds the source gem AND all 6 native gems atomically and
 # publishes them in a single step, so a native build failure can never leave

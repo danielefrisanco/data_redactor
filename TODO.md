@@ -208,7 +208,14 @@ full 40 and redact everything, flipping that passing spec.
 
 **Ship hygiene (once the gaps are closed):**
 - [x] 256-example rspec suite green against the new engine (the correctness gate). ✅
-- [ ] `extconf.rb` builds with no new dependency; verify on glibc + musl/Alpine.
+- [x] `extconf.rb` builds with no new dependency; verified on glibc + musl/Alpine
+      (`ruby:3.3-alpine`, x86_64-linux-musl). ✅ **Found + fixed a real bug
+      (0.10.1):** the `hashicorp_vault_batch_token` pattern's `{138,300}` interval
+      exceeds POSIX `RE_DUP_MAX` (255). glibc accepts it; musl's `regcomp` rejects
+      it ("Invalid contents of {}"), so the native musl gem raised at `require`
+      time on Alpine. Capped to `{138,255}`. The v19 engine itself
+      (`memmem`/`_GNU_SOURCE`, digit/IBAN merges, EOL fallback) compiles clean and
+      matches correctly on musl — verified by a no-network smoke test.
 - [x] SemVer: engine swap with no public API change → **minor** bump; `0.9.0` → `0.10.0`. ✅
 - [x] Bench the gem end-to-end: 1 MB log: **0.87 i/s → 7.27 i/s** (~8.4× throughput
       gain; from 4× slower than pure Ruby to 2.25× faster). Small strings: 3–4.6×
@@ -235,9 +242,13 @@ full 40 and redact everything, flipping that passing spec.
       reduce transition table size and improve cache behaviour on large pattern sets.
 - [ ] **Fuzz / ASan CI harness** — see `docs/standalone_matcher_design.md` risk table.
       The `OP_EOL` OOB read (fixed) was found by ASan; a CI fuzz job would catch regressions.
-- [ ] **musl/Alpine build verification** — `memmem` availability and `_GNU_SOURCE` behaviour
-      on musl libc. Current guard: `#ifndef _GNU_SOURCE / #define _GNU_SOURCE` at top of
-      `matcher.c`. Needs a CI matrix job.
+- [x] **musl/Alpine build verification** (2026-06-10) — `memmem`/`_GNU_SOURCE` work on
+      musl: the engine compiles clean and matches correctly on `ruby:3.3-alpine`. The
+      `#ifndef _GNU_SOURCE` guard is sufficient. Surfaced an unrelated load-time bug
+      (hvb `{138,300}` > `RE_DUP_MAX`) — fixed in 0.10.1, see §1d ship hygiene.
+      **Still wanted: a CI matrix job** that *loads* the gem on musl (the release
+      build only cross-compiles; it never `require`s the gem, which is why this bug
+      shipped). A load-and-smoke step on `ruby:3.x-alpine` would have caught it.
 
 **Where the ported engine differs from the original gem (divergence ledger):**
 

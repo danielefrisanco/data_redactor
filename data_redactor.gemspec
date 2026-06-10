@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
   }
 
   spec.files = Dir["lib/**/*.rb", "ext/**/*.{c,h,rb}"] +
-               %w[LICENSE CHANGELOG.md readme.md]
+               %w[LICENSE CHANGELOG.md README.md]
   spec.extensions    = ["ext/data_redactor/extconf.rb"]
   spec.require_paths = ["lib"]
 
