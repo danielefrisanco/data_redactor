@@ -275,6 +275,34 @@ Pass an empty subset (e.g. `scrub: [:headers]`) to opt out of body wrapping. For
 
 > **Body wrapping is buffering.** The middleware reads the entire response body into memory before scanning. For streaming endpoints (SSE, large file downloads, Rack::Hijack) use `scrub: [:headers]` and rely on the Logger formatter for application logs instead.
 
+### Claude / OpenAI LLM payloads
+
+Sanitize LLM message payloads before they leave the process, and scrub responses before they're logged or stored. Both adapters operate on plain Ruby Hashes/Arrays (String **or** Symbol keys), so they work with the `anthropic`/`openai` gems, a raw HTTP client, or parsed JSON — no runtime dependency on any SDK. They **return a deep copy and never mutate your input**, and forward `only:`/`except:`/`placeholder:` to `DataRedactor.redact`.
+
+```ruby
+require "data_redactor/integrations/claude"
+
+# Redact a messages array before sending to Claude
+safe_messages = DataRedactor::Integrations::Claude.redact_messages(messages)
+client.messages.create(model: "claude-opus-4-8", max_tokens: 1024, messages: safe_messages)
+
+# Redact the response (assistant content blocks) before logging
+safe_response = DataRedactor::Integrations::Claude.redact_response(response)
+```
+
+```ruby
+require "data_redactor/integrations/openai"
+
+# Redact a messages array before sending to OpenAI
+safe_messages = DataRedactor::Integrations::OpenAI.redact_messages(messages)
+client.chat(parameters: { model: "gpt-4o", messages: safe_messages })
+
+# Redact the response (choices[].message.content) before logging
+safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
+```
+
+`content` may be a plain String or an array of content blocks/parts (`{ type: "text", text: "..." }`) — only the `text` of `text` blocks is redacted; image and other block types pass through untouched. For Claude, a top-level `system:` String is also redacted; for OpenAI, a `{ role: "system" }` message in the array is redacted like any other. Pass a bare `messages` array or the whole request Hash (with a `messages` key) — either works.
+
 ## Detected patterns (88 total)
 
 The table below is a representative sample. Use `DataRedactor.pattern_names` for the canonical, machine-readable list — it stays in sync with the C extension automatically.
