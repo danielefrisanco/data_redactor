@@ -126,6 +126,8 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
     /* Stage 2: custom patterns via glibc on the rewritten buffer.         */
     /* Original coords recovered via working_to_orig() using ev[].         */
     /* ------------------------------------------------------------------ */
+    custom_patterns_lock();
+    int oom = 0;
     for (int i = 0; i < custom_count; i++) {
         if (!scan_enable_bit(rb_enable_bits, NUM_PATTERNS + i)) continue;
 
@@ -163,9 +165,11 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
         char *next = replace_all_matches(&custom_patterns[i].compiled, working,
                                          custom_patterns[i].boundary, &ph_plain);
         free(working);
-        if (!next) { free(ev); rb_raise(rb_eNoMemError, "replace_all_matches failed in scan"); }
+        if (!next) { working = NULL; oom = 1; break; }
         working = next;
     }
+    custom_patterns_unlock();
+    if (oom) { free(ev); rb_raise(rb_eNoMemError, "replace_all_matches failed in scan"); }
 
     free(ev);
 

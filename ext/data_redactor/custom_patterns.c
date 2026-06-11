@@ -2,6 +2,7 @@
 #include "redact.h" /* wrap_boundary */
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 /* Custom patterns deliberately do NOT use the v19 engine: they keep the glibc
  * regexec path (replace_all_matches), because user regex can contain multibyte
@@ -11,6 +12,11 @@
 custom_pattern_t *custom_patterns = NULL;
 int custom_count = 0;
 int custom_cap   = 0;
+
+static pthread_mutex_t custom_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void custom_patterns_lock(void)   { pthread_mutex_lock(&custom_mutex); }
+void custom_patterns_unlock(void) { pthread_mutex_unlock(&custom_mutex); }
 
 static int find_custom_by_name(const char *name) {
     for (int i = 0; i < custom_count; i++) {
@@ -58,6 +64,13 @@ VALUE rb_add_pattern(VALUE self, VALUE rb_name, VALUE rb_source,
         rb_raise(eClass, "%s", errbuf);
     }
 
+    /* regcomp succeeded above (no array access yet); now mutate the shared array
+     * under the lock. Keep the critical section rb_raise-free: on failure, record
+     * it, unlock, then raise outside the lock so the mutex can't leak via longjmp. */
+    custom_patterns_lock();
+
+    const char *err = NULL;
+    int stored = 0; /* 1 once `compiled` is owned by a slot (don't regfree it) */
     int idx = find_custom_by_name(name);
     if (idx >= 0) {
         free_custom_at(idx);
@@ -67,8 +80,8 @@ VALUE rb_add_pattern(VALUE self, VALUE rb_name, VALUE rb_source,
             custom_pattern_t *tmp = (custom_pattern_t *)realloc(
                 custom_patterns, sizeof(custom_pattern_t) * new_cap);
             if (!tmp) {
-                regfree(&compiled);
-                rb_raise(rb_eNoMemError, "custom_patterns realloc failed");
+                err = "custom_patterns realloc failed";
+                goto unlock;
             }
             custom_patterns = tmp;
             custom_cap = new_cap;
@@ -81,9 +94,17 @@ VALUE rb_add_pattern(VALUE self, VALUE rb_name, VALUE rb_source,
     custom_patterns[idx].compiled = compiled;
     custom_patterns[idx].tag      = tag_bit;
     custom_patterns[idx].boundary = boundary;
+    stored = 1;
 
     if (!custom_patterns[idx].name || !custom_patterns[idx].source) {
-        rb_raise(rb_eNoMemError, "strdup failed");
+        err = "strdup failed";
+    }
+
+unlock:
+    custom_patterns_unlock();
+    if (err) {
+        if (!stored) regfree(&compiled);
+        rb_raise(rb_eNoMemError, "%s", err);
     }
 
     return Qnil;
@@ -93,8 +114,12 @@ VALUE rb_remove_pattern(VALUE self, VALUE rb_name) {
     Check_Type(rb_name, T_STRING);
     const char *name = StringValueCStr(rb_name);
 
+    custom_patterns_lock();
     int idx = find_custom_by_name(name);
-    if (idx < 0) return Qfalse;
+    if (idx < 0) {
+        custom_patterns_unlock();
+        return Qfalse;
+    }
 
     free_custom_at(idx);
 
@@ -102,19 +127,23 @@ VALUE rb_remove_pattern(VALUE self, VALUE rb_name) {
         custom_patterns[i] = custom_patterns[i + 1];
     }
     custom_count--;
+    custom_patterns_unlock();
 
     return Qtrue;
 }
 
 VALUE rb_clear_custom_patterns(VALUE self) {
+    custom_patterns_lock();
     for (int i = 0; i < custom_count; i++) {
         free_custom_at(i);
     }
     custom_count = 0;
+    custom_patterns_unlock();
     return Qnil;
 }
 
 VALUE rb_custom_patterns(VALUE self) {
+    custom_patterns_lock();
     VALUE arr = rb_ary_new_capa(custom_count);
     for (int i = 0; i < custom_count; i++) {
         VALUE h = rb_hash_new();
@@ -124,5 +153,6 @@ VALUE rb_custom_patterns(VALUE self) {
         rb_hash_aset(h, ID2SYM(rb_intern("boundary")), custom_patterns[i].boundary ? Qtrue : Qfalse);
         rb_ary_push(arr, h);
     }
+    custom_patterns_unlock();
     return arr;
 }

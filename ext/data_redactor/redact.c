@@ -208,6 +208,8 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
      * incidentally beyond what today already did. */
     placeholder_t ph;
     ph.mode = ph_mode;
+    custom_patterns_lock();
+    int oom = 0;
     for (int i = 0; i < custom_count; i++) {
         if (!enable_bit(rb_enable_bits, NUM_PATTERNS + i)) continue;
         ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
@@ -216,9 +218,11 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
         char *result = replace_all_matches(&custom_patterns[i].compiled, working,
                                            custom_patterns[i].boundary, &ph);
         free(working);
-        if (!result) rb_raise(rb_eNoMemError, "replace_all_matches allocation failed (custom)");
+        if (!result) { working = NULL; oom = 1; break; }
         working = result;
     }
+    custom_patterns_unlock();
+    if (oom) rb_raise(rb_eNoMemError, "replace_all_matches allocation failed (custom)");
 
     VALUE rb_result = rb_str_new_cstr(working);
     free(working);
