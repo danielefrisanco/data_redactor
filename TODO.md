@@ -900,7 +900,36 @@ big payloads don't block other Ruby threads.
   becomes load-bearing once the GVL is released (next item). The stress test in
   `spec/data_redactor_spec.rb` documents that it cannot crash the unlocked array
   under pure Ruby threads, and is the detector to rerun when GVL-release lands.
-- [ ] **Release the GVL during long redactions** — `rb_thread_call_without_gvl` so other Ruby threads can run while a big payload is being scanned. The lock above must be acquired *before* releasing the GVL and held until reacquiring it, so the array can't change mid-scan. **This is what makes the 0.12.0 mutex load-bearing** (and what the per-call re-entrancy work in §1d Phase-1-not-done depends on — the engine's per-scan mutable scratch must move to a per-call context before the GVL can be released safely).
+- [x] **Per-thread engine scan state (`feat/gvl-release`, Step 1 — landed, no GVL change yet).**
+  Split `engine_t` into immutable compiled state (shared, read-only after build)
+  and a new per-thread `scan_state_t` (NFA scratch `seen`/`clist`/`nlist`/`estack`/
+  `gen`, the digit/IBAN merge cursors, AND the lazy DFA cache). Stored in a
+  `__thread scan_state_t *` array, lazily grown to `g_eng_n`. A `g_pattern_gen`
+  counter (bumped by `mm_add`/`mm_remove`/`mm_clear_custom`) drops a thread's whole
+  cache when the pattern set changes — simplest safe invalidation (slot p can hold
+  a different pattern after `mm_remove` compacts `g_eng`). **Per-thread state is NOT
+  freed on thread exit yet** (bounded by peak thread count; documented; revisit —
+  a thread-exit cleanup via `pthread_key_t` destructor or a registry is the follow-up).
+  Verified: 286 specs green + a differential gate (`prototypes/.../verify_gem_refactor.rb`,
+  ~6000 edge+random inputs byte-for-byte vs the pre-refactor baseline) + new
+  gen-invalidation specs. **Perf: 0 allocations/scan in steady state (unchanged);
+  ~3% lower small-input throughput** from the extra `thread_state()` gen-check + the
+  `scan_state_t *` indirection. Acceptable for the safety win; recoverable —
+  hoist/inline the gen-check, tighten the TLS access. (Measured with a standalone
+  `perf.c` malloc-interpose + timing harness; see the CI-bench TODO below.)
+- [ ] **Release the GVL during long redactions (Step 2 — the actual GVL work).**
+  Now unblocked by per-thread state above. Wrap the C scan in
+  `rb_thread_call_without_gvl` **above a size threshold only** (small calls keep the
+  GVL and skip the release ceremony). Hold the 0.12.0 custom-pattern mutex across the
+  release (acquire before releasing the GVL, hold until reacquiring) so the array
+  can't change mid-scan. No Ruby `VALUE` access in the GVL-free region — the redact C
+  path is raw `char*`, so this is clean. **This is what makes the 0.12.0 mutex
+  load-bearing**; rerun the concurrency stress test (it becomes a real race detector
+  once the GVL is released).
+- [ ] **Recover the ~3% small-input throughput** lost to the per-thread-state
+  indirection (hoist the `thread_state()` generation check out of the hot path /
+  cache the `scan_state_t *` base; consider inlining). Low priority — within run
+  variance for most callers — but worth a pass before the paper's benchmark table.
 - [ ] **Upgrade to `pthread_rwlock_t`** *only if* registration ever becomes hot enough that the mutex's reader-exclusion shows up — current contention is negligible, so the simpler mutex stands.
 - **Atomic snapshot alternative** — copy-on-write the custom-pattern array on every mutation; readers grab a pointer to the current snapshot under a brief lock and use it lock-free. More allocation per write, zero contention per read. Probably overkill until someone reports it as a real problem.
 - **Tests** — Ruby thread-stress test that registers/removes patterns from one thread while N readers `redact` concurrently. Run under TSan in CI on Linux if affordable.
@@ -986,11 +1015,21 @@ mislead more than inform.
       strongest linearity evidence (flat 7 MB/s all the way up).
 
 **Follow-up (separate task, not part of the benchmark suite):**
-- [ ] CI benchmark integration — a PR job that runs the suite on the branch +
-      `main` and posts a before/after comment (e.g. `github-action-benchmark`,
-      history on `gh-pages`). Caveat: GitHub-hosted runners have 5–15%
-      run-to-run variance, so any regression gate needs a loose threshold (≥20%)
-      or must stay informational-only.
+- [ ] **CI benchmark / performance-regression test (WANTED).** A PR job that runs
+      a benchmark on the branch + `main` and flags regressions, so changes like the
+      v19 port and the per-thread-state refactor can't silently slow the hot path.
+      Two layers worth having:
+      - *Engine-level micro-bench* (no Ruby VM noise): drive the standalone
+        matcher `.so` (like the throwaway `/tmp/diffgate/perf.c` used to clear the
+        scan-state refactor — ~120k small scans/sec, 0 allocs/scan) and assert
+        scans/sec + allocs-per-scan stay within a threshold. Most stable signal.
+      - *Gem-level bench* via `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting
+        a before/after comment (e.g. `github-action-benchmark`, history on
+        `gh-pages`).
+      Caveat: GitHub-hosted runners have 5–15% run-to-run variance, so any hard
+      gate needs a loose threshold (≥20%) or must stay informational-only; the
+      allocs-per-scan count is exact and *can* be a hard gate (it must be 0 in
+      steady state).
 
 ---
 
