@@ -909,6 +909,68 @@ RSpec.describe DataRedactor do
           .to raise_error(DataRedactor::UnknownTagError)
       end
     end
+
+    describe "concurrent registration vs redaction" do
+      # Functional guard for the custom-pattern mutex. The readers run with
+      # custom patterns ENABLED (default redact/scan, no `only:`), so each call
+      # iterates the shared custom array while the writer add/remove-churns it.
+      #
+      # Caveat on what this proves: MRI's GVL serialises C-extension calls today
+      # (no path releases it), so the writer's realloc and a reader's loop cannot
+      # actually interleave at the instruction level — the unlocked array race is
+      # latent and a pure-Ruby-threads test will NOT reliably crash without the
+      # mutex (verified). So this is not a sufficient detector of the race on its
+      # own. It guards what it can: that the lock introduces no deadlock and that
+      # concurrent registration + redaction stays functionally correct. It
+      # becomes a real race detector once the GVL is released for large payloads
+      # (the deferred Phase-2 work), at which point this test should be rerun
+      # under that change. The redacted built-ins and the always-present "stable"
+      # custom are invariant to the churn, so their absence from the output is a
+      # stable assertion regardless of interleaving.
+      it "stays correct and crash-free while patterns churn from another thread" do
+        # Keep a stable, always-present custom pattern so the reader loop has a
+        # real entry to walk even between the writer's add/remove of "churn".
+        DataRedactor.add_pattern(name: "stable", regex: "STABLE-[0-9]{4}")
+        input = "email user@example.com card 4111 1111 1111 1111 id STABLE-7777"
+
+        stop   = false
+        errors = Queue.new
+
+        writer = Thread.new do
+          i = 0
+          until stop
+            DataRedactor.add_pattern(name: "churn#{i % 16}", regex: "ZZZ-[0-9]{4}")
+            DataRedactor.remove_pattern("churn#{i % 16}")
+            i += 1
+          end
+        rescue => e
+          errors << e
+        end
+
+        readers = Array.new(8) do
+          Thread.new do
+            3_000.times do
+              got = DataRedactor.redact(input)
+              # Built-ins and the always-present "stable" custom must always fire,
+              # regardless of how the churn interleaves.
+              raise "email leaked: #{got.inspect}"  if got.include?("user@example.com")
+              raise "card leaked: #{got.inspect}"   if got.include?("4111 1111 1111 1111")
+              raise "stable leaked: #{got.inspect}" if got.include?("STABLE-7777")
+              DataRedactor.scan(input)
+            end
+          rescue => e
+            errors << e
+          end
+        end
+
+        readers.each(&:join)
+        stop = true
+        writer.join
+
+        raise errors.pop until errors.empty?
+        expect(errors).to be_empty
+      end
+    end
   end
 
   describe ".scan" do
