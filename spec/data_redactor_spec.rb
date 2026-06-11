@@ -863,6 +863,52 @@ RSpec.describe DataRedactor do
       end
     end
 
+    describe "engine scan-state invalidation across pattern-set changes" do
+      # The v19 engine caches per-thread scan state (NFA scratch + lazy DFA),
+      # keyed by pattern slot. add_pattern/remove_pattern/clear_custom_patterns!
+      # bump a generation counter that drops and rebuilds that cache. This
+      # exercises the drop-and-regrow path on the same thread (warm cache, then
+      # mutate the pattern set, then redact again) and asserts the built-in
+      # cache stays correct and custom patterns appear/disappear as expected.
+      it "redacts correctly after add/remove churn between calls" do
+        text = "email a@b.com and run EMP-123456 plus card 4111 1111 1111 1111"
+
+        # Warm the cache on built-ins only.
+        warm = DataRedactor.redact(text)
+        expect(warm).not_to include("a@b.com")
+        expect(warm).not_to include("4111 1111 1111 1111")
+        expect(warm).to include("EMP-123456") # not a built-in yet
+
+        # Add a custom -> generation bump -> cache dropped & rebuilt next call.
+        DataRedactor.add_pattern(name: "emp", regex: "EMP-[0-9]{6}")
+        after_add = DataRedactor.redact(text)
+        expect(after_add).not_to include("EMP-123456")  # custom now fires
+        expect(after_add).not_to include("a@b.com")      # built-ins still fire
+        expect(after_add).not_to include("4111 1111 1111 1111")
+
+        # Remove it -> generation bump -> custom gone, built-ins still correct.
+        DataRedactor.remove_pattern("emp")
+        after_remove = DataRedactor.redact(text)
+        expect(after_remove).to eq(warm)
+      end
+
+      it "keeps two customs independent after a middle removal compacts slots" do
+        # remove_pattern compacts the engine array, so slot p shifts to a
+        # different pattern. The generation bump must invalidate the cache so the
+        # shifted slot is not served from a stale DFA.
+        DataRedactor.add_pattern(name: "x", regex: "XX-[0-9]{3}")
+        DataRedactor.add_pattern(name: "y", regex: "YY-[0-9]{3}")
+        DataRedactor.add_pattern(name: "z", regex: "ZZ-[0-9]{3}")
+        DataRedactor.redact("XX-111 YY-222 ZZ-333") # warm all three slots
+
+        DataRedactor.remove_pattern("y") # compacts: z shifts into y's old slot
+        got = DataRedactor.redact("XX-111 YY-222 ZZ-333")
+        expect(got).not_to include("XX-111")
+        expect(got).to include("YY-222")       # removed
+        expect(got).not_to include("ZZ-333")   # still matches despite slot shift
+      end
+    end
+
     describe "validation" do
       it "raises ArgumentError for an empty name" do
         expect { DataRedactor.add_pattern(name: "", regex: "EMP-[0-9]+") }
