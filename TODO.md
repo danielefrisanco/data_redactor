@@ -884,10 +884,24 @@ Current `redact` runs each pattern over a fresh working buffer, copying non-matc
 
 ## Full thread safety
 
-Today `redact` and `scan` are thread-safe but `add_pattern` / `remove_pattern` / `clear_custom_patterns!` are not (documented in README as "register at boot"). Goal: make every public method safe to call from any thread at any time.
+Today `redact`/`scan` and now custom-pattern registration are thread-safe (the
+mutex below, 0.12.0). Remaining goal: release the GVL during long redactions so
+big payloads don't block other Ruby threads.
 
-- **Reader-writer lock around the custom-pattern array** — `redact`/`scan` take a read lock for the duration of the call (they already iterate the array), `add_pattern`/`remove_pattern`/`clear_custom_patterns!` take a write lock. Use `pthread_rwlock_t` (POSIX) — or, simpler and good enough, a plain `pthread_mutex_t` since contention is low in practice.
-- **Release the GVL during long redactions** — `rb_thread_call_without_gvl` so other Ruby threads can run while a big payload is being scanned. The lock above must be acquired *before* releasing the GVL and held until reacquiring it, so the array can't change mid-scan.
+- [x] **Lock around the custom-pattern array (0.12.0, `feat/custom-pattern-lock`).**
+  Shipped a plain `pthread_mutex_t` (not a rwlock — contention is low, and a
+  mutex avoids the extra portability surface): `add_pattern`/`remove_pattern`/
+  `clear_custom_patterns!` take it around the array mutation; `redact`/`scan`
+  take it around their custom-pattern loop. Critical sections are kept
+  rb_raise-free (validation/regcomp before the lock; OOM deferred and raised
+  after unlock) so the mutex can't leak via longjmp. Linked `-lpthread` on glibc
+  (no-op on musl/macOS). README "register at boot" caveat lifted.
+  NOTE: under today's GVL-held design this lock closes a *latent* race — it only
+  becomes load-bearing once the GVL is released (next item). The stress test in
+  `spec/data_redactor_spec.rb` documents that it cannot crash the unlocked array
+  under pure Ruby threads, and is the detector to rerun when GVL-release lands.
+- [ ] **Release the GVL during long redactions** — `rb_thread_call_without_gvl` so other Ruby threads can run while a big payload is being scanned. The lock above must be acquired *before* releasing the GVL and held until reacquiring it, so the array can't change mid-scan. **This is what makes the 0.12.0 mutex load-bearing** (and what the per-call re-entrancy work in §1d Phase-1-not-done depends on — the engine's per-scan mutable scratch must move to a per-call context before the GVL can be released safely).
+- [ ] **Upgrade to `pthread_rwlock_t`** *only if* registration ever becomes hot enough that the mutex's reader-exclusion shows up — current contention is negligible, so the simpler mutex stands.
 - **Atomic snapshot alternative** — copy-on-write the custom-pattern array on every mutation; readers grab a pointer to the current snapshot under a brief lock and use it lock-free. More allocation per write, zero contention per read. Probably overkill until someone reports it as a real problem.
 - **Tests** — Ruby thread-stress test that registers/removes patterns from one thread while N readers `redact` concurrently. Run under TSan in CI on Linux if affordable.
 - **Update README** — once shipped, replace the "not thread-safe" caveat in the Thread safety section with a plain "fully thread-safe" statement, and note the `rb_thread_call_without_gvl` behavior.

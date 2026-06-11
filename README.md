@@ -19,7 +19,7 @@ It ships **88 built-in patterns** across 15+ countries, grouped into tags
 (`:credentials`, `:financial`, `:contact`, ...) so you can redact only what you
 care about. Beyond plain strings it can walk nested Hashes, Arrays, and JSON,
 audit a payload without mutating it (`scan`), and plug into Logger, Rails, and
-Rack. You can also register your own patterns at boot.
+Rack. You can also register your own patterns — at boot or at runtime from any thread.
 
 ### Use cases
 
@@ -161,7 +161,7 @@ DataRedactor.redact_json("not json")  # => JSON::ParserError
 
 ### Custom patterns
 
-Teams often have internal IDs that the gem can't ship. Register them at boot:
+Teams often have internal IDs that the gem can't ship. Register them at boot — or at runtime from any thread (registration is thread-safe, see [Thread safety](#thread-safety)):
 
 ```ruby
 # String (POSIX ERE) or Regexp — both accepted
@@ -573,7 +573,7 @@ All C-side buffers are heap-allocated with `malloc`/`strdup` and freed before th
 
 `DataRedactor.redact` and `DataRedactor.scan` are safe to call concurrently from multiple threads. The v19 engine holds MRI's GVL for the duration of each call (no `rb_thread_call_without_gvl`), so concurrent calls are serialised by the GVL. Each call allocates its own working buffers; built-in engine state is read-only after `mm_init()` at load time.
 
-`DataRedactor.add_pattern`, `remove_pattern`, and `clear_custom_patterns!` mutate a shared dynamic array and are **not** thread-safe. Register custom patterns once at boot — before spawning worker threads or forking — and they will be visible (read-only) to every subsequent `redact`/`scan` call.
+`DataRedactor.add_pattern`, `remove_pattern`, and `clear_custom_patterns!` are also thread-safe: the shared custom-pattern array is guarded by a mutex that writers take around the mutation and `redact`/`scan` take around their custom-pattern loop. You can register, remove, or clear custom patterns from any thread at any time — including from request handlers in a running server — without coordinating with in-flight redactions. (Registration is still a rare operation; the lock is uncontended in practice.)
 
 ## Versioning
 
