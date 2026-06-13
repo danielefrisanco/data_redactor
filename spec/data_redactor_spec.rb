@@ -1063,6 +1063,33 @@ RSpec.describe DataRedactor do
         raise errors.pop until errors.empty?
         expect(errors).to be_empty
       end
+
+      # Exercises the pthread_key destructor that frees a thread's per-thread
+      # scan state (NFA scratch + DFA cache) at thread exit. Each iteration
+      # spawns a fresh thread that warms its own large per-thread cache, then
+      # exits — firing the destructor. Many rounds must stay correct and
+      # crash-free (a double-free or use-after-free in the destructor would
+      # surface here). Memory reclamation itself is checked separately by an
+      # RSS-stability bench, not asserted from Ruby.
+      it "frees per-thread state across many short-lived threads" do
+        input = ("log a@b.com ip 10.0.0.1 ssn 123-45-6789 " * 200) # > GVL threshold
+        reference = DataRedactor.redact(input)
+        errors = Queue.new
+
+        50.times do
+          t = Thread.new do
+            5.times do
+              raise "diverged" unless DataRedactor.redact(input) == reference
+            end
+          rescue => e
+            errors << e
+          end
+          t.join # thread exits here -> destructor runs
+        end
+
+        raise errors.pop until errors.empty?
+        expect(errors).to be_empty
+      end
     end
   end
 

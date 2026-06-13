@@ -23,7 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Small inputs keep the GVL. No public API change; output is byte-for-byte
   identical (verified by a differential gate over ~6000 inputs). The per-thread
   DFA cache's allocation floor was tuned so this adds ~0.86 MB per scanning
-  thread (down from a naive ~3.2 MB), with no throughput change.
+  thread (down from a naive ~3.2 MB), with no throughput change. Per-thread scan
+  state is freed at thread exit (via a `pthread_key` destructor), so processes
+  that churn many short-lived scanning threads do not accumulate dead caches —
+  RSS stays flat across thousands of threads.
 
 ## [0.11.0] - 2026-06-10
 

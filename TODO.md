@@ -943,12 +943,14 @@ big payloads don't block other Ruby threads.
   slack removed); throughput within noise on both 57 B and 16 KB inputs;
   differential gate still byte-identical.** The few larger DFAs just do a couple
   extra warmup doublings, off the hot path.
-- [ ] **Free per-thread scan state on thread exit.** Currently NOT freed — a
-  thread's `scan_state_t` array (scratch + DFA cache) leaks when the thread dies.
-  Bounded by peak thread count, matches the gem's "lives until VM exit" model for
-  built-ins, and acceptable for now, but a real cleanup: register the per-thread
-  block in a `pthread_key_t` whose destructor frees it, or keep a global registry
-  freed at exit. Do this before anything that spawns many short-lived threads.
+- [x] **Free per-thread scan state on thread exit (0.13.0 — done).** Each thread's
+  scan state now lives in a heap `thread_block_t` (count-in-header so the destructor
+  is self-contained) registered with a `pthread_key_t` whose destructor frees it at
+  thread exit. Processes that churn many short-lived scanning threads no longer
+  accumulate dead caches — verified RSS flat (~0.22 KB/thread) over 500 churning
+  threads, plus a spawn-join stress spec exercises the destructor path. The
+  `__thread` pointer stays the hot-path handle; the key value is re-set after any
+  realloc since the block may move.
 - [ ] **Recover the ~3% small-input throughput** lost to the per-thread-state
   indirection (hoist the `thread_state()` generation check out of the hot path /
   cache the `scan_state_t *` base; consider inlining). Low priority — within run
