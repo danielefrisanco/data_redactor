@@ -46,6 +46,12 @@ DataRedactor.redact(text)
 # => "User CF is [REDACTED] and key is [REDACTED]"
 ```
 
+Prefer runnable code? The [`examples/`](examples/) directory has self-contained,
+copy-pasteable scripts for every feature below — core redaction, scan/dry-run,
+custom patterns, deep/JSON traversal, and the Logger / Rack / Rails / LLM
+integrations. Run any of them with `bundle exec ruby examples/<name>.rb` (see
+[examples/README.md](examples/README.md)).
+
 ### Filtering by tag or pattern name
 
 `only:` and `except:` both accept a single value or an Array, mixing **Symbols** (tag names) and **Strings** (specific pattern names).
@@ -415,6 +421,16 @@ redactor/
 │       └── tags.h                # TAG_* bit constants
 ├── spec/
 │   └── data_redactor_spec.rb     # RSpec tests — at least one example per pattern, plus filter / placeholder / custom-pattern coverage
+├── examples/                     # Repo-only runnable usage scripts (not packaged in the gem)
+│   ├── README.md                 # Index + how to run
+│   ├── basic_redact.rb           # redact, tag filters, placeholder modes
+│   ├── scan_report.rb            # scan dry-run with byte offsets
+│   ├── custom_pattern.rb         # add_pattern + name_pattern
+│   ├── deep_and_json.rb          # redact_deep / redact_json
+│   ├── logger.rb                 # Logger::Formatter integration
+│   ├── rack_middleware.rb        # Rack middleware (body + headers)
+│   ├── rails_filter.rb           # filter_parameters adapter
+│   └── llm_payload.rb            # Claude / OpenAI message + response redaction
 ├── benchmark/                    # Repo-only perf scripts (not packaged in the gem)
 │   ├── README.md                 # How to run, what each script measures
 │   ├── support/corpus.rb         # Shared payload builders + pure-Ruby baseline redactor
