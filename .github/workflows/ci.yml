@@ -38,6 +38,18 @@ jobs:
           name: data-redactor-gem
           path: pkg/
 
+  alloc-gate:
+    name: Zero-allocation hot-path gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      # No Ruby needed: the gate compiles the matcher engine standalone and
+      # asserts the steady-state hot path allocates nothing. Deterministic, so
+      # it is a hard gate (unlike throughput, which is too noisy on CI runners).
+      - name: Build and run the allocation-regression gate
+        run: benchmark/run_alloc_gate.sh
+
   cross-compile-smoke:
     name: Cross-compile smoke test (x86_64-linux)
     runs-on: ubuntu-latest
