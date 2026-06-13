@@ -961,18 +961,15 @@ RSpec.describe DataRedactor do
       # custom patterns ENABLED (default redact/scan, no `only:`), so each call
       # iterates the shared custom array while the writer add/remove-churns it.
       #
-      # Caveat on what this proves: MRI's GVL serialises C-extension calls today
-      # (no path releases it), so the writer's realloc and a reader's loop cannot
-      # actually interleave at the instruction level — the unlocked array race is
-      # latent and a pure-Ruby-threads test will NOT reliably crash without the
-      # mutex (verified). So this is not a sufficient detector of the race on its
-      # own. It guards what it can: that the lock introduces no deadlock and that
-      # concurrent registration + redaction stays functionally correct. It
-      # becomes a real race detector once the GVL is released for large payloads
-      # (the deferred Phase-2 work), at which point this test should be rerun
-      # under that change. The redacted built-ins and the always-present "stable"
-      # custom are invariant to the churn, so their absence from the output is a
-      # stable assertion regardless of interleaving.
+      # Note on the GVL: this test uses a SMALL input (< the C-layer GVL-release
+      # threshold), so redact keeps the GVL here and the custom-array access is
+      # serialised. It guards the mutex against deadlock and asserts functional
+      # correctness under churn. The large-input sibling test below crosses the
+      # threshold so the built-in scan runs GVL-free in true parallel — that one
+      # is the real race detector for the per-thread scan-state refactor. The
+      # redacted built-ins and the always-present "stable" custom are invariant
+      # to the churn, so their absence from the output is a stable assertion
+      # regardless of interleaving.
       it "stays correct and crash-free while patterns churn from another thread" do
         # Keep a stable, always-present custom pattern so the reader loop has a
         # real entry to walk even between the writer's add/remove of "churn".
@@ -1003,6 +1000,56 @@ RSpec.describe DataRedactor do
               raise "card leaked: #{got.inspect}"   if got.include?("4111 1111 1111 1111")
               raise "stable leaked: #{got.inspect}" if got.include?("STABLE-7777")
               DataRedactor.scan(input)
+            end
+          rescue => e
+            errors << e
+          end
+        end
+
+        readers.each(&:join)
+        stop = true
+        writer.join
+
+        raise errors.pop until errors.empty?
+        expect(errors).to be_empty
+      end
+
+      # The real race detector for the per-thread scan-state refactor + GVL
+      # release. The input is large enough that redact releases the GVL around
+      # the built-in v19 pass, so N threads run mm_scan TRULY in parallel — each
+      # mutating its own per-thread scan_state_t (NFA scratch + lazy DFA cache).
+      # If any of that state were still shared, concurrent scans would corrupt
+      # each other's matches or crash on a concurrent realloc. A writer churns
+      # the custom registry at the same time (generation-counter invalidation
+      # under contention). Correctness gate: every thread's output must equal the
+      # single-threaded reference for the same input.
+      it "scans large inputs in parallel (GVL released) without corruption" do
+        # > the C GVL_RELEASE_THRESHOLD (4 KB) so the GVL is actually released.
+        line  = "log email user#{rand(1000)}@example.com ip 10.0.#{rand(255)}.#{rand(255)} " \
+                "card 4111 1111 1111 1111 ssn 123-45-6789 iban DE89370400440532013000\n"
+        input = line * 200  # ~16 KB, many matches per scan
+        reference = DataRedactor.redact(input)
+        expect(reference).not_to include("@example.com")
+
+        stop   = false
+        errors = Queue.new
+
+        writer = Thread.new do
+          i = 0
+          until stop
+            DataRedactor.add_pattern(name: "churn#{i % 8}", regex: "QQQ-[0-9]{5}")
+            DataRedactor.remove_pattern("churn#{i % 8}")
+            i += 1
+          end
+        rescue => e
+          errors << e
+        end
+
+        readers = Array.new(8) do
+          Thread.new do
+            200.times do
+              got = DataRedactor.redact(input)
+              raise "output diverged under parallel GVL-free scan" unless got == reference
             end
           rescue => e
             errors << e

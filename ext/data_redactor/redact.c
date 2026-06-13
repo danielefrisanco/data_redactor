@@ -4,9 +4,18 @@
 #include "custom_patterns.h"
 #include "matcher.h"
 #include "tags.h"
+#include <ruby/thread.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+/* Inputs at or above this byte size release the GVL around the built-in v19
+ * pass so other Ruby threads can run during the scan. Below it, the
+ * rb_thread_call_without_gvl bookkeeping costs more than the scan, so we keep
+ * the GVL. The Ruby layer chunks inputs > CHUNK_SIZE (64 KB) before calling
+ * _redact, so the practical ceiling per call is one chunk; 4 KB cleanly
+ * separates per-leaf/log-line calls (keep GVL) from chunk-sized work (release). */
+#define GVL_RELEASE_THRESHOLD (4 * 1024)
 
 char *wrap_boundary(const char *core) {
     const char *prefix = "(^|[^0-9A-Za-z])(";
@@ -179,6 +188,41 @@ static char *redact_builtins(const char *input, size_t in_len, const int *bits,
     return output;
 }
 
+/* Trampoline for running redact_builtins() with the GVL released. Everything it
+ * touches is plain C (raw char* in/out, the per-thread engine state); no Ruby
+ * VALUE or Ruby API call happens inside, which is the contract for
+ * rb_thread_call_without_gvl. */
+typedef struct {
+    const char  *input;
+    size_t       in_len;
+    const int   *bits;
+    int          ph_mode;
+    const char  *ph_str_plain;
+    size_t       out_len;
+    char        *result;
+} builtins_args_t;
+
+static void *redact_builtins_nogvl(void *p) {
+    builtins_args_t *a = (builtins_args_t *)p;
+    a->result = redact_builtins(a->input, a->in_len, a->bits,
+                                a->ph_mode, a->ph_str_plain, &a->out_len);
+    return NULL;
+}
+
+/* Run the built-in v19 pass, releasing the GVL for inputs large enough that the
+ * scan dominates the release bookkeeping. Small inputs run inline under the GVL. */
+static char *redact_builtins_maybe_nogvl(const char *input, size_t in_len,
+                                         const int *bits, int ph_mode,
+                                         const char *ph_str_plain, size_t *out_len_p) {
+    if (in_len < GVL_RELEASE_THRESHOLD)
+        return redact_builtins(input, in_len, bits, ph_mode, ph_str_plain, out_len_p);
+
+    builtins_args_t a = { input, in_len, bits, ph_mode, ph_str_plain, 0, NULL };
+    rb_thread_call_without_gvl(redact_builtins_nogvl, &a, RUBY_UBF_IO, NULL);
+    *out_len_p = a.out_len;
+    return a.result;
+}
+
 VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
                               VALUE rb_ph_mode, VALUE rb_ph_str,
                               VALUE rb_enable_bits) {
@@ -197,7 +241,7 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
     int *bits = builtin_enable_bits(rb_enable_bits);
     if (!bits) rb_raise(rb_eNoMemError, "enable_bits allocation failed");
     size_t work_len = 0;
-    char *working = redact_builtins(input, in_len, bits, ph_mode, ph_str_plain, &work_len);
+    char *working = redact_builtins_maybe_nogvl(input, in_len, bits, ph_mode, ph_str_plain, &work_len);
     free(bits);
     if (!working) rb_raise(rb_eNoMemError, "built-in redaction allocation failed");
 

@@ -16,12 +16,31 @@
 require "fiddle"
 
 EXT      = File.expand_path("../../ext/data_redactor", __dir__)
+REPO     = File.expand_path("../..", __dir__)
 BASELINE = "/tmp/diffgate"
 BUILD    = "/tmp/diffgate/build"
 STRIDE   = 24  # sizeof(mm_match_t): int pad + size_t start + size_t length
 
+# The frozen baseline is the matcher as it was BEFORE the per-thread scan-state
+# refactor (parent of the "refactor: move matcher per-scan state ..." commit).
+# /tmp is volatile, so re-materialise the snapshot from git if it's missing —
+# the gate then works from a clean checkout with no manual setup.
+BASELINE_REF = "3c3b386^"
+BASELINE_FILES = %w[matcher.c patterns.c matcher.h patterns.h tags.h].freeze
+
 require "fileutils"
 FileUtils.mkdir_p(BUILD)
+
+unless BASELINE_FILES.all? { |f| File.exist?(File.join(BASELINE, f)) }
+  Dir.chdir(REPO) do
+    BASELINE_FILES.each do |f|
+      src = `git show #{BASELINE_REF}:ext/data_redactor/#{f}`
+      abort "cannot materialise baseline #{f} from #{BASELINE_REF}" unless $?.success?
+      File.write(File.join(BASELINE, f), src)
+    end
+  end
+  warn "baseline re-materialised from git #{BASELINE_REF}"
+end
 
 # Rename the exported symbols per build so the two .so's never collide in the
 # global symbol namespace (otherwise the second dlopen could resolve to the
