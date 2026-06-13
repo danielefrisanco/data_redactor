@@ -147,14 +147,24 @@ orientation is the deciding factor:
 file-scope mutable globals: `g_engines`, `g_dfa`, and crucially the per-scan cursors
 `g_digit_last_end[]` / `g_iban_last_end[]` and `g_gen[]`. Under threaded Ruby (Puma,
 Sidekiq) concurrent `redact` calls would race on these:
-- [ ] Separate **immutable, shared** state (compiled programs, DFA transition tables —
+- [x] Separate **immutable, shared** state (compiled programs, DFA transition tables —
       safe to share once built) from **per-scan mutable** state (match cursors,
       generation stamps, clist/nlist scratch) which must be stack-local or per-call.
-- [ ] Decide the model: per-call scratch (allocate/reuse on the C stack or a passed-in
+      **DONE (0.13.0).** `engine_t` split into immutable compiled state + per-thread
+      `scan_state_t` (NFA scratch, digit/IBAN cursors, lazy DFA cache), held in a
+      `__thread` block; `g_pattern_gen` invalidates a thread's cache on pattern-set
+      change. See "Full thread safety" §Step 1.
+- [x] Decide the model: per-call scratch (allocate/reuse on the C stack or a passed-in
       context struct) vs a GVL assumption. Do NOT assume the GVL serializes redaction —
       `redact` may release it for large inputs. Document the chosen guarantee.
-- [ ] Add a concurrency stress test (N threads redacting distinct inputs, compare to
+      **DONE (0.13.0).** Chose per-thread (`__thread`) state, not GVL serialisation:
+      `redact` releases the GVL for inputs ≥ 4 KB, so the built-in pass runs truly
+      parallel. Guarantee documented in README (Thread safety) + §Step 2.
+- [x] Add a concurrency stress test (N threads redacting distinct inputs, compare to
       single-threaded results) — mirrors prototype `stress-600` but parallel.
+      **DONE (0.13.0).** `spec/data_redactor_spec.rb` "concurrent registration vs
+      redaction": churn-while-redacting, parallel GVL-free scan (a real race detector
+      — fails 3/3 with `__thread` stripped), and short-lived-thread destructor coverage.
 
 **Gap 4 — selective merges over a dynamic set.** The digit group and IBAN union pass
 are detected by `parse_pure_digit` / `parse_iban_prefix` over the built-in set.
@@ -1059,6 +1069,18 @@ mislead more than inform.
       wired into CI as the `alloc-gate` job. Throughput is printed informational-only.
       This catches any future refactor that reintroduces per-scan allocation (the
       gem's zero-alloc hot path is the selling point).
+- [ ] **Run the alloc gate under musl/Alpine too (follow-up).** Today the `alloc-gate`
+      job compiles `benchmark/ci_alloc_gate.c` only on the default glibc ubuntu runner,
+      and the `musl-load` job only compiles-and-`require`s the gem on `ruby:3.3-alpine`
+      (a correctness smoke test, not a perf/alloc check). So the zero-allocation
+      steady-state invariant is **never verified against musl libc**. A musl-only
+      allocation regression (different malloc arena behaviour, a libc call that allocates
+      on musl but not glibc) would ship undetected. The gate needs only a C compiler
+      (no Ruby), so add a step to the existing `musl-load` job (or a sibling
+      `alloc-gate-musl` job on `ruby:3.3-alpine` / `alpine` + `build-base`) that runs
+      `benchmark/run_alloc_gate.sh`. Deterministic, so it can be a hard gate exactly
+      like the glibc one. (Optionally also assert a loose throughput floor there, but
+      treat that as informational — Alpine CI runners are as noisy as the glibc ones.)
 - [ ] **CI throughput-trend visualization (follow-up, lower priority).** Add
       `github-action-benchmark` (or similar) running the gem-level
       `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting a before/after PR comment
