@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `examples/` directory with runnable, copy-pasteable usage scripts for every
+  feature (core redaction, scan/dry-run, custom patterns, deep/JSON traversal,
+  and the Logger / Rack / Rails / LLM integrations). Repo-only — not packaged in
+  the gem. Linked from the README.
+
 ## [0.13.0] - 2026-06-13
 
 ### Changed

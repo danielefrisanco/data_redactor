@@ -1101,7 +1101,7 @@ Things to do **once the gem is published** to build visibility and trust.
 - [x] Add Shields.io badges to README: gem version, CI build, license
 - [x] Write YARD docs for all public methods (`@param`, `@return`, `@raise`)
 - [x] Add a thread-safety note to README (built-in `regex_t` array is read-only after init; custom pattern registration is not thread-safe — document this)
-- [ ] Create a minimal demo app or `examples/` directory showing real-world usage (Rails logger wrapper, Rack middleware, etc.)
+- [x] Create a minimal demo app or `examples/` directory showing real-world usage (Rails logger wrapper, Rack middleware, etc.) — **DONE.** `examples/` (8 runnable scripts + index README) covering core redaction, scan, custom patterns, deep/JSON, and the Logger/Rack/Rails/LLM integrations. Repo-only (gemspec allowlist excludes it). Linked from README.
 
 ### Announcement
 - [ ] Post to r/ruby and r/rails — ask for feedback, don't just "sell" it
