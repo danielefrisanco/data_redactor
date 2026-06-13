@@ -571,7 +571,7 @@ All C-side buffers are heap-allocated with `malloc`/`strdup` and freed before th
 
 ## Thread safety
 
-`DataRedactor.redact` and `DataRedactor.scan` are safe to call concurrently from multiple threads. The v19 engine holds MRI's GVL for the duration of each call (no `rb_thread_call_without_gvl`), so concurrent calls are serialised by the GVL. Each call allocates its own working buffers; built-in engine state is read-only after `mm_init()` at load time.
+`DataRedactor.redact` and `DataRedactor.scan` are safe to call concurrently from multiple threads. The v19 engine keeps its compiled patterns immutable and shared (read-only after `mm_init()` at load time) and all per-scan mutable state — NFA scratch and the lazy DFA cache — in per-thread storage, so concurrent scans never touch each other's state. For inputs above a few KB, `redact` **releases the GVL** (`rb_thread_call_without_gvl`) around the built-in scan, so a large redaction on one thread no longer blocks other Ruby threads from running. Small inputs keep the GVL (the release bookkeeping would cost more than the scan). Each call allocates its own working buffers.
 
 `DataRedactor.add_pattern`, `remove_pattern`, and `clear_custom_patterns!` are also thread-safe: the shared custom-pattern array is guarded by a mutex that writers take around the mutation and `redact`/`scan` take around their custom-pattern loop. You can register, remove, or clear custom patterns from any thread at any time — including from request handlers in a running server — without coordinating with in-flight redactions. (Registration is still a rare operation; the lock is uncontended in practice.)
 

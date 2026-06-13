@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request handler — without coordinating with in-flight redactions. The previous
   "register custom patterns at boot only" caveat is lifted. (The C extension now
   links `-lpthread` on glibc; no-op on musl and macOS where pthread is in libc.)
+- **`redact` releases the GVL for large inputs.** The v19 engine's per-scan
+  mutable state (NFA scratch and the lazy DFA cache) moved into per-thread
+  storage, making the engine re-entrant. `redact` now releases the GVL
+  (`rb_thread_call_without_gvl`) around the built-in scan for inputs above a few
+  KB, so a large redaction on one thread no longer blocks other Ruby threads.
+  Small inputs keep the GVL. No public API change; output is byte-for-byte
+  identical (verified by a differential gate over ~6000 inputs).
 
 ## [0.11.0] - 2026-06-10
 

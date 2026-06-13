@@ -917,15 +917,23 @@ big payloads don't block other Ruby threads.
   `scan_state_t *` indirection. Acceptable for the safety win; recoverable —
   hoist/inline the gen-check, tighten the TLS access. (Measured with a standalone
   `perf.c` malloc-interpose + timing harness; see the CI-bench TODO below.)
-- [ ] **Release the GVL during long redactions (Step 2 — the actual GVL work).**
-  Now unblocked by per-thread state above. Wrap the C scan in
-  `rb_thread_call_without_gvl` **above a size threshold only** (small calls keep the
-  GVL and skip the release ceremony). Hold the 0.12.0 custom-pattern mutex across the
-  release (acquire before releasing the GVL, hold until reacquiring) so the array
-  can't change mid-scan. No Ruby `VALUE` access in the GVL-free region — the redact C
-  path is raw `char*`, so this is clean. **This is what makes the 0.12.0 mutex
-  load-bearing**; rerun the concurrency stress test (it becomes a real race detector
-  once the GVL is released).
+- [x] **Release the GVL during long redactions (Step 2, 0.13.0 — done).**
+  `redact` releases the GVL via `rb_thread_call_without_gvl` around the built-in
+  v19 pass (`redact_builtins`, raw `char*`, no Ruby `VALUE`) for inputs ≥
+  `GVL_RELEASE_THRESHOLD` (4 KB); smaller inputs run inline under the GVL. The
+  custom-pattern glibc loop stays under the GVL (it's reached *after* the GVL is
+  reacquired, and the `scan` variant builds match hashes mid-loop — `VALUE`s that
+  can't be in a GVL-free region). `RSTRING_PTR` is read before release and the
+  `rb_text` VALUE stays live on the C stack, so the buffer is pinned (MRI doesn't
+  move strings without explicit compaction). The new "scans large inputs in
+  parallel (GVL released)" spec is a REAL race detector — verified it fails 3/3
+  when `__thread` is removed from the per-thread state (true parallel scans then
+  corrupt each other), passes with it. **Not yet covered:** widening the GVL-free
+  region to include custom patterns — blocked on moving customs onto v19 (§1d
+  Gap 2). Until then, a payload that is both huge AND custom-heavy still blocks
+  during its (rare) custom phase. `scan` does not release the GVL yet (its event
+  loop is `VALUE`-building throughout) — a separate task if scan-heavy large
+  inputs ever matter.
 - [ ] **Recover the ~3% small-input throughput** lost to the per-thread-state
   indirection (hoist the `thread_state()` generation check out of the hot path /
   cache the `scan_state_t *` base; consider inlining). Low priority — within run
