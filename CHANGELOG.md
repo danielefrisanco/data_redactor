@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Custom-pattern registration is now thread-safe.** `add_pattern`,
+  `remove_pattern`, and `clear_custom_patterns!` are guarded by a mutex shared
+  with the `redact`/`scan` custom-pattern loop, so patterns may be registered,
+  removed, or cleared from any thread at any time — including at runtime from a
+  request handler — without coordinating with in-flight redactions. The previous
+  "register custom patterns at boot only" caveat is lifted. (The C extension now
+  links `-lpthread` on glibc; no-op on musl and macOS where pthread is in libc.)
+
 ## [0.11.0] - 2026-06-10
 
 ### Added
