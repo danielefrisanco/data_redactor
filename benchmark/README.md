@@ -26,6 +26,7 @@ one the `.so` was compiled for and fail with `incompatible library version`.
 | `scaling.rb`       | Runtime vs input size (1 KB → 50 MB). MB/s should stay roughly flat, confirming linear scaling. |
 | `per_pattern.rb`   | Per-pattern scan cost over a 1 MB payload, sorted slowest-first. Surfaces expensive patterns to target in optimization work. |
 | `matcher_isolated.rb` | Matcher-only cost (just "find all matches", no placeholder substitution): `DataRedactor.scan` vs the pure-Ruby per-pattern scan. Used during combined-matcher development to isolate matcher cost from surrounding pipeline work. |
+| `ci_alloc_gate.c` / `run_alloc_gate.sh` | **Regression gate, not a measurement.** Compiles the matcher engine standalone, interposes `malloc`/`realloc`/`calloc`, and asserts the steady-state hot path allocates **zero** times per scan. Exits non-zero on any allocation (CI hard gate); prints throughput as informational. Run with `benchmark/run_alloc_gate.sh`. Needs only a C compiler — no Ruby. |
 
 ## How the comparison stays honest
 

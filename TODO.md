@@ -943,12 +943,14 @@ big payloads don't block other Ruby threads.
   slack removed); throughput within noise on both 57 B and 16 KB inputs;
   differential gate still byte-identical.** The few larger DFAs just do a couple
   extra warmup doublings, off the hot path.
-- [ ] **Free per-thread scan state on thread exit.** Currently NOT freed — a
-  thread's `scan_state_t` array (scratch + DFA cache) leaks when the thread dies.
-  Bounded by peak thread count, matches the gem's "lives until VM exit" model for
-  built-ins, and acceptable for now, but a real cleanup: register the per-thread
-  block in a `pthread_key_t` whose destructor frees it, or keep a global registry
-  freed at exit. Do this before anything that spawns many short-lived threads.
+- [x] **Free per-thread scan state on thread exit (0.13.0 — done).** Each thread's
+  scan state now lives in a heap `thread_block_t` (count-in-header so the destructor
+  is self-contained) registered with a `pthread_key_t` whose destructor frees it at
+  thread exit. Processes that churn many short-lived scanning threads no longer
+  accumulate dead caches — verified RSS flat (~0.22 KB/thread) over 500 churning
+  threads, plus a spawn-join stress spec exercises the destructor path. The
+  `__thread` pointer stays the hot-path handle; the key value is re-set after any
+  realloc since the block may move.
 - [ ] **Recover the ~3% small-input throughput** lost to the per-thread-state
   indirection (hoist the `thread_state()` generation check out of the hot path /
   cache the `scan_state_t *` base; consider inlining). Low priority — within run
@@ -1050,21 +1052,19 @@ mislead more than inform.
       strongest linearity evidence (flat 7 MB/s all the way up).
 
 **Follow-up (separate task, not part of the benchmark suite):**
-- [ ] **CI benchmark / performance-regression test (WANTED).** A PR job that runs
-      a benchmark on the branch + `main` and flags regressions, so changes like the
-      v19 port and the per-thread-state refactor can't silently slow the hot path.
-      Two layers worth having:
-      - *Engine-level micro-bench* (no Ruby VM noise): drive the standalone
-        matcher `.so` (like the throwaway `/tmp/diffgate/perf.c` used to clear the
-        scan-state refactor — ~120k small scans/sec, 0 allocs/scan) and assert
-        scans/sec + allocs-per-scan stay within a threshold. Most stable signal.
-      - *Gem-level bench* via `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting
-        a before/after comment (e.g. `github-action-benchmark`, history on
-        `gh-pages`).
-      Caveat: GitHub-hosted runners have 5–15% run-to-run variance, so any hard
-      gate needs a loose threshold (≥20%) or must stay informational-only; the
-      allocs-per-scan count is exact and *can* be a hard gate (it must be 0 in
-      steady state).
+- [x] **CI allocation-regression gate (0.13.0 — done).** `benchmark/ci_alloc_gate.c`
+      (+ `run_alloc_gate.sh`) compiles the matcher standalone, interposes
+      `malloc`/`realloc`/`calloc`, and asserts the steady-state hot path allocates
+      **0** times per scan — a deterministic HARD gate (no runner-variance problem),
+      wired into CI as the `alloc-gate` job. Throughput is printed informational-only.
+      This catches any future refactor that reintroduces per-scan allocation (the
+      gem's zero-alloc hot path is the selling point).
+- [ ] **CI throughput-trend visualization (follow-up, lower priority).** Add
+      `github-action-benchmark` (or similar) running the gem-level
+      `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting a before/after PR comment
+      with history on `gh-pages`. Informational only (or a loose ≥20% gate) — GitHub
+      runners have 5–15% run-to-run variance, so throughput can't be a hard gate the
+      way allocs-per-scan can. Nice-to-have for spotting slow drift over time.
 
 ---
 

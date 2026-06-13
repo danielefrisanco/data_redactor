@@ -44,6 +44,7 @@
 #include <stdint.h>
 #include <ctype.h>
 #include <limits.h>
+#include <pthread.h>
 
 /* ========================================================================
  * 0. Utilities
@@ -389,7 +390,7 @@ typedef struct {
 /* engine_t holds ONLY immutable, compiled state — built once at mm_init()/mm_add()
  * and never written during a scan, so it is safe to share read-only across
  * threads. All per-scan mutable state (NFA scratch, merge cursors) and the lazy
- * DFA cache live in scan_state_t, which is per-thread (t_state below). This
+ * DFA cache live in scan_state_t, which is per-thread (t_block below). This
  * split is what lets redact/scan release the GVL: with no shared writes during a
  * scan, concurrent scans on distinct threads cannot race. */
 typedef struct {
@@ -440,13 +441,24 @@ static int       g_initialized = 0;
  * future refinement (see TODO §"Full thread safety"). */
 static unsigned g_pattern_gen = 0;
 
-/* Per-thread mutable scan state, one scan_state_t per engine. Lazily grown to
- * g_eng_n. NOT freed on thread exit for now (bounded by peak thread count,
- * matches the gem's "lives until VM exit" model for built-ins) — documented in
- * TODO §"Full thread safety" as a future cleanup. */
-static __thread scan_state_t *t_state   = NULL;
-static __thread int           t_state_n = 0;
-static __thread unsigned      t_gen     = 0;
+/* Per-thread mutable scan state: one scan_state_t per engine, lazily grown to
+ * g_eng_n. Held in a heap block whose header carries the element count, so the
+ * pthread_key destructor (which frees the block at thread exit) is fully
+ * self-contained — it must NOT read __thread storage, which may already be torn
+ * down when key destructors run. The __thread pointer is the fast hot-path
+ * handle; the key holds the same pointer purely so it can be reclaimed on exit.
+ * This bounds memory for processes that churn many short-lived scanning threads;
+ * fixed pools (Puma/Sidekiq) just reuse the block for the thread's lifetime. */
+typedef struct {
+    int          n;          /* number of scan_state_t entries in states[] */
+    scan_state_t states[];   /* flexible array member */
+} thread_block_t;
+
+static __thread thread_block_t *t_block = NULL;
+static __thread unsigned        t_gen   = 0;
+
+static pthread_key_t  t_block_key;
+static pthread_once_t t_block_key_once = PTHREAD_ONCE_INIT;
 
 /* IBAN union-pass dispatch (built-ins only): unique 2-byte country prefixes. */
 static int g_iban_first[256];
@@ -647,26 +659,48 @@ static void free_scan_state(scan_state_t *st) {
     memset(st, 0, sizeof(*st));
 }
 
+/* pthread_key destructor: free a thread's whole block at thread exit. Reads only
+ * the passed-in pointer + its header count — no __thread access (unsafe here). */
+static void free_thread_block(void *p) {
+    thread_block_t *b = (thread_block_t *)p;
+    if (!b) return;
+    for (int i = 0; i < b->n; i++) free_scan_state(&b->states[i]);
+    free(b);
+}
+
+static void make_t_block_key(void) {
+    if (pthread_key_create(&t_block_key, free_thread_block) != 0) {
+        perror("pthread_key_create"); exit(1);
+    }
+}
+
 /* Return this thread's scan_state_t array, synced to the current pattern set.
  * Drops the whole cache if the pattern set changed (generation guard), then
  * lazily grows (zero-initialised) to cover every engine. Called under the
- * custom-pattern mutex during a scan, so g_pattern_gen / g_eng_n are stable. */
+ * custom-pattern mutex during a scan, so g_pattern_gen / g_eng_n are stable.
+ * The owning block is registered with t_block_key so it is freed at thread exit;
+ * the key value is re-set after any (re)allocation since the block may move. */
 static scan_state_t *thread_state(void) {
+    pthread_once(&t_block_key_once, make_t_block_key);
+
     if (t_gen != g_pattern_gen) {
-        for (int i = 0; i < t_state_n; i++) free_scan_state(&t_state[i]);
-        free(t_state);
-        t_state = NULL; t_state_n = 0;
+        free_thread_block(t_block);
+        t_block = NULL;
+        pthread_setspecific(t_block_key, NULL);
         t_gen = g_pattern_gen;
     }
-    if (t_state_n < g_eng_n) {
-        scan_state_t *tmp = realloc(t_state, (size_t)g_eng_n * sizeof(scan_state_t));
-        if (!tmp) { perror("realloc"); exit(1); }
-        t_state = tmp;
-        memset(&t_state[t_state_n], 0,
-               (size_t)(g_eng_n - t_state_n) * sizeof(scan_state_t));
-        t_state_n = g_eng_n;
+    int have = t_block ? t_block->n : 0;
+    if (have < g_eng_n) {
+        thread_block_t *nb = realloc(t_block,
+            sizeof(thread_block_t) + (size_t)g_eng_n * sizeof(scan_state_t));
+        if (!nb) { perror("realloc"); exit(1); }
+        memset(&nb->states[have], 0,
+               (size_t)(g_eng_n - have) * sizeof(scan_state_t));
+        nb->n = g_eng_n;
+        t_block = nb;
+        pthread_setspecific(t_block_key, nb);
     }
-    return t_state;
+    return t_block->states;
 }
 
 /* ========================================================================
