@@ -900,11 +900,75 @@ big payloads don't block other Ruby threads.
   becomes load-bearing once the GVL is released (next item). The stress test in
   `spec/data_redactor_spec.rb` documents that it cannot crash the unlocked array
   under pure Ruby threads, and is the detector to rerun when GVL-release lands.
-- [ ] **Release the GVL during long redactions** — `rb_thread_call_without_gvl` so other Ruby threads can run while a big payload is being scanned. The lock above must be acquired *before* releasing the GVL and held until reacquiring it, so the array can't change mid-scan. **This is what makes the 0.12.0 mutex load-bearing** (and what the per-call re-entrancy work in §1d Phase-1-not-done depends on — the engine's per-scan mutable scratch must move to a per-call context before the GVL can be released safely).
+- [x] **Per-thread engine scan state (`feat/gvl-release`, Step 1 — landed, no GVL change yet).**
+  Split `engine_t` into immutable compiled state (shared, read-only after build)
+  and a new per-thread `scan_state_t` (NFA scratch `seen`/`clist`/`nlist`/`estack`/
+  `gen`, the digit/IBAN merge cursors, AND the lazy DFA cache). Stored in a
+  `__thread scan_state_t *` array, lazily grown to `g_eng_n`. A `g_pattern_gen`
+  counter (bumped by `mm_add`/`mm_remove`/`mm_clear_custom`) drops a thread's whole
+  cache when the pattern set changes — simplest safe invalidation (slot p can hold
+  a different pattern after `mm_remove` compacts `g_eng`). **Per-thread state is NOT
+  freed on thread exit yet** (bounded by peak thread count; documented; revisit —
+  a thread-exit cleanup via `pthread_key_t` destructor or a registry is the follow-up).
+  Verified: 286 specs green + a differential gate (`prototypes/.../verify_gem_refactor.rb`,
+  ~6000 edge+random inputs byte-for-byte vs the pre-refactor baseline) + new
+  gen-invalidation specs. **Perf: 0 allocations/scan in steady state (unchanged);
+  ~3% lower small-input throughput** from the extra `thread_state()` gen-check + the
+  `scan_state_t *` indirection. Acceptable for the safety win; recoverable —
+  hoist/inline the gen-check, tighten the TLS access. (Measured with a standalone
+  `perf.c` malloc-interpose + timing harness; see the CI-bench TODO below.)
+- [x] **Release the GVL during long redactions (Step 2, 0.13.0 — done).**
+  `redact` releases the GVL via `rb_thread_call_without_gvl` around the built-in
+  v19 pass (`redact_builtins`, raw `char*`, no Ruby `VALUE`) for inputs ≥
+  `GVL_RELEASE_THRESHOLD` (4 KB); smaller inputs run inline under the GVL. The
+  custom-pattern glibc loop stays under the GVL (it's reached *after* the GVL is
+  reacquired, and the `scan` variant builds match hashes mid-loop — `VALUE`s that
+  can't be in a GVL-free region). `RSTRING_PTR` is read before release and the
+  `rb_text` VALUE stays live on the C stack, so the buffer is pinned (MRI doesn't
+  move strings without explicit compaction). The new "scans large inputs in
+  parallel (GVL released)" spec is a REAL race detector — verified it fails 3/3
+  when `__thread` is removed from the per-thread state (true parallel scans then
+  corrupt each other), passes with it. **Not yet covered:** widening the GVL-free
+  region to include custom patterns — blocked on moving customs onto v19 (§1d
+  Gap 2). Until then, a payload that is both huge AND custom-heavy still blocks
+  during its (rare) custom phase. `scan` does not release the GVL yet (its event
+  loop is `VALUE`-building throughout) — a separate task if scan-heavy large
+  inputs ever matter.
+- [x] **Lower the per-thread DFA memory floor (0.13.0 — done).** Dropped the
+  lazy-DFA `states_cap` start from 64 to 8 (`dfa_grow_states`). Since the DFA
+  cache is now per-thread, the initial cap is the per-thread memory floor ×
+  every DFA engine. Most patterns settle at 1–14 states (max ~45), so a floor of
+  8 fits the common case in 8 KB instead of 64 KB. **Measured: per-thread DFA
+  ~3.2 MB → ~0.86 MB (−73%, 3.7× smaller); state count unchanged (pure capacity
+  slack removed); throughput within noise on both 57 B and 16 KB inputs;
+  differential gate still byte-identical.** The few larger DFAs just do a couple
+  extra warmup doublings, off the hot path.
+- [ ] **Free per-thread scan state on thread exit.** Currently NOT freed — a
+  thread's `scan_state_t` array (scratch + DFA cache) leaks when the thread dies.
+  Bounded by peak thread count, matches the gem's "lives until VM exit" model for
+  built-ins, and acceptable for now, but a real cleanup: register the per-thread
+  block in a `pthread_key_t` whose destructor frees it, or keep a global registry
+  freed at exit. Do this before anything that spawns many short-lived threads.
+- [ ] **Recover the ~3% small-input throughput** lost to the per-thread-state
+  indirection (hoist the `thread_state()` generation check out of the hot path /
+  cache the `scan_state_t *` base; consider inlining). Low priority — within run
+  variance for most callers — but worth a pass before the paper's benchmark table.
+- [ ] **Widen the GVL-free region to custom patterns** — blocked on moving customs
+  onto the v19 engine (§1d Gap 2, the multibyte-UTF-8-in-char-classes parser work).
+  Until then a payload that is both huge AND custom-heavy blocks during its (rare)
+  custom phase.
+- [ ] **Release the GVL in `scan` too** — `scan`'s event loop builds Ruby `VALUE`
+  hashes throughout, so it can't release the GVL without first separating the C
+  match-collection pass from the `VALUE`-building pass. Separate task; only if
+  scan-heavy large inputs ever matter.
 - [ ] **Upgrade to `pthread_rwlock_t`** *only if* registration ever becomes hot enough that the mutex's reader-exclusion shows up — current contention is negligible, so the simpler mutex stands.
 - **Atomic snapshot alternative** — copy-on-write the custom-pattern array on every mutation; readers grab a pointer to the current snapshot under a brief lock and use it lock-free. More allocation per write, zero contention per read. Probably overkill until someone reports it as a real problem.
-- **Tests** — Ruby thread-stress test that registers/removes patterns from one thread while N readers `redact` concurrently. Run under TSan in CI on Linux if affordable.
-- **Update README** — once shipped, replace the "not thread-safe" caveat in the Thread safety section with a plain "fully thread-safe" statement, and note the `rb_thread_call_without_gvl` behavior.
+- [x] **Tests** — concurrent registration stress test + a large-input parallel
+  (GVL-released) stress test that is a real race detector (fails when `__thread`
+  is stripped). TSan-in-CI still wanted (see the CI-bench / fuzz items).
+- [x] **Update README** — Thread safety section now documents per-thread engine
+  state + the `rb_thread_call_without_gvl` release for large inputs, and the
+  runtime-registration guarantee.
 
 **Why:** "register at boot" is a real ergonomic limitation — anyone building a multi-tenant app that loads tenant-specific patterns at request time can't use the gem safely today. Removing that caveat is a real differentiator.
 
@@ -986,11 +1050,21 @@ mislead more than inform.
       strongest linearity evidence (flat 7 MB/s all the way up).
 
 **Follow-up (separate task, not part of the benchmark suite):**
-- [ ] CI benchmark integration — a PR job that runs the suite on the branch +
-      `main` and posts a before/after comment (e.g. `github-action-benchmark`,
-      history on `gh-pages`). Caveat: GitHub-hosted runners have 5–15%
-      run-to-run variance, so any regression gate needs a loose threshold (≥20%)
-      or must stay informational-only.
+- [ ] **CI benchmark / performance-regression test (WANTED).** A PR job that runs
+      a benchmark on the branch + `main` and flags regressions, so changes like the
+      v19 port and the per-thread-state refactor can't silently slow the hot path.
+      Two layers worth having:
+      - *Engine-level micro-bench* (no Ruby VM noise): drive the standalone
+        matcher `.so` (like the throwaway `/tmp/diffgate/perf.c` used to clear the
+        scan-state refactor — ~120k small scans/sec, 0 allocs/scan) and assert
+        scans/sec + allocs-per-scan stay within a threshold. Most stable signal.
+      - *Gem-level bench* via `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting
+        a before/after comment (e.g. `github-action-benchmark`, history on
+        `gh-pages`).
+      Caveat: GitHub-hosted runners have 5–15% run-to-run variance, so any hard
+      gate needs a loose threshold (≥20%) or must stay informational-only; the
+      allocs-per-scan count is exact and *can* be a hard gate (it must be 0 in
+      steady state).
 
 ---
 

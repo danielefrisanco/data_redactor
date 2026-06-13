@@ -386,8 +386,13 @@ typedef struct {
     int       matched;
 } tlist_t;
 
+/* engine_t holds ONLY immutable, compiled state — built once at mm_init()/mm_add()
+ * and never written during a scan, so it is safe to share read-only across
+ * threads. All per-scan mutable state (NFA scratch, merge cursors) and the lazy
+ * DFA cache live in scan_state_t, which is per-thread (t_state below). This
+ * split is what lets redact/scan release the GVL: with no shared writes during a
+ * scan, concurrent scans on distinct threads cannot race. */
 typedef struct {
-    /* compiled, immutable after build (safe to share across scans) */
     prog_t      prog;
     size_t      min_len;
     const char *req_literal;    /* points into a heap copy owned by this engine */
@@ -405,23 +410,43 @@ typedef struct {
     /* selective-merge membership (built-ins only; customs never join a merge) */
     int         digit_member, digit_lo, digit_hi;
     int         iban_member;
-    /* lazy DFA + per-scan scratch (mutable; GVL-guarded in Phase 1) */
+} engine_t;
+
+/* Per-engine MUTABLE scan state. One per engine, owned per-thread (t_state).
+ * The DFA cache warms lazily across this thread's scans; the rest is reset each
+ * scan. seen_cap==0 / dfa.n_states==0 means "not yet warmed" for this thread. */
+typedef struct {
     dfa_t       dfa;
     int        *seen;
     int         seen_cap;
     tlist_t     clist, nlist;
     int        *estack;
     int         gen;
-    /* per-scan non-overlapping cursors used by the selective-merge passes */
-    int         digit_last_end;
+    int         digit_last_end;   /* selective-merge non-overlap cursors */
     size_t      iban_last_end;
-} engine_t;
+} scan_state_t;
 
 static engine_t *g_eng    = NULL;
 static int       g_eng_n  = 0;    /* engines built (NUM_PATTERNS + custom_n) */
 static int       g_eng_cap= 0;
 static int       g_custom_n = 0;
 static int       g_initialized = 0;
+
+/* Bumped whenever the pattern set changes (mm_add/mm_remove/mm_clear_custom).
+ * A thread whose cached t_gen lags this value drops its whole scan-state cache
+ * and rebuilds — the simplest safe invalidation (slot p may now hold a
+ * different pattern after mm_remove compacts g_eng). Registration is rare, so
+ * the full rebuild is cheap; a surgical per-slot invalidation is a possible
+ * future refinement (see TODO §"Full thread safety"). */
+static unsigned g_pattern_gen = 0;
+
+/* Per-thread mutable scan state, one scan_state_t per engine. Lazily grown to
+ * g_eng_n. NOT freed on thread exit for now (bounded by peak thread count,
+ * matches the gem's "lives until VM exit" model for built-ins) — documented in
+ * TODO §"Full thread safety" as a future cleanup. */
+static __thread scan_state_t *t_state   = NULL;
+static __thread int           t_state_n = 0;
+static __thread unsigned      t_gen     = 0;
 
 /* IBAN union-pass dispatch (built-ins only): unique 2-byte country prefixes. */
 static int g_iban_first[256];
@@ -606,14 +631,42 @@ static void engine_set_literal(engine_t *eng, const char *lit, int at_start) {
 static void engine_free(engine_t *eng) {
     free(eng->prog.code);
     free(eng->req_literal_own);
-    free(eng->seen);
-    free(eng->clist.list);
-    free(eng->nlist.list);
-    free(eng->estack);
-    dfa_t *d = &eng->dfa;
+    memset(eng, 0, sizeof(*eng));
+}
+
+/* Free one thread's mutable scan state for an engine (scratch + DFA cache).
+ * Used when a thread drops its cache on a pattern-set generation change. */
+static void free_scan_state(scan_state_t *st) {
+    free(st->seen);
+    free(st->clist.list);
+    free(st->nlist.list);
+    free(st->estack);
+    dfa_t *d = &st->dfa;
     free(d->set_pool); free(d->set_off); free(d->set_len);
     free(d->matched);  free(d->trans);   free(d->hash);
-    memset(eng, 0, sizeof(*eng));
+    memset(st, 0, sizeof(*st));
+}
+
+/* Return this thread's scan_state_t array, synced to the current pattern set.
+ * Drops the whole cache if the pattern set changed (generation guard), then
+ * lazily grows (zero-initialised) to cover every engine. Called under the
+ * custom-pattern mutex during a scan, so g_pattern_gen / g_eng_n are stable. */
+static scan_state_t *thread_state(void) {
+    if (t_gen != g_pattern_gen) {
+        for (int i = 0; i < t_state_n; i++) free_scan_state(&t_state[i]);
+        free(t_state);
+        t_state = NULL; t_state_n = 0;
+        t_gen = g_pattern_gen;
+    }
+    if (t_state_n < g_eng_n) {
+        scan_state_t *tmp = realloc(t_state, (size_t)g_eng_n * sizeof(scan_state_t));
+        if (!tmp) { perror("realloc"); exit(1); }
+        t_state = tmp;
+        memset(&t_state[t_state_n], 0,
+               (size_t)(g_eng_n - t_state_n) * sizeof(scan_state_t));
+        t_state_n = g_eng_n;
+    }
+    return t_state;
 }
 
 /* ========================================================================
@@ -692,7 +745,13 @@ static void dfa_hash_insert(dfa_t *d, int sid);
 
 static void dfa_grow_states(dfa_t *d) {
     if (d->n_states < d->states_cap) return;
-    int newcap = d->states_cap ? d->states_cap * 2 : 64;
+    /* Start small (8) and double. Each state owns a 1 KB transition row, and the
+     * DFA cache is now per-thread, so the initial cap is the per-thread memory
+     * floor multiplied across every engine. Most patterns settle at 1-14 states
+     * (max 45), so a floor of 8 fits the common case in 8 KB instead of 64 KB
+     * (~4x less per-thread memory across 79 DFA engines); the few larger DFAs
+     * just do a couple extra doublings during warmup, off the hot path. */
+    int newcap = d->states_cap ? d->states_cap * 2 : 8;
     d->set_off = realloc(d->set_off, (size_t)newcap * sizeof(int));
     d->set_len = realloc(d->set_len, (size_t)newcap * sizeof(int));
     d->matched = realloc(d->matched, (size_t)newcap * sizeof(int));
@@ -748,28 +807,28 @@ static int dfa_intern(dfa_t *d, const int *set, int n, int matched) {
     return sid;
 }
 
-static void ensure_scratch(engine_t *eng) {
+static void ensure_scratch(engine_t *eng, scan_state_t *st) {
     prog_t *pr = &eng->prog;
-    if (eng->seen_cap >= pr->n) return;
-    eng->seen       = realloc(eng->seen,       pr->n * sizeof(int));
-    eng->clist.list = realloc(eng->clist.list, pr->n * sizeof(int));
-    eng->nlist.list = realloc(eng->nlist.list, pr->n * sizeof(int));
-    eng->estack     = realloc(eng->estack,     (2 * pr->n + 1) * sizeof(int));
-    if (!eng->seen || !eng->clist.list || !eng->nlist.list || !eng->estack) {
+    if (st->seen_cap >= pr->n) return;
+    st->seen       = realloc(st->seen,       pr->n * sizeof(int));
+    st->clist.list = realloc(st->clist.list, pr->n * sizeof(int));
+    st->nlist.list = realloc(st->nlist.list, pr->n * sizeof(int));
+    st->estack     = realloc(st->estack,     (2 * pr->n + 1) * sizeof(int));
+    if (!st->seen || !st->clist.list || !st->nlist.list || !st->estack) {
         perror("realloc"); exit(1);
     }
-    memset(eng->seen, 0, pr->n * sizeof(int));
-    eng->seen_cap = pr->n;
+    memset(st->seen, 0, pr->n * sizeof(int));
+    st->seen_cap = pr->n;
 }
 
-static int dfa_compute_trans(engine_t *eng, int sid, unsigned char c) {
+static int dfa_compute_trans(engine_t *eng, scan_state_t *st, int sid, unsigned char c) {
     prog_t  *pr  = &eng->prog;
-    dfa_t   *d   = &eng->dfa;
-    int     *seen = eng->seen;
-    int     *estk = eng->estack;
-    tlist_t *nl   = &eng->nlist;
+    dfa_t   *d   = &st->dfa;
+    int     *seen = st->seen;
+    int     *estk = st->estack;
+    tlist_t *nl   = &st->nlist;
 
-    int gen = ++eng->gen;
+    int gen = ++st->gen;
     nl->n = 0; nl->matched = 0;
 
     const int *set = &d->set_pool[d->set_off[sid]];
@@ -800,14 +859,14 @@ static int dfa_compute_trans(engine_t *eng, int sid, unsigned char c) {
     return next;
 }
 
-static void dfa_build_start(engine_t *eng) {
+static void dfa_build_start(engine_t *eng, scan_state_t *st) {
     prog_t  *pr  = &eng->prog;
-    dfa_t   *d   = &eng->dfa;
-    int     *seen = eng->seen;
-    int     *estk = eng->estack;
-    tlist_t *cl   = &eng->clist;
+    dfa_t   *d   = &st->dfa;
+    int     *seen = st->seen;
+    int     *estk = st->estack;
+    tlist_t *cl   = &st->clist;
 
-    int gen = ++eng->gen;
+    int gen = ++st->gen;
     cl->n = 0; cl->matched = 0;
     addthread_dfa(pr, cl, seen, gen, estk, 0);
     qsort(cl->list, (size_t)cl->n, sizeof(int), int_cmp);
@@ -821,23 +880,24 @@ static void dfa_build_start(engine_t *eng) {
  * 9. Per-pattern scan (scan_one) — identical logic to the prototype
  * ======================================================================== */
 
-static size_t scan_one(int p, const char *input, size_t len,
+static size_t scan_one(int p, scan_state_t *state, const char *input, size_t len,
                        mm_match_t *out, size_t max, size_t count) {
-    engine_t *eng = &g_eng[p];
-    prog_t   *pr  = &eng->prog;
+    engine_t     *eng = &g_eng[p];
+    scan_state_t *sst = &state[p];
+    prog_t       *pr  = &eng->prog;
 
-    ensure_scratch(eng);
-    int     *seen = eng->seen;
-    int     *estk = eng->estack;
-    tlist_t *cl   = &eng->clist, *nl = &eng->nlist;
+    ensure_scratch(eng, sst);
+    int     *seen = sst->seen;
+    int     *estk = sst->estack;
+    tlist_t *cl   = &sst->clist, *nl = &sst->nlist;
 
-    if (eng->gen > INT_MAX - (int)(2 * (len + 2))) {
+    if (sst->gen > INT_MAX - (int)(2 * (len + 2))) {
         memset(seen, 0, pr->n * sizeof(int));
-        eng->gen = 0;
+        sst->gen = 0;
     }
 
-    dfa_t *d = &eng->dfa;
-    if (eng->use_dfa && d->n_states == 0) dfa_build_start(eng);
+    dfa_t *d = &sst->dfa;
+    if (eng->use_dfa && d->n_states == 0) dfa_build_start(eng, sst);
 
     size_t pos = 0;
     while (pos <= len) {
@@ -874,19 +934,19 @@ static size_t scan_one(int p, const char *input, size_t len,
                 if (sp == len) break;
                 int next = d->trans[st * 256 + (unsigned char)input[sp]];
                 if (next == TRANS_UNFILLED)
-                    next = dfa_compute_trans(eng, st, (unsigned char)input[sp]);
+                    next = dfa_compute_trans(eng, sst, st, (unsigned char)input[sp]);
                 st = next;
                 sp++;
             }
         } else {
-            int gen = ++eng->gen;
+            int gen = ++sst->gen;
             cl->n = 0; cl->matched = 0;
             addthread(pr, cl, seen, gen, estk, 0, input, len, pos);
             while (cl->n > 0 || cl->matched) {
                 if (cl->matched && sp - pos >= eng->min_len) match_end = sp;
                 if (cl->n == 0 || sp == len) break;
                 unsigned char c = (unsigned char)input[sp];
-                gen = ++eng->gen;
+                gen = ++sst->gen;
                 nl->n = 0; nl->matched = 0;
                 for (int i = 0; i < cl->n; i++) {
                     inst_t *in = &pr->code[cl->list[i]];
@@ -935,11 +995,11 @@ static size_t scan_one(int p, const char *input, size_t len,
  * 10. Selective merges (digit run pass + IBAN union pass)
  * ======================================================================== */
 
-static size_t scan_digit_group(const char *input, size_t len,
+static size_t scan_digit_group(scan_state_t *state, const char *input, size_t len,
                                const int *enable_bits, size_t n_bits,
                                mm_match_t *out, size_t max, size_t count) {
     for (int p = 0; p < g_eng_n; p++)
-        if (g_eng[p].digit_member) g_eng[p].digit_last_end = 0;
+        if (g_eng[p].digit_member) state[p].digit_last_end = 0;
 
     size_t i = 0;
     while (i < len) {
@@ -963,7 +1023,7 @@ static size_t scan_digit_group(const char *input, size_t len,
 
             size_t start;
             if (rs > 0 && !isalnum((unsigned char)input[rs-1]) &&
-                rs - 1 >= (size_t)eng->digit_last_end) {
+                rs - 1 >= (size_t)state[p].digit_last_end) {
                 start = rs - 1;
             } else if (rs == 0 || input[rs-1] == '\n') {
                 start = rs;
@@ -978,22 +1038,22 @@ static size_t scan_digit_group(const char *input, size_t len,
              * separator are resolved exactly as gsub would. */
             (void)start;
             out[count++] = (mm_match_t){p, rs, re - rs};
-            eng->digit_last_end = (int)end;
+            state[p].digit_last_end = (int)end;
         }
         if (count >= max) break;
     }
     return count;
 }
 
-static size_t scan_iban_group(const char *input, size_t len,
+static size_t scan_iban_group(scan_state_t *state, const char *input, size_t len,
                               const int *enable_bits, size_t n_bits,
                               mm_match_t *out, size_t max, size_t count) {
     for (int p = 0; p < g_eng_n; p++)
         if (g_eng[p].iban_member) {
-            g_eng[p].iban_last_end = 0;
+            state[p].iban_last_end = 0;
             engine_t *eng = &g_eng[p];
-            if (eng->use_dfa && eng->dfa.n_states == 0) {
-                ensure_scratch(eng); dfa_build_start(eng);
+            if (eng->use_dfa && state[p].dfa.n_states == 0) {
+                ensure_scratch(eng, &state[p]); dfa_build_start(eng, &state[p]);
             }
         }
 
@@ -1004,10 +1064,11 @@ static size_t scan_iban_group(const char *input, size_t len,
         int p = g_iban_pair[c0][(unsigned char)input[i + 1]];
         if (p < 0) { i++; continue; }
         if ((size_t)p < n_bits && !enable_bits[p]) { i++; continue; }
-        if (i < g_eng[p].iban_last_end) { i++; continue; }
+        if (i < state[p].iban_last_end) { i++; continue; }
 
-        engine_t *eng = &g_eng[p];
-        dfa_t *d = &eng->dfa;
+        engine_t     *eng = &g_eng[p];
+        scan_state_t *sst = &state[p];
+        dfa_t *d = &sst->dfa;
         size_t match_end = (size_t)-1, sp = i;
         int st = 0;
         while (st != DFA_DEAD) {
@@ -1015,7 +1076,7 @@ static size_t scan_iban_group(const char *input, size_t len,
             if (sp == len) break;
             int next = d->trans[st * 256 + (unsigned char)input[sp]];
             if (next == TRANS_UNFILLED)
-                next = dfa_compute_trans(eng, st, (unsigned char)input[sp]);
+                next = dfa_compute_trans(eng, sst, st, (unsigned char)input[sp]);
             st = next;
             sp++;
         }
@@ -1023,7 +1084,7 @@ static size_t scan_iban_group(const char *input, size_t len,
         if (match_end != (size_t)-1) {
             size_t span = match_end - i;
             out[count++] = (mm_match_t){p, i, span};
-            eng->iban_last_end = match_end;
+            sst->iban_last_end = match_end;
             i = (span == 0) ? i + 1 : match_end;
         } else {
             i++;
@@ -1089,6 +1150,7 @@ int mm_add(const char *regex, int boundary) {
     /* Custom patterns never join the selective merges (TODO §1d Gap 4): they keep
      * the per-pattern path. No digit/IBAN membership, no literal-skip hint. */
     g_custom_n++;
+    g_pattern_gen++;   /* invalidate every thread's cached scan state */
     return 0;
 }
 
@@ -1102,12 +1164,16 @@ void mm_remove(int idx) {
         g_eng[s] = g_eng[s + 1];
     g_eng_n--;
     g_custom_n--;
+    /* slot p now holds a DIFFERENT pattern (compaction), so every thread's
+     * scan-state cache indexed by p is stale — invalidate. */
+    g_pattern_gen++;
 }
 
 void mm_clear_custom(void) {
     for (int s = NUM_PATTERNS; s < g_eng_n; s++) engine_free(&g_eng[s]);
     g_eng_n = NUM_PATTERNS;
     g_custom_n = 0;
+    g_pattern_gen++;
 }
 
 /* ========================================================================
@@ -1124,18 +1190,19 @@ size_t mm_scan(const char *input, size_t len,
                const int *enable_bits, size_t n_bits,
                mm_match_t *out, size_t max) {
     if (!g_initialized) mm_init();
+    scan_state_t *state = thread_state();
     size_t count = 0;
 
     for (int p = 0; p < g_eng_n && count < max; p++) {
         if (g_eng[p].digit_member) continue;
         if (g_eng[p].iban_member)  continue;
         if (!enabled(enable_bits, n_bits, p)) continue;
-        count = scan_one(p, input, len, out, max, count);
+        count = scan_one(p, state, input, len, out, max, count);
     }
     if (g_have_iban_group && count < max)
-        count = scan_iban_group(input, len, enable_bits, n_bits, out, max, count);
+        count = scan_iban_group(state, input, len, enable_bits, n_bits, out, max, count);
     if (g_have_digit_group && count < max)
-        count = scan_digit_group(input, len, enable_bits, n_bits, out, max, count);
+        count = scan_digit_group(state, input, len, enable_bits, n_bits, out, max, count);
     return count;
 }
 
