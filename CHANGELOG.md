@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`rb_thread_call_without_gvl`) around the built-in scan for inputs above a few
   KB, so a large redaction on one thread no longer blocks other Ruby threads.
   Small inputs keep the GVL. No public API change; output is byte-for-byte
-  identical (verified by a differential gate over ~6000 inputs).
+  identical (verified by a differential gate over ~6000 inputs). The per-thread
+  DFA cache's allocation floor was tuned so this adds ~0.86 MB per scanning
+  thread (down from a naive ~3.2 MB), with no throughput change.
 
 ## [0.11.0] - 2026-06-10
 

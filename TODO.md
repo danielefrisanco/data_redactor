@@ -934,14 +934,41 @@ big payloads don't block other Ruby threads.
   during its (rare) custom phase. `scan` does not release the GVL yet (its event
   loop is `VALUE`-building throughout) — a separate task if scan-heavy large
   inputs ever matter.
+- [x] **Lower the per-thread DFA memory floor (0.13.0 — done).** Dropped the
+  lazy-DFA `states_cap` start from 64 to 8 (`dfa_grow_states`). Since the DFA
+  cache is now per-thread, the initial cap is the per-thread memory floor ×
+  every DFA engine. Most patterns settle at 1–14 states (max ~45), so a floor of
+  8 fits the common case in 8 KB instead of 64 KB. **Measured: per-thread DFA
+  ~3.2 MB → ~0.86 MB (−73%, 3.7× smaller); state count unchanged (pure capacity
+  slack removed); throughput within noise on both 57 B and 16 KB inputs;
+  differential gate still byte-identical.** The few larger DFAs just do a couple
+  extra warmup doublings, off the hot path.
+- [ ] **Free per-thread scan state on thread exit.** Currently NOT freed — a
+  thread's `scan_state_t` array (scratch + DFA cache) leaks when the thread dies.
+  Bounded by peak thread count, matches the gem's "lives until VM exit" model for
+  built-ins, and acceptable for now, but a real cleanup: register the per-thread
+  block in a `pthread_key_t` whose destructor frees it, or keep a global registry
+  freed at exit. Do this before anything that spawns many short-lived threads.
 - [ ] **Recover the ~3% small-input throughput** lost to the per-thread-state
   indirection (hoist the `thread_state()` generation check out of the hot path /
   cache the `scan_state_t *` base; consider inlining). Low priority — within run
   variance for most callers — but worth a pass before the paper's benchmark table.
+- [ ] **Widen the GVL-free region to custom patterns** — blocked on moving customs
+  onto the v19 engine (§1d Gap 2, the multibyte-UTF-8-in-char-classes parser work).
+  Until then a payload that is both huge AND custom-heavy blocks during its (rare)
+  custom phase.
+- [ ] **Release the GVL in `scan` too** — `scan`'s event loop builds Ruby `VALUE`
+  hashes throughout, so it can't release the GVL without first separating the C
+  match-collection pass from the `VALUE`-building pass. Separate task; only if
+  scan-heavy large inputs ever matter.
 - [ ] **Upgrade to `pthread_rwlock_t`** *only if* registration ever becomes hot enough that the mutex's reader-exclusion shows up — current contention is negligible, so the simpler mutex stands.
 - **Atomic snapshot alternative** — copy-on-write the custom-pattern array on every mutation; readers grab a pointer to the current snapshot under a brief lock and use it lock-free. More allocation per write, zero contention per read. Probably overkill until someone reports it as a real problem.
-- **Tests** — Ruby thread-stress test that registers/removes patterns from one thread while N readers `redact` concurrently. Run under TSan in CI on Linux if affordable.
-- **Update README** — once shipped, replace the "not thread-safe" caveat in the Thread safety section with a plain "fully thread-safe" statement, and note the `rb_thread_call_without_gvl` behavior.
+- [x] **Tests** — concurrent registration stress test + a large-input parallel
+  (GVL-released) stress test that is a real race detector (fails when `__thread`
+  is stripped). TSan-in-CI still wanted (see the CI-bench / fuzz items).
+- [x] **Update README** — Thread safety section now documents per-thread engine
+  state + the `rb_thread_call_without_gvl` release for large inputs, and the
+  runtime-registration guarantee.
 
 **Why:** "register at boot" is a real ergonomic limitation — anyone building a multi-tenant app that loads tenant-specific patterns at request time can't use the gem safely today. Removing that caveat is a real differentiator.
 

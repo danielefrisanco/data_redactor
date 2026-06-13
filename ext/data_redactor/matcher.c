@@ -745,7 +745,13 @@ static void dfa_hash_insert(dfa_t *d, int sid);
 
 static void dfa_grow_states(dfa_t *d) {
     if (d->n_states < d->states_cap) return;
-    int newcap = d->states_cap ? d->states_cap * 2 : 64;
+    /* Start small (8) and double. Each state owns a 1 KB transition row, and the
+     * DFA cache is now per-thread, so the initial cap is the per-thread memory
+     * floor multiplied across every engine. Most patterns settle at 1-14 states
+     * (max 45), so a floor of 8 fits the common case in 8 KB instead of 64 KB
+     * (~4x less per-thread memory across 79 DFA engines); the few larger DFAs
+     * just do a couple extra doublings during warmup, off the hot path. */
+    int newcap = d->states_cap ? d->states_cap * 2 : 8;
     d->set_off = realloc(d->set_off, (size_t)newcap * sizeof(int));
     d->set_len = realloc(d->set_len, (size_t)newcap * sizeof(int));
     d->matched = realloc(d->matched, (size_t)newcap * sizeof(int));
