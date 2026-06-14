@@ -1523,6 +1523,104 @@ than borrow citations whose techniques we did not use.
 
 ---
 
+### Prototype → production — porting v19 into the gem (gem 0.12.0–0.13.0)
+
+The prototypes above (`prototypes/multi_pattern_matcher/matcher19.c`) were the
+research vehicle: a fixed `MM88_PATTERNS` table, file-scope mutable globals, and a
+single-threaded `verify`/`bench` harness. Shipping v19 as the gem's actual engine
+(`ext/data_redactor/matcher.c`) required three changes that the matching research never
+touched — and which are exactly where prototype→production ports usually fail, so they
+belong in the experience-report paper (§14) as much as the algorithm does. None of the
+three altered a single match result: the gem's 244-example rspec suite plus a
+differential gate over ~6000 inputs stayed byte-for-byte identical to the pre-port
+Ruby `gsub` output throughout.
+
+**1. Pattern source-of-truth + the hybrid customs split.** The prototype baked in the
+generated `MM88_PATTERNS`; the gem builds its engines at `mm_init()` from the existing
+single-source-of-truth arrays (`pattern_strings[]` / `boundary_wrapped[]` /
+`pattern_required_literal[]` in `patterns.{h,c}`, per CLAUDE.md). The harder question
+was the public `add_pattern` API: the gem has shipped user-supplied custom patterns
+since 0.3.0, compiled and run via glibc `regexec`. We **did not** route customs through
+v19. The deciding factor was not convenience but a real correctness hazard:
+`DataRedactor.name_pattern` emits character classes like `[oOòóôõöø…]` whose members are
+**multibyte UTF-8 sequences**. glibc's locale-aware `regexec` matches `José` / `Muñoz`
+against these; v19's **byte-oriented** parser models each `[...]` as a 256-bit set, so a
+2-byte `é` inside one class atom cannot match — a silent **false negative on PII**. The
+`redact` diacritics spec caught this the moment the engine went live. The production
+engine is therefore a **hybrid**: v19 scans the 88 (all-ASCII, verified) built-ins with
+the GVL released, then the unchanged glibc `regexec` loop runs the customs over the
+already-redacted buffer, preserving the built-ins→customs registration-order semantics
+exactly. `mm_add`/`mm_remove`/`mm_clear_custom` exist in `matcher.c` but the gem does
+not use them; teaching the v19 parser to treat a multibyte UTF-8 sequence inside `[...]`
+as one alternative is the prerequisite (deferred) for ever moving customs onto v19.
+
+**2. The immutable/mutable state split — the part the prototype could not have.** The
+prototype kept per-scan cursors in file-scope globals (`g_digit_last_end[]`,
+`g_iban_last_end[]`, `g_gen[]`) and warmed one shared lazy-DFA cache. That is fine for a
+single-threaded harness and **fatal** under threaded Ruby (Puma, Sidekiq): concurrent
+`redact` calls would race every one of those globals. The fix was to split `engine_t`
+into two halves with opposite sharing rules:
+
+- **Immutable, build-once, shared read-only across threads:** the compiled Thompson
+  program, length bounds, first-byte filter, literal-skip hints, and merge membership.
+  Written only at `mm_init()`/`mm_add()`, never during a scan.
+- **Per-scan mutable, owned per-thread:** the NFA scratch (`clist`/`nlist`/`seen`/
+  `estack`), the digit/IBAN non-overlap cursors, the generation stamp, **and the lazy
+  DFA cache itself**. These live in a `scan_state_t` held in a `__thread` block, lazily
+  grown to cover every engine. A `g_pattern_gen` counter, bumped on any custom
+  add/remove/clear, makes a thread drop and rebuild its whole cache when the pattern set
+  changed under it — the simplest safe invalidation, cheap because registration is rare.
+
+Putting the DFA *cache* on the per-thread side (not just the scratch) is the non-obvious
+move: it means the cache warms independently per thread and is never written by two
+threads at once, which is precisely what makes the next step legal. Note this trades the
+prototype's single shared warm cache for one cache per scanning thread — a real memory
+cost, addressed in step 3.
+
+**3. Releasing the GVL — and paying for it without blowing up RSS.** Because a scan now
+performs **no shared writes**, `redact` can release the GVL (`rb_thread_call_without_gvl`)
+around the built-in pass for inputs above a few KB, so a large redaction on one thread
+no longer stalls every other Ruby thread; small inputs keep the GVL to avoid the
+release overhead. The cost is per-thread DFA caches. Two engineering details made that
+affordable:
+
+- **Allocation floor tuning.** The DFA state array starts at 8 states and doubles (most
+  of the 79 DFA-bearing built-ins settle at 1–14 states, max 45), cutting the
+  steady-state footprint to **~0.86 MB per scanning thread**, down from a naive ~3.2 MB,
+  with no throughput change — the few larger DFAs just do a couple extra warmup
+  doublings off the hot path.
+- **Reclaiming dead caches.** A `pthread_key` destructor frees a thread's whole block at
+  thread exit. It deliberately reads only the passed-in pointer and its header count,
+  never `__thread` storage (which may already be torn down when key destructors run), so
+  processes that churn many short-lived scanning threads keep flat RSS instead of
+  leaking a cache per dead thread. Fixed pools (Puma/Sidekiq) simply reuse the block for
+  the thread's lifetime.
+
+This shipped across two releases: the custom-pattern mutex landed in **0.12.0** (closing
+the latent registration race), and the immutable/mutable split + GVL release + per-thread
+reclamation in **0.13.0**. A concurrency stress test (N threads redacting distinct
+inputs vs. the single-threaded reference) plus a real race detector — the parallel
+GVL-free test fails 3/3 with the `__thread` qualifier stripped — guard the guarantee.
+
+**Where the numbers are.** The v19 perf table earlier in this section
+(2.21×/2.16×/1.80×/1.84×) is the *prototype* measured against the fixed `MM88` table.
+The in-gem figures, measured through the real `DataRedactor.redact` path after the port,
+are **2.33×/2.30×/1.75×/1.82×** (sparse/medium/dense/env) — the same engine within
+measurement noise; the small shifts are the gem's string-allocation and resolve
+overhead, not the matcher. The GVL release does not move single-threaded throughput (it
+only unblocks *other* threads); the per-thread cache adds the ~0.86 MB/thread noted
+above. See TODO.md §1c/§1d and CHANGELOG 0.12.0–0.13.0 for the full port checklist.
+
+**Paper framing.** The algorithm contribution is the per-pattern lazy DFA + selective
+merges (above). The systems contribution this port adds is concrete and reusable: a
+multi-pattern lazy-DFA matcher can be made **GVL-free / re-entrant** by partitioning
+state into build-once-shared vs. per-thread — *including the lazy DFA cache itself* — and
+the per-thread cost is bounded by an allocation floor plus a thread-exit reclaim. That is
+the kind of result the "C extension performance antipatterns in managed runtimes" framing
+in §14 is built for, and it was absent from the algorithm prototypes by construction.
+
+---
+
 ## 6. Problems Encountered and How We Solved Them
 
 ### 6.1 glibc `regexec` bottleneck (root cause, not a code bug)
