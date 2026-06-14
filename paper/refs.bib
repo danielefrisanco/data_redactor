@@ -1,0 +1,110 @@
+%% refs.bib — seeded from research_log.md §3 (bibliography) and §14.3 (key
+%% related work to cite). TODO: verify each entry's exact venue/pages/DOI before
+%% submission; some are placeholders pending a citation check.
+
+%% ---- Foundational algorithms ----
+
+@article{aho1975efficient,
+  author  = {Aho, Alfred V. and Corasick, Margaret J.},
+  title   = {Efficient String Matching: An Aid to Bibliographic Search},
+  journal = {Communications of the ACM},
+  volume  = {18},
+  number  = {6},
+  pages   = {333--340},
+  year    = {1975},
+  doi     = {10.1145/360825.360855}
+}
+
+@article{boyer1977fast,
+  author  = {Boyer, Robert S. and Moore, J Strother},
+  title   = {A Fast String Searching Algorithm},
+  journal = {Communications of the ACM},
+  volume  = {20},
+  number  = {10},
+  pages   = {762--772},
+  year    = {1977},
+  doi     = {10.1145/359842.359859}
+}
+
+@misc{cox2007regex,
+  author       = {Cox, Russ},
+  title        = {Regular Expression Matching Can Be Simple and Fast
+                  (but is slow in Java, Perl, PHP, Python, Ruby, \ldots)},
+  year         = {2007},
+  howpublished = {\url{https://swtch.com/~rsc/regexp/regexp1.html}},
+  note         = {Series incl.\ the lazy/hybrid DFA construction}
+}
+
+%% ---- Production multi-pattern matchers / related systems ----
+
+@inproceedings{wang2019hyperscan,
+  author    = {Wang, Xiang and Hong, Yang and Chang, Harry and Park, KyoungSoo
+               and Langdale, Geoff and Hu, Jiayu and Zhu, Heqing},
+  title     = {Hyperscan: A Fast Multi-pattern Regex Matcher for Modern CPUs},
+  booktitle = {16th USENIX Symposium on Networked Systems Design and
+               Implementation (NSDI)},
+  pages     = {631--648},
+  year      = {2019},
+  note      = {SIMD multi-pattern matcher; x86-only -- disqualified for our portability}
+}
+
+@article{patel2023blare,
+  author  = {Patel, others},
+  title   = {BLARE: TODO verify authors/title},
+  journal = {Proceedings of the ACM on Management of Data (PACMMOD/SIGMOD)},
+  year    = {2023},
+  note    = {TODO verify. Closest structural cousin: extract-literal + confirm decomposition}
+}
+
+@inproceedings{hybridsa2024,
+  author    = {TODO},
+  title     = {HybridSA: GPU-accelerated Shift-And Multi-pattern Matching},
+  booktitle = {OOPSLA},
+  year      = {2024},
+  note      = {TODO verify authors/exact title/pages}
+}
+
+@inproceedings{resharp2025,
+  author    = {TODO},
+  title     = {RE\#: Derivative-based Regex with Linear-time Guarantees},
+  booktitle = {POPL},
+  year      = {2025},
+  note      = {TODO verify authors/exact title/pages}
+}
+
+@inproceedings{zherczeg_pcrejit,
+  author = {Z{\'a}herczeg, Zolt{\'a}n},
+  title  = {The PCRE JIT Compiler},
+  year   = {TODO},
+  note   = {TODO verify venue/year. PCRE JIT design; ~6.36x avg vs interpreter}
+}
+
+%% ---- Tools / engines referenced (not necessarily cited) ----
+
+@misc{re2,
+  author       = {Cox, Russ and others},
+  title        = {RE2: A Principled Approach to Regular Expression Matching},
+  howpublished = {\url{https://github.com/google/re2}},
+  note         = {RE2::Set: DFA state explosion past ~30 patterns}
+}
+
+@misc{rustregex,
+  author       = {Gallant, Andrew and others},
+  title        = {The Rust \texttt{regex} crate (\texttt{RegexSet})},
+  howpublished = {\url{https://docs.rs/regex}},
+  note         = {RegexSet: same state-explosion wall as RE2::Set}
+}
+
+@misc{onigmo,
+  author       = {{Onigmo contributors}},
+  title        = {Onigmo: Oniguruma-mod Regular Expression Library},
+  howpublished = {\url{https://github.com/k-takata/Onigmo}},
+  note         = {Ruby's regex engine; the pure-Ruby baseline}
+}
+
+@misc{pcre2,
+  author       = {Hazel, Philip and others},
+  title        = {PCRE2: Perl-Compatible Regular Expressions},
+  howpublished = {\url{https://www.pcre.org/}},
+  note         = {JIT backend = the speed-optimal, zero-dep-disqualified option}
+}
