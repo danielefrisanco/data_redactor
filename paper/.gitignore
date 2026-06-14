@@ -1,0 +1,12 @@
+# LaTeX build artifacts — keep main.tex/refs.bib/main.pdf, ignore the rest.
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.run.xml
+*.bcf

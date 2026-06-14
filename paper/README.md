@@ -235,6 +235,26 @@ Artifacts: `bench_density_sweep.rb`, `paper/data/density_sweep.csv`,
 
 ---
 
+## 9b. Building the paper
+
+Skeleton: `main.tex` (acmart, `[acmsmall,nonacm]` for an arXiv-style preprint),
+`refs.bib` (seeded from research log §3/§14.3 — several entries need a citation
+check, marked TODO), `Makefile` (latexmk), `.gitignore` (LaTeX artifacts).
+
+No LaTeX toolchain is installed locally yet. To build:
+```
+sudo apt install texlive-latex-recommended texlive-latex-extra \
+                 texlive-fonts-recommended texlive-publishers latexmk
+cd paper && make            # -> main.pdf
+make figures                # regenerate figures + density_table.tex from CSV
+```
+`texlive-publishers` provides `acmart.cls`. Alternatively upload `paper/` to
+Overleaf. Section bodies are TODO stubs; figures, the generated table, and the
+bibliography are already wired in. Port `\documentclass` to `WileyNJD-v2` for the
+S:P&E submission.
+
+---
+
 ## 10. Decisions log
 
 - **2026-06-14** — Folder created; planning before files (this doc).
@@ -255,3 +275,6 @@ Artifacts: `bench_density_sweep.rb`, `paper/data/density_sweep.csv`,
 - **2026-06-14** — Incumbent baseline: reproduce the pre-v19 glibc engine as a
   prototype (`matcher_glibc`) and state in the paper we test against a
   *reproduction* (gem has since shipped v19), not the original code.
+- **2026-06-14** — Scaffolded the acmart skeleton (`main.tex`, `refs.bib`,
+  `Makefile`, `.gitignore`). No local LaTeX toolchain yet — install later or use
+  Overleaf (§9b). Figures + table + bib wired; section bodies are TODO stubs.
