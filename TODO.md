@@ -1069,18 +1069,16 @@ mislead more than inform.
       wired into CI as the `alloc-gate` job. Throughput is printed informational-only.
       This catches any future refactor that reintroduces per-scan allocation (the
       gem's zero-alloc hot path is the selling point).
-- [ ] **Run the alloc gate under musl/Alpine too (follow-up).** Today the `alloc-gate`
-      job compiles `benchmark/ci_alloc_gate.c` only on the default glibc ubuntu runner,
-      and the `musl-load` job only compiles-and-`require`s the gem on `ruby:3.3-alpine`
-      (a correctness smoke test, not a perf/alloc check). So the zero-allocation
-      steady-state invariant is **never verified against musl libc**. A musl-only
-      allocation regression (different malloc arena behaviour, a libc call that allocates
-      on musl but not glibc) would ship undetected. The gate needs only a C compiler
-      (no Ruby), so add a step to the existing `musl-load` job (or a sibling
-      `alloc-gate-musl` job on `ruby:3.3-alpine` / `alpine` + `build-base`) that runs
-      `benchmark/run_alloc_gate.sh`. Deterministic, so it can be a hard gate exactly
-      like the glibc one. (Optionally also assert a loose throughput floor there, but
-      treat that as informational — Alpine CI runners are as noisy as the glibc ones.)
+- [x] **Run the alloc gate under musl/Alpine too (follow-up).** **DONE.** Added a
+      "Zero-allocation hot-path gate (musl)" step to the existing `musl-load` job
+      (`ruby:3.3-alpine`, `build-base` already installed) that runs
+      `benchmark/run_alloc_gate.sh` — so the zero-allocation invariant is now enforced
+      against musl libc, not just glibc. The gate needs no Ruby and is deterministic,
+      so it is a hard gate like the glibc one. Surfaced + fixed a real musl-only blocker
+      while wiring it: `run_alloc_gate.sh` used `#!/usr/bin/env bash` + `set -o pipefail`
+      + `${BASH_SOURCE[0]}`, but Alpine ships only busybox `sh` (no bash) — made the
+      script POSIX-sh portable (`#!/bin/sh`, `set -eu`, `$0`). Verified end-to-end in a
+      `ruby:3.3-alpine` container (compile → smoke → gate, 0 allocs, exit 0).
 - [ ] **CI throughput-trend visualization (follow-up, lower priority).** Add
       `github-action-benchmark` (or similar) running the gem-level
       `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting a before/after PR comment

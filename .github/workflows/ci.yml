@@ -151,6 +151,14 @@ jobs:
             puts "ALL #{exact.size + 1} musl checks passed"
           '
 
+      # The glibc alloc-gate job verifies the zero-allocation hot path on glibc
+      # only. Run the same gate here so the invariant is also enforced against
+      # musl libc (different malloc arena; a libc call that allocates on musl but
+      # not glibc would otherwise ship undetected). build-base above provides cc;
+      # the gate needs no Ruby. Deterministic -> hard gate, same as on glibc.
+      - name: Zero-allocation hot-path gate (musl)
+        run: benchmark/run_alloc_gate.sh
+
 # Note: source-gem publishing was moved to release-binaries.yml as of 0.7.2.
 # That workflow builds the source gem AND all 6 native gems atomically and
 # publishes them in a single step, so a native build failure can never leave
