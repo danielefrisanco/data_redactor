@@ -1,0 +1,4 @@
+# Transient run artifacts (regenerated each sweep). Results (CSV, .tex, .txt,
+# environment.md) and figures are kept; these stderr/stdout dumps are not.
+*.progress.log
+*.stdout.log

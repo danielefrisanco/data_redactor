@@ -1,0 +1,3 @@
+pipeline (v7_pipeline) is slower than pcre2jit at EVERY sampled density (strictly dominated); the pre-filter never pays off vs the same engine without it. Penalty grows monotonically with density (see ratio below).
+pipeline (v7_pipeline) overtakes pure-Ruby at ~12.286 hits/KB
+v7_pipeline/pcre2jit ms ratio: 1.15x at 0.102 hits/KB (sparsest), 10.60x at 38.280 hits/KB (densest)

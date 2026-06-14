@@ -38,11 +38,22 @@ matcher2: matcher2.c matcher2.h patterns_generated.h
 matcher2.so: matcher2.c matcher2.h patterns_generated.h
 	$(CC) $(CFLAGS) -shared -o $@ matcher2.c $(LDFLAGS)
 
+# Plain sequential glibc regexec (no AC, no BM) — reproduction of the pre-v19
+# gem engine, used as the incumbent baseline for the density sweep.
+matcher_glibc: matcher_glibc.c matcher_glibc.h patterns_generated.h
+	$(CC) $(CFLAGS) -DMMG_MAIN -o $@ matcher_glibc.c $(LDFLAGS)
+
+matcher_glibc.so: matcher_glibc.c matcher_glibc.h patterns_generated.h
+	$(CC) $(CFLAGS) -shared -o $@ matcher_glibc.c $(LDFLAGS)
+
 smoke: matcher
 	./matcher
 
 smoke2: matcher2
 	./matcher2
+
+smoke_glibc: matcher_glibc
+	./matcher_glibc
 
 # Prototype v3 — 88 patterns, Onigmo (Option A).
 matcher3: matcher3.c matcher3.h patterns_generated.h
