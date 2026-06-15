@@ -35,12 +35,14 @@ csv_path = nil
 iters    = 10     # timed scans per rep (matches bench_realistic ITERS)
 reps     = 5      # reps per (stride, engine); we report min/median/mean across reps
 quick    = false
+skip     = []     # engine names to exclude (e.g. --skip glibc_baseline)
 ARGV.each_with_index do |a, i|
   case a
   when "--csv"   then csv_path = ARGV[i + 1]
   when "--iters" then iters = Integer(ARGV[i + 1])
   when "--reps"  then reps  = Integer(ARGV[i + 1])
   when "--quick" then quick = true
+  when "--skip"  then skip = ARGV[i + 1].to_s.split(",")
   end
 end
 
@@ -199,8 +201,10 @@ end
 rows = []
 rows << %w[stride hits_per_kb bytes engine ms_min ms_median ms_mean iters reps]
 
-$stderr.puts "Density sweep — #{STRIDES.length} strides × #{ENGINE_ORDER.length} engines"
+run_order = ENGINE_ORDER.reject { |n| skip.include?(n) }
+$stderr.puts "Density sweep — #{STRIDES.length} strides × #{run_order.length} engines"
 $stderr.puts "iters=#{iters} reps=#{reps} target=#{TARGET_BYTES} bytes seed=42"
+$stderr.puts "skipped: #{skip.empty? ? '(none)' : skip.join(', ')}"
 $stderr.puts
 
 STRIDES.each do |stride|
@@ -208,7 +212,7 @@ STRIDES.each do |stride|
   hpk = hits_per_kb(stride)
   $stderr.printf("stride=%-6d (~%.3f hits/KB, %d bytes)\n", stride, hpk, payload.bytesize)
 
-  ENGINE_ORDER.each do |name|
+  run_order.each do |name|
     eng = ENGINES[name]
     eng[:init].call
     # one warmup scan (DFA cache warm, JIT path hot) before timing
