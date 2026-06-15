@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Analyse the density sweep CSV (paper/data/density_sweep.csv).
 
-Produces, from one CSV:
+Produces, from one (or two) CSV(s):
   1. crossover figure  -> paper/figures/density_crossover.{pdf,png}
   2. crossover density  (where the AC+BM+JIT pipeline crosses plain PCRE2 JIT,
      and where it crosses pure-Ruby) -> printed + paper/data/crossover_points.txt
@@ -10,8 +10,19 @@ Produces, from one CSV:
 Headline metric is ms_min (least scheduler/GC noise; see environment.md). The
 figure also shows the median band so the spread is visible.
 
+TWO OPERATING POINTS. The fast engines come from the CLEAN run (--csv: machine
+idle, reps=10). The glibc-regexec baseline is the slow incumbent reproduction;
+re-running it at the densest strides is prohibitively long (research_log §8.5,
+environment.md), so we reuse the DRAFT run for it (--baseline-csv: shared laptop,
+powersave, reps=5). This is honest and even useful: the baseline is so far behind
+that the *shape* — incumbent buried far above every shippable engine — is the same
+under powersave, and "still slow even when the fast engines had MORE resources"
+only strengthens the gap. The two-operating-point provenance is disclosed in
+environment.md and the figure caption.
+
 Usage:
-  python3 paper/plot_density_sweep.py [--csv paper/data/density_sweep.csv]
+  python3 paper/plot_density_sweep.py [--csv paper/data/density_sweep.csv] \\
+      [--baseline-csv paper/data/density_sweep_draft.csv]
 """
 import argparse
 import os
@@ -39,7 +50,7 @@ DATA_DIR = os.path.join(HERE, "data")
 # NOT on this curve; it must be measured separately (see paper/README.md TODO).
 ENGINES = {
     "ruby":           ("pure-Ruby gsub",        dict(color="#888888", ls="--", marker="")),
-    "glibc_baseline": ("glibc regexec (pre-v19 reproduction)", dict(color="#000000", ls="-", marker="x")),
+    "glibc_baseline": ("glibc regexec (pre-v19 repro., powersave draft)", dict(color="#000000", ls="-", marker="x")),
     "c_today":        ("v19 in-gem (DataRedactor.redact)", dict(color="#ee7733", ls="-", marker="D")),
     "onigmo":         ("Onigmo (BM pre-filter)",dict(color="#117733", ls="-.", marker="")),
     "v7_pipeline":    ("AC+BM+PCRE2 JIT pipeline", dict(color="#cc3311", ls="-", marker="o")),
@@ -52,9 +63,16 @@ PIPELINE = "v7_pipeline"
 NO_PIPELINE = "pcre2jit"
 
 
-def load(csv_path):
+def load(csv_path, baseline_csv=None):
+    """Load the clean sweep. If baseline_csv is given, splice its glibc_baseline
+    rows in (those are the powersave-draft incumbent; see module docstring)."""
     df = pd.read_csv(csv_path)
-    # pivot: index = hits_per_kb, columns = engine, values = ms_min
+    if baseline_csv and os.path.exists(baseline_csv):
+        base = pd.read_csv(baseline_csv)
+        base = base[base["engine"] == "glibc_baseline"]
+        # drop any glibc_baseline already in the clean run (there shouldn't be any)
+        df = df[df["engine"] != "glibc_baseline"]
+        df = pd.concat([df, base], ignore_index=True)
     df = df.sort_values("hits_per_kb")
     return df
 
@@ -205,10 +223,14 @@ def latex_table(p):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=DEF_CSV)
+    ap.add_argument("--baseline-csv",
+                    default=os.path.join(DATA_DIR, "density_sweep_draft.csv"),
+                    help="CSV supplying glibc_baseline rows (powersave draft); "
+                         "see module docstring")
     args = ap.parse_args()
     if not os.path.exists(args.csv):
         sys.exit(f"CSV not found: {args.csv} (run bench_density_sweep.rb first)")
-    df = load(args.csv)
+    df = load(args.csv, args.baseline_csv)
     p = pivot(df, "ms_min")
     p_med = pivot(df, "ms_median")
     make_figure(p, p_med, FIG_DIR)

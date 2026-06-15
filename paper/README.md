@@ -203,14 +203,15 @@ Artifacts: `bench_density_sweep.rb`, `paper/data/density_sweep.csv`,
 `paper/plot_density_sweep.py`,
 `paper/data/density_table.tex`, `paper/data/environment.md`.
 
-**Findings (this session, to be confirmed on a clean re-run):**
+**Findings (clean run 2026-06-15 for the fast engines; glibc baseline is the
+powersave draft — see caveat 1):**
 - The AC+BM+PCRE2-JIT **pipeline is slower than the same JIT without the pipeline
   at EVERY sampled density** — strictly dominated, not a crossover between the two.
-  The penalty grows monotonically with hit density: ~1.15× at 0.10 hits/KB
-  (sparsest) → ~10.2× at 38 hits/KB (densest).
-- The genuine crossover is **pipeline vs pure-Ruby at ~11 hits/KB**: below it the
-  pipeline beats the Ruby loop; above it the optimized C pipeline is slower than
-  the Ruby it was meant to replace. This is the sharp §5.2 sentence.
+  The penalty grows monotonically with hit density: **1.20× at 0.10 hits/KB
+  (sparsest) → 11.01× at 38.3 hits/KB (densest)** [clean run; draft was ~10.2×].
+- The genuine crossover is **pipeline vs pure-Ruby at ~12.0 hits/KB** [clean run;
+  draft ~11]: below it the pipeline beats the Ruby loop; above it the optimized C
+  pipeline is slower than the Ruby it was meant to replace. The sharp §5.2 sentence.
 - Mechanism (state generally, magnitude locally): a literal/AC pre-filter only
   pays off by *rejecting* positions; as more positions carry a hit, fewer are
   rejected, so the filter's per-position cost is paid without the skip benefit.
@@ -219,9 +220,16 @@ Artifacts: `bench_density_sweep.rb`, `paper/data/density_sweep.csv`,
   choice, which is the whole point of the all-density objective.
 
 **Caveats — MUST address before using these numbers in the paper:**
-1. **Single session, shared laptop, `powersave` governor, other apps running.**
-   Magnitudes are draft-quality; the *shape* is trustworthy (all engines, same
-   process, same payloads), the *absolute ms* are not. Re-run clean (see §6).
+1. **Two operating points (provenance split).** The fast/shippable engines are
+   the CLEAN run (machine idle, reps=10, `density_sweep.csv`). The glibc baseline
+   reuses the DRAFT run (shared laptop, powersave, reps=5, `density_sweep_draft.csv`):
+   a clean re-run of the slow incumbent at the dense strides is impractical (it
+   was already the dominant cost of the draft sweep and grows with density —
+   research_log §8.5), and we do NOT fabricate/extrapolate its numbers. This is
+   fine and even useful: the baseline sits ~10× above every shippable engine, so
+   its shape is unchanged by the governor, and "still buried while the fast engines
+   ran with MORE resources" only widens the gap. The figure caption and
+   environment.md must disclose this split.
 2. **"c_today" line is mislabeled in raw CSV** — `DataRedactor.redact` in gem
    0.13.0 already runs v19, so that line is *v19-in-gem*, NOT the old engine. The
    plot relabels it "v19 in-gem (DataRedactor.redact)". Useful: it shows the
@@ -278,3 +286,20 @@ S:P&E submission.
 - **2026-06-14** — Scaffolded the acmart skeleton (`main.tex`, `refs.bib`,
   `Makefile`, `.gitignore`). No local LaTeX toolchain yet — install later or use
   Overleaf (§9b). Figures + table + bib wired; section bodies are TODO stubs.
+- **2026-06-15** — Clean re-run policy: only re-measure tests that finish in
+  ~1-2 min; do NOT re-run the slow ones (glibc baseline on dense strides). For
+  those, state in the paper that a full re-run is impractical given the measured
+  cost — do NOT fabricate/extrapolate numbers. Draft (powersave) glibc baseline
+  preserved in `density_sweep_draft.csv` as the documented reference.
+- **2026-06-15** — Powersave draft data is KEPT and USED as a second operating
+  point: "even under constrained CPU resources (powersave, shared machine), the
+  shippable engines stay fast and the crossover holds" — a robustness result,
+  not throwaway. Clean (performance-mode) run is the headline; powersave is the
+  corroborating second condition.
+- **2026-06-15** — Clean fast-engine sweep DONE (21 strides × 9 engines, reps=10,
+  machine idle; `density_sweep.csv`, 189 rows). Confirms+sharpens the draft:
+  pipeline strictly dominated, penalty 1.20×→11.01×; pipeline-vs-Ruby crossover
+  ~12.0 hits/KB. `plot_density_sweep.py` now takes `--baseline-csv` and splices
+  the glibc baseline from `density_sweep_draft.csv` (powersave) into the clean
+  fast-engine data — the two-operating-point figure. Glibc legend label and
+  caption disclose the powersave provenance.

@@ -23,13 +23,20 @@ section is reproducible.
 - libpcre2 10.39-3ubuntu0.1 (PCRE2 JIT baseline)
 
 ## Timing caveats (disclose in paper)
-- **CPU governor: `powersave`** at capture time. Frequency scaling is active, so
-  absolute ms have more run-to-run variance than under `performance`. The
-  CROSSOVER SHAPE is unaffected (all engines run under identical conditions in the
-  same process), but FINAL headline numbers should be re-measured under
-  `performance` governor (`sudo cpupower frequency-set -g performance`) and/or with
-  the curve reported as min-of-N. The sweep already reports ms_min alongside
-  median/mean for this reason.
+- **Two runs exist.** (1) DRAFT: 2026-06-14, iters=10/reps=5, shared laptop with
+  other apps running, `powersave`. (2) CLEAN: 2026-06-14, iters=10/reps=10,
+  machine otherwise idle, frequency cap removed. The CLEAN run is the one whose
+  numbers the paper should use.
+- **CPU governor on the CLEAN run.** `performance` was requested
+  (`cpupower frequency-set -g performance`) but on this AMD `amd-pstate` system the
+  kernel kept reporting `powersave` (only `powersave`/`performance` are offered and
+  the active-mode driver did not honor the switch). In practice cores boost to
+  ~4.7 GHz under load (observed; policy max 4.77 GHz). Mitigation: the headline
+  metric is **ms_min over reps**, which captures the best (fully-boosted) reps and
+  discards downclocked ones, so per-rep frequency wander is largely filtered.
+  median/mean are also recorded to show spread.
+- The CROSSOVER SHAPE is robust regardless (all engines run in one process under
+  identical conditions); only absolute ms carry the governor caveat.
 - Laptop part (mobile Ryzen): thermal throttling possible on long runs. Sweep
   inits/frees each engine per stride to avoid one engine's heat biasing the next.
 - Single-process, single-thread timing (GVL held); the GVL-release / parallelism
