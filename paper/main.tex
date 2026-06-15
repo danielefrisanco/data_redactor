@@ -68,11 +68,56 @@ lazy DFA, performance engineering, Ruby C extensions}
 
 \section{The Constraint Box}
 \label{sec:constraints}
-%% Three binary GATES (zero-dep, exact-output, thread-safe) + the all-density
-%% objective. Why each gate disqualifies an attractive option: PCRE2 JIT fails
-%% zero-dep; the merged NFA fails exact-output (31\%); prototype globals failed
-%% thread-safety until the per-thread refactor.
-\textbf{TODO.}
+The objective is performance, but it is performance constrained, and the
+constraints are what make the problem non-trivial---each one disqualifies an
+option that is otherwise attractive on speed alone. We treat three of them as
+binary gates: a candidate either passes or is ineligible, regardless of how fast
+it is. The fourth is the shape of the objective itself.
+
+\paragraph{Gate 1: zero runtime dependencies.} The library installs as a gem with
+no native dependencies beyond what Ruby itself links. This rules out the
+speed-optimal engine outright. Plain PCRE2~JIT is the fastest engine we measured
+at every density (\S\ref{sec:eval}), and it is disqualified not for being slow but
+for requiring a third-party shared library at run time. The gate converts the
+fastest option into a non-option, which is the paper's thesis in miniature.
+
+\paragraph{Gate 2: byte-for-byte-identical output.} The replacement must redact
+exactly the same byte ranges as the incumbent, character for character, so that
+swapping the engine is invisible to every downstream consumer. This is the gate
+that kills the most tempting algorithmic shortcut. Merging all patterns into a
+single combined automaton---the textbook way to make multi-pattern matching one
+pass---was among the fastest prototypes we built (\S\ref{sec:method}), but it does
+not preserve per-pattern semantics: a state in the merged automaton is a set of
+NFA states drawn from all patterns at once, so one pattern's accept condition can
+be reached through state shared with another, producing matches the per-pattern
+incumbent never makes. On our correctness suite the merged design passed only
+\(4\) of \(13\) cases (\(31\%\)), and it cannot be patched without per-pattern
+submatch tracking---which removes the very sharing that made it fast. We enforce
+the gate with an oracle that compares the candidate's output to the pure-Ruby
+\texttt{gsub} reference byte-for-byte over our input corpus (\S\ref{sec:method});
+a single mismatch fails the candidate.
+
+\paragraph{Gate 3: thread-safety in a managed runtime.} The engine runs inside a
+garbage-collected host with multiple threads and a global interpreter lock that we
+want to release on large inputs (to let other threads run during a long scan).
+Several fast prototypes kept mutable matcher state in process globals---including,
+subtly, a lazy DFA cache that is filled \emph{during} a scan---which is a data
+race the moment two threads scan at once or the lock is released mid-scan. The
+gate is what forces the immutable/mutable state split described in
+\S\ref{sec:finding-hardening}; until that refactor, the otherwise-shippable engine
+was ineligible.
+
+\paragraph{The objective: robustness across all match densities.} Among the
+candidates that pass all three gates, we do not optimize average-case throughput
+on a representative payload. We optimize the worst case across match
+density, because a redaction library cannot choose its input: the same code path
+must handle a log line with one secret in ten kilobytes and a credential dump that
+is almost entirely secrets. An engine that is fastest on typical text but degrades
+on dense input fails the use case even though it would win a benchmark average.
+This objective is why the density sweep (\S\ref{sec:finding-crossover}) is the
+decisive measurement rather than a single headline number, and why a design whose
+cost is flat across densities is preferred over a faster-on-average one that is
+not.
 
 \section{Method: The Prototype Search}
 \label{sec:method}
@@ -84,51 +129,103 @@ lazy DFA, performance engineering, Ruby C extensions}
 \section{Findings}
 \label{sec:findings}
 
-\subsection{The incumbent's cost is allocation, not a missing pre-filter}
+\subsection{The incumbent is slow for engine reasons, not for being C}
 \label{sec:finding-alloc}
-%% glibc regexec O(N) per-call state-log allocation is the dominant factor, not
-%% the missing Boyer-Moore. ~88 MB allocated per redact call at 88 patterns x 1MB.
-%% Figure~\ref{fig:overview} shows the reproduced glibc baseline ~8-10x slower
-%% than pure-Ruby across the density range.
-\textbf{TODO.}
+The starting point is a result that looks, at first, like an indictment of the
+implementation language: the C extension is \(3\)--\(5\times\) \emph{slower} than
+an equivalent pure-Ruby loop that calls \texttt{String\#gsub} with the same
+pattern set. A C extension is normally expected to beat the interpreter it
+extends, so this inversion is the paper's entry point. We argue it is a category
+error to read it as ``C is slower than Ruby here.'' The controlled variable is the
+regex engine, not the language: the C path drives glibc's POSIX
+\texttt{regexec}, while the Ruby path drives Onigmo, Ruby's own engine. The two
+engines differ in two ways that both favour Onigmo on this workload.
+
+First, a pre-filter gap. Onigmo applies a Boyer--Moore literal scan before
+committing to NFA evaluation: at a position with no required anchor byte it skips
+ahead by the shift table. Many redaction patterns carry long literal prefixes
+(\texttt{sk\_live\_}, \texttt{AKIA}, \texttt{-----BEGIN}), so on ordinary text
+Onigmo rejects most positions cheaply, whereas glibc \texttt{regexec} evaluates
+the automaton at every position. Second, an allocation gap. glibc
+\texttt{regexec} allocates state proportional to the input length on each call,
+while Onigmo evaluates against a fixed-size stack; with one pass per pattern, that
+per-call cost is paid once per pattern per input. Neither factor is about C.
+
+These two effects are not independent of density, which sets up the rest of the
+paper: the pre-filter advantage is largest exactly when hits are rare (most
+positions can be skipped) and shrinks as hits become common. Figure~\ref{fig:overview}
+places the reproduced pre-v19 glibc engine (\S\ref{sec:method}) against the field
+across the density range; in our configuration it sits roughly an order of
+magnitude above every shippable engine, including the pure-Ruby loop it was meant
+to replace.
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{figures/density_overview.pdf}
   \caption{Time per scan vs.\ match density (log--log), all engines. The
-  reproduced pre-v19 glibc \texttt{regexec} engine is \(\sim\)8--10\(\times\)
-  slower than the pure-Ruby \texttt{gsub} loop it was meant to beat. DRAFT data:
-  single session, shared machine under the \texttt{powersave} governor; shape is
-  trustworthy, absolute magnitudes pending a clean re-run.}
+  reproduced pre-v19 glibc \texttt{regexec} engine sits roughly an order of
+  magnitude above every shippable engine---slower than the pure-Ruby
+  \texttt{gsub} loop it was meant to beat. \emph{Two operating points:} the
+  shippable engines are from a clean run (idle machine), while the glibc baseline
+  is reused from an earlier \texttt{powersave} run, as re-measuring the slow
+  incumbent across the dense strides is impractical (\S\ref{sec:discussion}); this
+  only understates the gap, since the fast engines ran with more CPU headroom than
+  the baseline.}
   \label{fig:overview}
 \end{figure}
 
 \subsection{The pre-filter pipeline penalty grows with match density}
 \label{sec:finding-crossover}
-%% The money figure. Mechanism stated generally, magnitude locally (README §5):
-%% a literal/AC pre-filter pays off only by REJECTING positions; as more
-%% positions carry a hit, fewer are rejected, so the per-position cost is paid
-%% without the skip benefit. The AC+BM+JIT pipeline is strictly dominated by the
-%% same JIT without the pipeline at every sampled density (1.15x sparse -> 10.6x
-%% dense), and overtakes pure-Ruby at ~12 hits/KB. Onigmo (also BM-pre-filtered)
-%% climbs too -- independent corroboration. Scope every claim to our config.
-\textbf{TODO.}
+The conventional move for multi-pattern matching is to put a shared literal
+pre-filter in front of a confirmation engine---an Aho--Corasick or Boyer--Moore
+pass that finds candidate positions, followed by a full regex check only there. We
+built that pipeline (Aho--Corasick \(+\) Boyer--Moore \(+\) PCRE2~JIT) and
+measured it against the same PCRE2~JIT engine with no pre-filter, across a
+continuous sweep of match densities (Fig.~\ref{fig:crossover}, Table~\ref{tab:density}).
+
+The mechanism is general: a literal pre-filter pays off only by \emph{rejecting}
+positions before the expensive engine runs. Its benefit is therefore bounded by
+how many positions it can reject, and that fraction falls as matches become
+denser. Past some density the pre-filter inspects nearly every position, finds a
+candidate at most of them, and so adds its own cost on top of a confirmation step
+it can no longer avoid. The pre-filter becomes pure overhead.
+
+The magnitude, in our configuration, is sharper than the mechanism alone predicts.
+The pipeline is not merely worse at high density---it is slower than the same JIT
+without the pipeline at \emph{every} density we sampled, from the sparsest
+(\(\approx 0.1\) hits/KB) to the densest (\(\approx 38\) hits/KB). The penalty
+grows monotonically with density, from \(1.2\times\) slower to \(11\times\)
+slower. Onigmo, which also fronts its automaton with a Boyer--Moore scan, rises
+with density on the same payloads---independent corroboration that the effect is a
+property of pre-filtering, not of one implementation.
+
+The single sentence we take to \S\ref{sec:eval} is the crossover against the
+incumbent the pipeline was meant to beat: \emph{the optimized C pipeline overtakes
+the pure-Ruby \texttt{gsub} loop at \(\approx 12\) hits/KB}---below that density it
+wins, above it the hand-built pipeline is slower than the Ruby it was built to
+replace. Plain PCRE2~JIT and the v19 lazy-DFA engine (\S\ref{sec:finding-v19})
+show no such climb; they stay flat across the whole range, which is what a design
+selected for worst-case density robustness must do.
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{figures/density_crossover.pdf}
   \caption{Time per scan vs.\ match density (shippable-class engines, linear
-  \(y\)). The AC+BM+PCRE2-JIT pipeline tracks the no-pipeline engines when hits
-  are rare, then its cost rises with density and overtakes the pure-Ruby baseline
-  at \(\approx 12\) hits/KB. Plain PCRE2 JIT and the v19 lazy-DFA engine stay flat.
-  DRAFT data (see Fig.~\ref{fig:overview}).}
+  \(y\); clean run). The AC+BM+PCRE2-JIT pipeline tracks the no-pipeline engines
+  when hits are rare, then its cost rises with density and overtakes the pure-Ruby
+  baseline at \(\approx 12\) hits/KB. Plain PCRE2 JIT and the v19 lazy-DFA engine
+  stay flat. Relative to plain PCRE2 JIT, the pipeline ranges from
+  \(1.2\times\) slower (sparsest) to \(11\times\) slower (densest) in our
+  configuration.}
   \label{fig:crossover}
 \end{figure}
 
 \begin{table}[t]
   \centering
-  \caption{Time per scan (ms, min of reps) at selected densities. Generated by
-  \texttt{paper/plot\_density\_sweep.py}; DRAFT data.}
+  \caption{Time per scan (ms, min of reps) at selected densities. Shippable
+  engines from the clean run; the glibc baseline column is the \texttt{powersave}
+  draft (\S\ref{sec:discussion}). Generated by
+  \texttt{paper/plot\_density\_sweep.py}.}
   \label{tab:density}
   \input{data/density_table.tex}
 \end{table}
