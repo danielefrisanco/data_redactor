@@ -168,6 +168,22 @@ Tracked from research log §14.4. `[ ]` = not done, `[~]` = partial/draft.
 - [ ] **In-gem vs prototype reconciliation** — already noted in research log
       (2.21×/… prototype vs 2.33×/… in-gem); make sure the paper states which
       number is which and why.
+- [ ] **AI-use methodology write-up** — beyond the one-line §4 disclosure, write a
+      concrete account of HOW the author used Claude, in the author's voice. This
+      is both honest disclosure and methodologically interesting (the search was a
+      human-directed, AI-executed loop). Cover, with who-did-what kept explicit:
+      - the author SET the direction and the hypotheses — e.g. how the author
+        thought the algorithm should work (the per-pattern vs merged intuition,
+        the selective-merge idea), the constraint box, the thesis framing;
+      - the author DIRECTED Claude to do the literature research / triage, build
+        the prototypes and the benchmark harness, run the sweeps, and draft prose;
+      - the author REVIEWED, corrected, and is accountable for every result and
+        claim (caught the c_today mislabel, set the re-run/no-fabrication policy,
+        locked tone rules).
+      Decide placement: a short "How this paper was produced" note (methods or an
+      appendix) vs. expanding the §4 \acks sentence. Keep it factual, first-person,
+      no overclaiming in either direction (neither "all AI" nor hiding the tooling).
+      Source material: this repo's git history + the planning decisions log (§10).
 
 ---
 
@@ -303,3 +319,14 @@ S:P&E submission.
   the glibc baseline from `density_sweep_draft.csv` (powersave) into the clean
   fast-engine data — the two-operating-point figure. Glibc legend label and
   caption disclose the powersave provenance.
+- **2026-06-15** — LaTeX toolchain installed; skeleton compiles to a 5-page PDF
+  (`main.pdf`, committed). Drafted §3 (constraint box) + §5.1/§5.2 (findings).
+  Fixes: dropped unused `siunitx`; `\resizebox` the density table to fit
+  `acmsmall`; ignore `*.cut` build artifact.
+- **2026-06-15** — Author asked for an AI-use methodology write-up (backlog §6):
+  a concrete, first-person account of how the author used Claude — set the
+  hypotheses/algorithm intuition, directed the research/benchmark/prototype work,
+  reviewed and is accountable for results. Beyond the boilerplate §4 disclosure;
+  framed as honest methodology (human-directed, AI-executed search loop), not
+  self-deprecation or AI-credit. Placement (methods note vs appendix vs expanded
+  \acks) TBD.
