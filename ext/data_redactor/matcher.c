@@ -406,6 +406,7 @@ typedef struct {
     int         has_first_filter;
     int         use_dfa;
     int         boundary_wrapped;
+    int         keyname_anchored;
     int         has_eol;
     size_t      max_len;
     /* selective-merge membership (built-ins only; customs never join a merge) */
@@ -1014,6 +1015,24 @@ static size_t scan_one(int p, scan_state_t *state, const char *input, size_t len
                     !isalnum((unsigned char)input[core_so])) core_so++;
                 if (core_eo > core_so &&
                     !isalnum((unsigned char)input[core_eo-1])) core_eo--;
+            } else if (eng->keyname_anchored) {
+                /* The match is KEY<sep>VALUE (e.g. PASSWORD="hunter2"). We redact
+                 * only VALUE and keep KEY<sep> so logs stay greppable. The value
+                 * grammar forbids '=' and ':' unquoted, so the FIRST separator in
+                 * the span unambiguously ends the key. Advance past it, then past
+                 * surrounding whitespace and a single opening/closing quote. */
+                size_t s = core_so;
+                while (s < core_eo && input[s] != '=' && input[s] != ':') s++;
+                if (s < core_eo) s++;                       /* skip the separator */
+                while (s < core_eo &&
+                       (input[s] == ' ' || input[s] == '\t')) s++;
+                if (s < core_eo &&
+                    (input[s] == '"' || input[s] == '\'')) {
+                    char q = input[s];
+                    s++;
+                    if (core_eo > s && input[core_eo-1] == q) core_eo--;
+                }
+                core_so = s;
             }
             if (count < max)
                 out[count++] = (mm_match_t){p, core_so, core_eo - core_so};
@@ -1150,6 +1169,7 @@ void mm_init(void) {
     for (int p = 0; p < NUM_PATTERNS; p++) {
         engine_t *eng = eng_grow_one();
         engine_build(eng, pattern_strings[p], boundary_wrapped[p], pattern_names[p]);
+        eng->keyname_anchored = keyname_anchored[p];
 
         const char *lit = pattern_required_literal[p];
         if (lit) {

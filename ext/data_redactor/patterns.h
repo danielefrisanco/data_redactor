@@ -3,12 +3,21 @@
 
 #include <regex.h>
 
-#define NUM_PATTERNS 88
+#define NUM_PATTERNS 89
 
 extern const char *pattern_strings[NUM_PATTERNS];
 extern const int   boundary_wrapped[NUM_PATTERNS];
 extern const int   pattern_tags[NUM_PATTERNS];
 extern const char *pattern_names[NUM_PATTERNS];
+
+/*
+ * Key-name-anchored patterns match KEY<sep>VALUE (e.g. PASSWORD="hunter2") and
+ * redact only VALUE, preserving KEY<sep> so logs stay greppable. The matcher
+ * strips the key+separator (and surrounding quotes/whitespace) from the match
+ * span; see the keyname_anchored branch in matcher.c's match emission. These
+ * are mutually exclusive with boundary_wrapped[] (a span has one strip rule).
+ */
+extern const int   keyname_anchored[NUM_PATTERNS];
 
 /*
  * Optional case-sensitive literal substring that the input must contain for

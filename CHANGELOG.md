@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-16
+
 ### Added
+- **Key-name-anchored secret redaction** (`:credentials`). A new pattern tier
+  redacts a secret by the *name of the field it is assigned to*, for values with
+  no distinctive shape of their own — the primary case being an `.env` file or
+  config blob passed through the redactor. Anchored on the key words `password`,
+  `passwd`, `pwd`, `secret`, `token`, `api_key`, `apikey`, `access_key`, and
+  `client_secret` (case-insensitive), followed by `=` or `:` (dotenv and YAML
+  styles), with quoted (`"..."`/`'...'`) or unquoted (≥6 chars) values. Only the
+  **value** is redacted; the key is kept so logs stay greppable
+  (`PASSWORD=[REDACTED]`). Compound key names match whether the secret word is a
+  prefix or suffix segment (`POSTGRES_DB_PASSWORD=`, `PASSWORD_POSTGRES=`).
+  Requires the assignment separator, so the word in prose ("reset your password")
+  is not a false positive.
 - `examples/` directory with runnable, copy-pasteable usage scripts for every
   feature (core redaction, scan/dry-run, custom patterns, deep/JSON traversal,
   and the Logger / Rack / Rails / LLM integrations). Repo-only — not packaged in
@@ -261,7 +275,8 @@ features as 0.7.1 plus the pipeline fix.
 - `DataRedactor.redact(text)` module function returning the input with every match replaced by `[REDACTED]`.
 - RSpec suite with one example per pattern.
 
-[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/danielefrisanco/data_redactor/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.11.0...v0.13.0
 [0.11.0]: https://github.com/danielefrisanco/data_redactor/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/danielefrisanco/data_redactor/compare/v0.10.0...v0.10.1

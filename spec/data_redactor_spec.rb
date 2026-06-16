@@ -594,6 +594,74 @@ RSpec.describe DataRedactor do
     end
   end
 
+  # ---- Pattern 88: Key-name-anchored secrets (KEY=VALUE / KEY: VALUE) ----
+  describe "key-name-anchored secrets" do
+    it "redacts an unquoted dotenv value and keeps the key" do
+      expect(DataRedactor.redact("PASSWORD=hunter2horse"))
+        .to eq("PASSWORD=[REDACTED]")
+    end
+
+    it "redacts a double-quoted value and keeps the quotes around the placeholder" do
+      expect(DataRedactor.redact(%q{PASSWORD="hunter2horse"}))
+        .to eq(%q{PASSWORD="[REDACTED]"})
+    end
+
+    it "redacts a single-quoted value" do
+      expect(DataRedactor.redact(%q{password='s3cr3t value'}))
+        .to eq(%q{password='[REDACTED]'})
+    end
+
+    it "redacts a YAML colon-separated value and keeps the key" do
+      expect(DataRedactor.redact(%q{api_key: AKIAxxxxxxxxxxxxxxxx}))
+        .to eq("api_key: [REDACTED]")
+    end
+
+    it "is case-insensitive on the key name" do
+      expect(DataRedactor.redact("Secret=abcdef123456"))
+        .to eq("Secret=[REDACTED]")
+    end
+
+    it "keeps a compound key whose secret word is a prefix segment" do
+      expect(DataRedactor.redact("POSTGRES_DB_PASSWORD=ciaosadfhusafd"))
+        .to eq("POSTGRES_DB_PASSWORD=[REDACTED]")
+    end
+
+    it "keeps a compound key whose secret word is a suffix segment" do
+      expect(DataRedactor.redact(%q{PASSWORD_POSTGRES="lamiapassword"}))
+        .to eq(%q{PASSWORD_POSTGRES="[REDACTED]"})
+    end
+
+    it "preserves a value containing punctuation like ^ and -" do
+      expect(DataRedactor.redact("DB_PASSWORD=ciaosadfhusafd^asg-X"))
+        .to eq("DB_PASSWORD=[REDACTED]")
+    end
+
+    it "redacts only the value, leaving trailing context intact" do
+      expect(DataRedactor.redact("DB_PASSWORD=p@ssw0rd-2026 next"))
+        .to eq("DB_PASSWORD=[REDACTED] next")
+    end
+
+    it "does not redact the word in prose (no separator)" do
+      input = "Please reset your password to continue"
+      expect(DataRedactor.redact(input)).to eq(input)
+    end
+
+    it "does not redact a value shorter than the 6-char minimum" do
+      input = "pwd=ab"
+      expect(DataRedactor.redact(input)).to eq(input)
+    end
+
+    it "tags key-name-anchored matches as :credentials" do
+      result = DataRedactor.redact("PASSWORD=hunter2horse", only: [:credentials])
+      expect(result).to eq("PASSWORD=[REDACTED]")
+    end
+
+    it "is excluded when :credentials is filtered out" do
+      input = "PASSWORD=hunter2horse"
+      expect(DataRedactor.redact(input, except: [:credentials])).to eq(input)
+    end
+  end
+
   describe "tag filtering" do
     let(:aws)    { "AKIAIOSFODNN7EXAMPLE" }                        # :credentials
     let(:email)  { "user@example.com" }                            # :contact

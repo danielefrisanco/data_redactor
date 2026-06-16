@@ -350,29 +350,52 @@ Distinctive-prefix API keys with low false-positive risk, grouped under `:creden
 - PagerDuty API Key — **skipped**: REST tokens are 20-char alphanum without a stable distinctive prefix; v2 routing keys are 32 hex chars → both FP-prone
 - HashiCorp — ✅ **DONE**: Vault service tokens (`hvs.`), Vault batch tokens (`hvb.`), Terraform Cloud API tokens (`atlasv1`). `hcp.` prefix not found in public pattern databases — skipped.
 
-### Assignment-style secret patterns (key-name anchored) — WANTED
+### Assignment-style secret patterns (key-name anchored) — ✅ DONE in 0.14.0
 
 Patterns that redact a secret by the **name of the field it is assigned to**, not by
-the secret's own format. Requested 2026-06-09. The secret value itself has no
-distinctive shape, so the key name is the only anchor:
+the secret's own format. Requested 2026-06-09. Primary use case: an `.env` file or
+config blob passed through the redactor — we can't (and don't) detect that it *is*
+an env file; the pattern fires content-wise wherever a secret key word is assigned.
 
-- [ ] `%PWD%`, `%PASSWORD%` (env-var-template style)
-- [ ] `PASSWORD="..."` / `PASSWORD=...` (assignment / dotenv style)
-- [ ] generalize to common secret key names: `password`, `passwd`, `pwd`, `secret`,
-      `token`, `api_key`, `apikey`, `access_key`, `client_secret`, etc., across the
-      common separators (`=`, `:`, `=>`) and quoting styles.
+- [x] `PASSWORD="..."` / `PASSWORD=...` (dotenv style)
+- [x] `api_key: ...` (YAML colon style)
+- [x] secret key names: `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`,
+      `apikey`, `access_key`, `client_secret` (case-insensitive)
+- [x] compound keys both ways: `POSTGRES_DB_PASSWORD=` (prefix) and
+      `PASSWORD_POSTGRES=` (suffix), full compound key kept
 
-**Open design questions (resolve before implementing):**
-- Redact only the **value**, keep the key (`PASSWORD=[REDACTED]`) — almost certainly
-  the right call, so logs stay greppable.
-- Case-insensitivity: POSIX ERE has no `/i`. Need `[Pp][Aa]...` char-class expansion
-  or a parser-level fold — decide which.
-- Value terminator: where does the value end? Quoted (`"..."`/`'...'`) is easy;
-  unquoted runs to whitespace/newline/`;`/`,`. Define the value grammar.
-- FP risk: `password` appears in prose ("reset your password"). Anchoring on the
-  separator (`password\s*[=:]`) mitigates this — require the assignment, not the word.
-- These are a new tier (value-after-key-name); confirm where they sit in the
-  specific→generic ordering and whether they need `boundary_wrapped`.
+**Resolved design decisions (as shipped):**
+- Redact only the **value**, keep the key (`PASSWORD=[REDACTED]`) so logs stay
+  greppable. Implemented via a new `keyname_anchored[]` tier + a strip rule in the
+  matcher emit block (walk to the first `=`/`:`, skip whitespace + a quote), since
+  the engine has no capture groups. Not `boundary_wrapped` (mutually exclusive).
+- Case-insensitivity: explicit `[Pp][Aa]...` char-class expansion per key word
+  (POSIX ERE has no `/i`; no `REG_ICASE` at compile time).
+- Value grammar: quoted (`"..."`/`'...'`) runs to the closing quote; unquoted is
+  ≥6 chars stopping at whitespace/newline/`"`/`'`/`;`/`,`/`:`/`=`. The 6-char floor
+  cuts FPs like `FLAG=true`.
+- FP control: requires the `=`/`:` separator, so the word in prose ("reset your
+  password") never matches.
+- Tagged `:credentials`; placed after URLs/prefixed-tokens in the
+  specific→generic ordering.
+
+**Follow-up: richer YAML (separate pass, after env):**
+The flat `key: value` YAML form already ships (same pattern, `:` separator —
+`api_key: AKIA...` → `api_key: [REDACTED]`, incl. indented/nested keys since the
+pattern is line-local). Not yet handled, worth a dedicated pass:
+- Block scalars: `password: |` / `password: >` with the value on following
+  indented lines (value spans multiple lines — our value grammar stops at newline).
+- Flow mappings: `{ password: secret, ... }` (terminator is `,`/`}`, not just
+  whitespace/newline).
+
+**Out of scope (deliberately not shipped):**
+- `url` / `*_URL=` as a key word — too generic; would nuke non-secret values like
+  `REDIS_URL=redis://localhost:6379`. (Passwords *embedded inside* a URL are
+  already covered separately by the pre-existing `uri_with_password` pattern.)
+- `%PWD%` / `%PASSWORD%` env-var-**template** style (Windows `%VAR%` references) —
+  these are variable *references*, not assignments of a secret value; nothing to
+  redact. Revisit only if a concrete leak case appears.
+- `=>` (hashrocket) separator — only `=` and `:` shipped. Add if requested.
 
 ## Roadmap to a usable gem
 
