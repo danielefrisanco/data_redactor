@@ -229,12 +229,12 @@ full 40 and redact everything, flipping that passing spec.
       directly-abutting secrets with no separator — rare in real text, which is
       whitespace/punctuation-delimited; (2) today's output in these cases is itself a
       glibc-rewrite artifact (mangled partial tokens), not behaviour worth preserving;
-      (3) the decided 1.0 longest-match-wins policy redacts the whole region and fixes
-      these properly. No existing spec asserts a no-separator back-to-back redaction, so
-      the suite stays green. This is the single documented behavioural difference of the
-      ported engine vs the original — see the divergence ledger (§ "Where the ported
-      engine differs"). If a future need arises, a bounded re-scan around each `[REDACTED]`
-      edge would recover byte-identical behaviour without a full multi-pass.
+      (3) the longest-match-wins policy (shipped 0.15.0) redacts the whole region wherever
+      one longer pattern spans both tokens, fixing those cases properly; the residual cases
+      are only those where no single pattern covers the join. No existing spec asserts a
+      no-separator back-to-back redaction, so the suite stays green. See the divergence ledger
+      (§ "Where the ported engine differs"). If a future need arises, a bounded re-scan around
+      each `[REDACTED]` edge would recover byte-identical behaviour without a full multi-pass.
 
 **Ship hygiene (once the gaps are closed):**
 - [x] 256-example rspec suite green against the new engine (the correctness gate). ✅
@@ -252,11 +252,15 @@ full 40 and redact everything, flipping that passing spec.
       slower → 1.7–2.3× faster. The 2.3× prototype win survives the Ruby↔C boundary. ✅
 
 **Phase 1 — ported but NOT done yet (tracked for future work):**
-- [ ] **Longest-match-wins overlap policy** — the decided 1.0 policy (keep the longest
-      CORE span at each position; pattern-id breaks ties). Currently deferred; `mm_resolve`
-      keeps the index-order greedy claim to reproduce today's sequential semantics. Changing
-      the resolver is ~40 lines + spec work to unmark the two `pending` 1.0 specs. The event
-      list is preserved intact so this is a drop-in swap.
+- [x] **Longest-match-wins overlap policy** — **DONE (0.15.0, `feat/longest-match-resolver`).**
+      `mm_resolve` now keeps the longest CORE span at each position; equal-length ties go to
+      the lower pattern-id (so tied matches behave as before). Was a drop-in swap of the
+      resolve sort key + keep-rule — the event list was already preserved intact, `mm_scan`
+      and the whole hot path are untouched, so throughput is unchanged (2.38× on the 1 MB
+      log; gate green). Shipped as a **minor** bump, not 1.0: the public API is unchanged and
+      the gem is pre-1.0, so SemVer permits a behaviour change in a minor release. The two
+      formerly `pending` 1.0 specs are now green; the "today's pattern-id-priority" describe
+      block was rewritten to the longest-match expectations. See divergence ledger item 4.
 - [ ] **Full per-call thread re-entrancy** — `mm_scan` mutates per-engine fields
       (`iban_last_end`, `digit_last_end`, DFA scratch). Phase 1 is safe only because MRI's
       GVL serialises C extension calls (no `rb_thread_call_without_gvl` is ever used).
@@ -288,21 +292,26 @@ full 40 and redact everything, flipping that passing spec.
    `WORKING_TO_ORIG` to map coordinates back. The new approach is simpler and faster;
    the only observable difference is the rewrite-boundary class below.
 
-2. **Rewrite-created / rewrite-destroyed boundary** (Gap 5, accepted) — when two secrets
-   directly abut with no separator, the `[REDACTED]` placeholder from the lower-index
-   match can create (or destroy) the word boundary a higher-index boundary-wrapped pattern
-   needs. A single-pass scan over the original buffer cannot see the rewritten boundary.
-   ~2% of adjacency-heavy synthetic inputs; irrelevant in real text (always separator-
-   delimited). Pinned by DIVERGENCE specs; fixed by the future longest-match-wins resolver.
+2. **Directly-abutting tokens with no separator** (Gap 5, accepted) — when two secrets
+   directly abut with no separator, a boundary-wrapped pattern can fail to match because the
+   original buffer has no word boundary where one token meets the next (the old sequential
+   engine sometimes matched on a `[REDACTED]`-created boundary instead). A single-pass scan
+   over the original buffer cannot see such a boundary. ~2% of adjacency-heavy synthetic
+   inputs; irrelevant in real text (always separator-delimited). The longest-match-wins
+   resolver (item 4) redacts the whole region wherever one *longer* pattern spans both
+   tokens; the residual cases are those where no single pattern covers the join. Pinned by
+   the "directly-abutting tokens" specs.
 
 3. **Custom patterns bypass the selective merges** — customs always go through glibc
    `replace_all_matches`, even if their regex is a pure digit run or an IBAN prefix.
    Built-in digit/IBAN patterns continue to use the group passes. Acceptable because
    customs are a small minority of calls.
 
-4. **Overlap policy is still index-order greedy** — see item 1 of "Phase 1 not done yet".
-   The 1.0 longest-match-wins policy is deferred; for now the resolver reproduces today's
-   sequential-rewrite behaviour exactly.
+4. **Overlap policy is longest-match-wins** (0.15.0) — `mm_resolve` keeps the longest CORE
+   span at each position, equal-length ties broken by lower pattern-id. This is a deliberate
+   behaviour change from the original gem's accidental "earliest-index-wins" semantics: it
+   redacts *more* when uncertain (e.g. a 40-char AWS secret is redacted whole rather than
+   leaking the bytes past a shorter prefix match), aligning with Onigmo/PCRE/RE2/Hyperscan.
 
 ### 1b. Legal check before shipping BM implementation
 

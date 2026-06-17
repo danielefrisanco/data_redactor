@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Overlap resolution is now longest-match-wins** (was earlier-index-wins). When
+  two patterns match overlapping spans, the engine keeps the **longer** span;
+  equal-length ties go to the lower pattern index (preserving prior behaviour for
+  same-length matches). The previous "earliest pattern by index wins any region it
+  can match" semantic was an accidental by-product of sequential per-pattern
+  rewriting, and it could leave a secret **partly unredacted** — e.g.
+  `AKIA…EXAMPLE` followed by 20 more alphanumeric bytes used to redact only the
+  20-char access-key prefix and leak the trailing 20 bytes; it now redacts the full
+  40-char secret. The public API (`redact`, `scan`) is unchanged; `scan` may report
+  one longer match where it previously reported several shorter overlapping ones.
+  Aligns with Onigmo/PCRE/RE2/Hyperscan semantics. Resolver only — no measurable
+  throughput change (still ~2.4× over pure-Ruby on the 1 MB log).
+
 ### Added
 - **CI throughput regression gate** (`throughput-gate` job). Runs
   `benchmark/ci_throughput_gate.rb`, which gates on the ratio of the C engine to

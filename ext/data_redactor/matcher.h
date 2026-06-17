@@ -53,19 +53,20 @@ void mm_clear_custom(void);
  * array disables out-of-range patterns. Events carry ORIGINAL-frame offsets.
  *
  * Events are NOT pre-resolved for cross-pattern overlap — the caller applies
- * the index-order greedy claim (mm_resolve) to reproduce the gem's sequential
- * per-pattern rewrite semantics.
+ * the longest-match-wins greedy claim (mm_resolve) to pick the final
+ * non-overlapping set.
  */
 size_t mm_scan(const char *input, size_t len,
                const int *enable_bits, size_t n_bits,
                mm_match_t *out, size_t max);
 
 /*
- * Resolve raw scan events into the non-overlapping set the gem's sequential
- * per-pattern rewrite would produce: in (pattern_id, start) order, keep an
- * event iff its CORE span does not overlap an already-kept span. Sorts `ev`
- * in place and returns the kept count (compacted to the front of `ev`), in
- * ascending start order. n_total is the pattern-id upper bound for ordering.
+ * Resolve raw scan events into the final non-overlapping set under the
+ * longest-match-wins policy: process events in (start asc, length desc,
+ * pattern_id asc) order and keep an event iff its CORE span does not overlap an
+ * already-kept span. The longest match at each position wins; equal-length ties
+ * go to the lower pattern_id. Sorts `ev` in place and returns the kept count
+ * (compacted to the front of `ev`), in ascending start order.
  */
 size_t mm_resolve(mm_match_t *ev, size_t n);
 

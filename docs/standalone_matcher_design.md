@@ -189,16 +189,17 @@ Memory is O(DFA_states × alphabet_size) for the transition table. For 256-byte
 alphabet (raw bytes, UTF-8-safe by byte) and a few thousand states, that's a
 few MB — acceptable for a one-time cost held in the compiled matcher.
 
-## Overlap resolution — DECIDED 2026-05-23
+## Overlap resolution — DECIDED 2026-05-23, SHIPPED 0.15.0
 
 **Policy: longest match wins, tied lengths broken by pattern-id (lower index
-wins).** Locked in via Prep 2 (see
+wins).** Decided via Prep 2 (see
 [`pattern_subset_audit.md`](pattern_subset_audit.md) sibling and
-[`combined_matcher_plan.md`](combined_matcher_plan.md)). Spec coverage is in
-`spec/data_redactor_spec.rb` under the "overlap resolution" describe blocks
-— both today's pattern-id-priority behaviour AND the post-1.0 longest-match
-behaviour are written as specs, with the latter marked `pending` until the
-matcher ships.
+[`combined_matcher_plan.md`](combined_matcher_plan.md)); implemented in
+`mm_resolve` (`ext/data_redactor/matcher.c`) and shipped in 0.15.0. Spec coverage
+is in `spec/data_redactor_spec.rb` under the "overlap resolution" describe blocks.
+Until 0.15.0 the resolver reproduced the old pattern-id-priority behaviour
+byte-for-byte so the v19 engine port could be verified as a behaviour-preserving
+refactor; the longest-match swap then landed as an isolated, easily-attributed change.
 
 ### Why longest-match-wins, not pattern-id priority
 
@@ -245,13 +246,17 @@ wins, so `polish_pesel` is reported. Matches today's behaviour.
 
 ### Compatibility implications
 
-This **is a behaviour change** from today. Concrete consequences:
+This **is a behaviour change**. Concrete consequences:
 
-- **Major version bump.** The combined-matcher PR ships as `1.0.0` (already
-  planned per `combined_matcher_plan.md`). The overlap-policy change is
-  called out prominently in the CHANGELOG.
+- **Shipped in 0.15.0** (minor bump). The gem is pre-1.0, so SemVer permits a
+  behaviour change in a minor release, and the **public API is unchanged** — only
+  the output on a narrow class of overlapping/adjacent-token inputs differs. (The
+  earlier draft of this doc anticipated a `1.0.0` bump bundled with the combined
+  matcher; the engine port and the overlap-policy swap were staged separately, so
+  the policy lands as 0.15.0 and 1.0.0 is reserved for the API-stability milestone.)
+  The overlap-policy change is called out prominently in the CHANGELOG.
 - **`scan` API unchanged.** Still returns `matches: [...]`. The set of
-  matches reported may differ from today (one longer match instead of
+  matches reported may differ from before (one longer match instead of
   multiple shorter overlapping ones).
 - **Custom patterns inherit the policy.** No new flag — the policy is the
   matcher's, applies uniformly.

@@ -16,10 +16,10 @@
  *
  *   2. Output contract. mm_scan() takes an enable_bits gate and emits ORIGINAL-
  *      frame (pattern_id, start, span) events for ALL enabled patterns in one
- *      pass; it does NOT model the gem's cross-pattern sequential rewrite. The
- *      caller applies mm_resolve() (index-order greedy claim) to reproduce
- *      today's "earlier-index pattern wins" semantics byte-for-byte. See
- *      TODO.md §1d Gap 5 and the AKIA specs in spec/data_redactor_spec.rb.
+ *      pass. The caller applies mm_resolve() (longest-match-wins greedy claim:
+ *      longest span at each position wins, equal lengths broken by lower
+ *      pattern_id) to pick the final non-overlapping set. See TODO.md §1d Gap 5
+ *      and the overlap-resolution specs in spec/data_redactor_spec.rb.
  *
  * The infix-literal classification and the BM_INFIX hint table below are ported
  * from prototypes/multi_pattern_matcher/gen_patterns.rb (which derived them from the
@@ -1260,14 +1260,14 @@ size_t mm_scan(const char *input, size_t len,
     return count;
 }
 
-/* Order events for the index-order greedy claim: ascending pattern_id, then
- * ascending start (so a lower-index pattern always gets first claim on a region;
- * within a pattern, earlier matches are seen first). */
+/* Order events for the longest-match-wins greedy claim: ascending start, then
+ * descending length (so the longest span at a given start is seen first), then
+ * ascending pattern_id (lower index wins a tie of equal length). */
 static int ev_cmp_resolve(const void *a, const void *b) {
     const mm_match_t *x = a, *y = b;
-    if (x->pattern_id != y->pattern_id) return x->pattern_id - y->pattern_id;
     if (x->start != y->start) return x->start < y->start ? -1 : 1;
-    return 0;
+    if (x->length != y->length) return x->length > y->length ? -1 : 1;
+    return x->pattern_id - y->pattern_id;
 }
 
 /* Order kept events for emission: ascending start. */
@@ -1281,12 +1281,12 @@ size_t mm_resolve(mm_match_t *ev, size_t n) {
     if (n == 0) return 0;
     qsort(ev, n, sizeof(mm_match_t), ev_cmp_resolve);
 
-    /* Greedy claim in (pattern_id, start) order. An event is kept iff its span
-     * [start, start+length) does not overlap any already-kept span. Kept spans
-     * are accumulated in `kept`; we check membership against them. n is small
-     * for typical inputs, but to stay linear-ish we keep `kept` sorted by start
-     * and binary-search the neighbourhood. For simplicity and because match
-     * counts are modest, a linear overlap check against the kept set is used. */
+    /* Greedy claim in (start, -length, pattern_id) order: the longest span at
+     * each position is offered first and claims its region; any later (shorter,
+     * or equal-length higher-id) event overlapping an already-kept span is
+     * dropped. An event is kept iff its span [start, start+length) does not
+     * overlap any already-kept span. Match counts are modest, so a linear
+     * overlap check against the kept set is used. */
     mm_match_t *kept = mm_xmalloc(n * sizeof(mm_match_t));
     size_t nk = 0;
     for (size_t i = 0; i < n; i++) {
