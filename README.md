@@ -12,10 +12,10 @@ DataRedactor scans text for sensitive data — API keys and cloud secrets, IBANs
 credit cards, national IDs, emails, phone numbers, IPs, and more — and replaces
 each match with a placeholder. The scanning runs in a C extension backed by a
 zero-dependency Thompson NFA → lazy-DFA multi-pattern engine (v19) that scans
-all 88 built-in patterns in a single pass — 2–2.5× faster than pure-Ruby `gsub`
+every built-in pattern in a single pass — 2–2.5× faster than pure-Ruby `gsub`
 on large payloads, with no external library dependencies.
 
-It ships **88 built-in patterns** across 15+ countries, grouped into tags
+It ships **89 built-in patterns** across 15+ countries, grouped into tags
 (`:credentials`, `:financial`, `:contact`, ...) so you can redact only what you
 care about. Beyond plain strings it can walk nested Hashes, Arrays, and JSON,
 audit a payload without mutating it (`scan`), and plug into Logger, Rails, and
@@ -309,7 +309,7 @@ safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 
 `content` may be a plain String or an array of content blocks/parts (`{ type: "text", text: "..." }`) — only the `text` of `text` blocks is redacted; image and other block types pass through untouched. For Claude, a top-level `system:` String is also redacted; for OpenAI, a `{ role: "system" }` message in the array is redacted like any other. Pass a bare `messages` array or the whole request Hash (with a `messages` key) — either works.
 
-## Detected patterns (88 total)
+## Detected patterns (89 total)
 
 The table below is a representative sample. Use `DataRedactor.pattern_names` for the canonical, machine-readable list — it stays in sync with the C extension automatically.
 
@@ -435,7 +435,7 @@ redactor/
 │   ├── README.md                 # How to run, what each script measures
 │   ├── support/corpus.rb         # Shared payload builders + pure-Ruby baseline redactor
 │   ├── throughput.rb             # MB/s on representative payloads
-│   ├── vs_pure_ruby.rb           # C extension vs pure-Ruby gsub (same 88 patterns)
+│   ├── vs_pure_ruby.rb           # C extension vs pure-Ruby gsub (same patterns)
 │   ├── scaling.rb                # Runtime vs input size 1KB → 50MB
 │   └── per_pattern.rb            # Per-pattern scan cost
 └── docs/                         # Design and execution docs for future work
@@ -523,7 +523,7 @@ different angles. They are **not** packaged with the gem.
 ```bash
 bundle install                                   # pulls benchmark-ips, benchmark-memory (dev deps)
 bundle exec rake compile
-bundle exec ruby benchmark/vs_pure_ruby.rb       # head-to-head vs pure-Ruby gsub, same 88 patterns
+bundle exec ruby benchmark/vs_pure_ruby.rb       # head-to-head vs pure-Ruby gsub, same patterns
 bundle exec ruby benchmark/throughput.rb         # MB/s on a log line, JSON, 1MB and 10MB log files
 bundle exec ruby benchmark/scaling.rb            # runtime vs input size (1KB → 50MB), confirms linear scaling
 bundle exec ruby benchmark/per_pattern.rb        # per-pattern scan cost over a 1MB payload
@@ -535,11 +535,8 @@ C engine uses, via `DataRedactor::BUILTIN_PATTERN_SOURCES`).
 
 ### Performance (0.10.0 — v19 multi-pattern engine)
 
-As of 0.10.0 the C extension runs a **Thompson NFA → lazy-DFA multi-pattern
-engine** (v19) that scans the input once across all 88 built-in patterns,
-with two selective-merge passes (pure-digit group + IBAN union) that further
-reduce work for the most common pattern classes. Custom patterns (`add_pattern`)
-still use the glibc path (required for correct UTF-8 diacritic matching).
+Measured on the v19 engine ([How it works](#how-it-works)) vs a pure-Ruby `gsub`
+loop over the same patterns:
 
 | Payload               | v19 engine (0.10.0) | Pure-Ruby `gsub` | Ratio           |
 |-----------------------|---------------------|------------------|-----------------|
@@ -576,14 +573,14 @@ machine-dependent, but the flat curve is not.
 
 ## How it works
 
-1. At load time, `Init_data_redactor` compiles all 85 regex patterns once using `regcomp` (POSIX ERE) and stores them as static `regex_t` structs. Patterns marked as boundary-wrapped are expanded with `wrap_boundary()` before compilation.
-2. `DataRedactor.redact(text)` receives a Ruby `String`, converts it to a C `char*` via `StringValueCStr`, and runs each compiled pattern in sequence on a working buffer.
-3. For each pattern, `replace_all_matches` iterates using `regexec`, copies non-matching segments to a fresh output buffer, and inserts `[REDACTED]` in place of each match. For boundary-wrapped patterns, `regexec` is called with `nmatch=4` and sub-match groups `[1]`/`[3]` identify the boundary characters so they are preserved verbatim.
-4. The output buffer is grown with `realloc` as needed. After all patterns are applied the result is returned as a Ruby `String` via `rb_str_new_cstr`. All intermediate `malloc`/`strdup` allocations are explicitly `free`d.
+1. At load time, `mm_init()` compiles every built-in pattern from a Thompson NFA into bytecode, lazily building each pattern's DFA on first use (interned and cached). Boundary-wrapped patterns are expanded with the word-boundary group before compilation.
+2. `DataRedactor.redact(text)` / `scan(text)` hand the input to the v19 engine, which scans it **once** and emits `(pattern_id, start, length)` events for every enabled pattern. Two selective-merge passes (a pure-digit group and an IBAN union) collapse the most common pattern classes into shared scans. The single pass over the original buffer is what makes the engine O(N).
+3. The raw events are resolved by `mm_resolve` under the **longest-match-wins** policy: overlapping spans are reduced to a non-overlapping set keeping the longest match at each position, with the lower pattern index breaking equal-length ties.
+4. `redact` rewrites the surviving spans to placeholders in one buffer build (preserving the boundary characters of boundary-wrapped matches); `scan` returns the event list with byte offsets into the original string. Custom patterns (`add_pattern`) run on the glibc `regexec` path afterward — required for correct UTF-8 diacritic matching.
 
 ## Memory management
 
-All C-side buffers are heap-allocated with `malloc`/`strdup` and freed before the function returns. The only Ruby-managed allocation is the final return value from `rb_str_new_cstr`. No Ruby objects are created mid-processing, so GC cannot collect anything out from under the C code.
+All C-side working buffers are heap-allocated and freed before the call returns; the only Ruby-managed allocation is the final result `String`. No Ruby objects are created mid-scan, so GC cannot collect anything out from under the C code. Per-thread engine scratch (NFA state, lazy-DFA cache) is freed automatically when the thread exits — see [Thread safety](#thread-safety).
 
 ## Thread safety
 
