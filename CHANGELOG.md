@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.0] - 2026-06-17
+## [0.14.1] - 2026-06-17
+
+### Changed
+- **Bounded the greedy tails of seven built-in token patterns** (`jwt`,
+  `grafana_api_token`, `ssh_public_key`, `bearer_token`, `anthropic_api_key`,
+  `openai_project_api_key`, `sendgrid_api_key`). Open-ended quantifiers (`+` and
+  `{n,}`) are capped at the POSIX `RE_DUP_MAX` of 255 (`{n,255}`), matching the
+  existing `hashicorp_vault_batch_token` precedent. A token is unusable once its
+  front is redacted, so a bounded prefix is sufficient to neutralize it. This
+  restores a finite `max_len` for these patterns (re-enabling the engine's
+  literal back-up skip) and removes a theoretical O(N²) worst case where a
+  crafted prefix plus a megabyte of matching characters forces a long greedy
+  scan. Tokens longer than 255 characters are still neutralized — only a
+  cryptographically-dead tail may remain.
 
 ### Added
 - **Key-name-anchored secret redaction** (`:credentials`). A new pattern tier

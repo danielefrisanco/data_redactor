@@ -506,6 +506,31 @@ RSpec.describe DataRedactor do
       redacted?("auth: #{token} end", token)
     end
 
+    # ---- Bounded greedy tails (0.14.1): tokens longer than the {n,255} cap are
+    # still neutralized. The engine matches and redacts a bounded prefix; only a
+    # cryptographically-dead tail may survive. We assert the front is redacted and
+    # the token's distinctive prefix is gone, not that the whole string vanishes. ----
+    describe "bounded greedy tails neutralize over-long tokens" do
+      # Each value is far longer than the 255-char cap so the tail exceeds the bound.
+      {
+        "JWT"       => "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "a" * 400,
+        "Grafana"   => "eyJrIjoi" + "A" * 400,
+        "SSH"       => "ssh-rsa " + "A" * 400,
+        "Bearer"    => "Bearer " + "a" * 400,
+        "Anthropic" => "sk-ant-api03-" + "A" * 400,
+        "OpenAI"    => "sk-proj-" + "A" * 400,
+        "SendGrid"  => "SG." + "a" * 400 + "." + "b" * 400,
+      }.each do |name, token|
+        it "neutralizes an over-255-char #{name} token" do
+          result = DataRedactor.redact("x #{token} y")
+          expect(result).to include("[REDACTED]"), "expected [REDACTED] in: #{result.inspect}"
+          # The match starts at the prefix, so the distinctive prefix must be gone.
+          prefix = token[0, 12]
+          expect(result).not_to include(prefix), "expected prefix #{prefix.inspect} redacted"
+        end
+      end
+    end
+
     # ---- Pattern 67: Email Address ----
     it "redacts email address" do
       redacted?("contact: john.doe@example.com end", "john.doe@example.com")
