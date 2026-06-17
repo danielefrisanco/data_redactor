@@ -1,0 +1,44 @@
+#!/bin/sh
+# data_redactor pre-push gate. Enforces the CLAUDE.md pre-PR rules locally so a
+# red suite or a feature missing its CHANGELOG entry never reaches the remote.
+#
+# Enable once per clone (from the repo root):
+#   git config core.hooksPath .githooks
+#
+# Bypass for a single push (use sparingly):
+#   git push --no-verify
+#
+# POSIX sh (not bash) for portability.
+set -eu
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# 1. Tests must be green. `rake` = compile + spec (Rakefile default task).
+echo "pre-push: running bundle exec rake ..."
+if ! bundle exec rake; then
+	echo "pre-push: BLOCKED — bundle exec rake failed. Fix the suite or push --no-verify." >&2
+	exit 1
+fi
+
+# 2. If the about-to-be-pushed commits contain feat:/fix: work, CHANGELOG.md
+#    should have been touched in that range (CLAUDE.md: every user-visible
+#    change goes under [Unreleased]). Warn-only — does not block — because not
+#    every fix is user-visible, but surfaces the common omission.
+upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [ -n "$upstream" ]; then
+	range="${upstream}..HEAD"
+else
+	# No upstream yet (new branch): inspect commits not on main.
+	range="main..HEAD"
+fi
+
+feat_fix_commits="$(git log --format=%s "$range" 2>/dev/null | grep -cE '^(feat|fix)(\(|:)' || true)"
+changelog_touched="$(git diff --name-only "$range" 2>/dev/null | grep -c '^CHANGELOG\.md$' || true)"
+
+if [ "${feat_fix_commits:-0}" -gt 0 ] && [ "${changelog_touched:-0}" -eq 0 ]; then
+	echo "pre-push: WARNING — feat:/fix: commits in $range but CHANGELOG.md was not touched." >&2
+	echo "pre-push:           add a note under ## [Unreleased] (CLAUDE.md), or push --no-verify." >&2
+fi
+
+echo "pre-push: OK"
