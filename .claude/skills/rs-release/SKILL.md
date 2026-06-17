@@ -25,9 +25,10 @@ editing. If `[Unreleased]` is empty, stop and say there's nothing to release.
 
 ## Steps
 
-1. **Pre-flight:** confirm a clean tree on a non-`main` release branch
-   (`git status`, `git branch --show-current`). If on `main`, branch first
-   (`release/X.Y.Z` or `chore/release-X.Y.Z`).
+1. **Pre-flight:** confirm a clean tree on `main`, up to date with `origin/main`
+   (`git status`, `git branch --show-current`, `git pull --ff-only`). The release
+   is committed and tagged directly on `main` — no release branch (a branch+PR
+   detour lands the tag on the pre-merge SHA and forces a re-tag).
 2. **Bump** `lib/data_redactor/version.rb` `VERSION = "X.Y.Z"`.
 3. **Promote CHANGELOG:** rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
    (today's date), add a fresh empty `## [Unreleased]` above it, and add the
@@ -40,11 +41,13 @@ editing. If `[Unreleased]` is empty, stop and say there's nothing to release.
    so the lock records the new version.
 6. **Verify:** `bundle exec rake` (compile + full spec suite) must be green.
    Do not proceed on red.
-7. **Commit** as one logical change: `chore: release X.Y.Z`
+7. **Commit on `main`** as one logical change: `chore: release X.Y.Z`
    (version.rb + CHANGELOG + README + Gemfile.lock together).
-8. **Tag:** `git tag vX.Y.Z` and report the push commands. Remind the user that
-   the GitHub Release (or `release.published`) triggers `release-binaries.yml`,
-   which builds + publishes all 7 gems atomically — do **not** `gem push` by hand.
+8. **Push and tag on `main`:** `git push origin main`, then `git tag vX.Y.Z` and
+   `git push origin vX.Y.Z` (tag the pushed `main` commit). Then remind the user
+   to create the GitHub Release from `vX.Y.Z` — `release.published` triggers
+   `release-binaries.yml`, which builds + publishes all 7 gems atomically. Do
+   **not** `gem push` by hand.
 
 ## Do not
 
@@ -52,4 +55,4 @@ editing. If `[Unreleased]` is empty, stop and say there's nothing to release.
   (a partial manual publish caused the yanked 0.7.1 release).
 - Do not release with a red `bundle exec rake`.
 - Do not bundle unrelated changes into the release commit.
-- Do not commit the release directly to `main`.
+- Do not open a release branch or PR — commit and tag directly on `main`.
