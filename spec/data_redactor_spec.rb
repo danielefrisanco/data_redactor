@@ -1566,184 +1566,133 @@ RSpec.describe DataRedactor do
     end
   end
 
-  # Overlap-resolution behaviour. Two sets of specs because today's engine and
-  # the future combined matcher resolve overlaps differently — see
-  # docs/combined_matcher_plan.md "Prep 2" and docs/standalone_matcher_design.md
-  # "Overlap resolution".
-  #
-  # TODAY (the C engine on glibc regex): patterns run sequentially in array
-  # order; once a pattern replaces a span with [REDACTED] later patterns can't
-  # re-match those bytes. Net effect: the *earliest pattern by index* wins
-  # any region it can match, regardless of length.
-  #
-  # POST-1.0 (combined matcher): longest-match-wins, with pattern-id as the
-  # tiebreak for equal-length matches. This is a deliberate behaviour change
-  # — the AKIA+suffix case below shows today's policy leaving secrets partly
-  # unredacted, which is the worst kind of failure for a redaction gem.
-  describe "overlap resolution — today's pattern-id-priority behaviour" do
-    it "earlier-index pattern wins even when a later-index pattern could match a LONGER span" do
+  # Overlap-resolution behaviour: longest-match-wins, with pattern-id as the
+  # tiebreak for equal-length matches (mm_resolve in matcher.c). When two patterns
+  # match overlapping spans the LONGER span is kept; when two match the SAME span
+  # the lower pattern-id wins. Rationale and worked examples in
+  # docs/standalone_matcher_design.md "Overlap resolution". For a redaction gem the
+  # correct failure mode when uncertain is "redact more, not less" — the AKIA case
+  # below shows why: pattern-id priority (the pre-0.15 sequential-rewrite behaviour)
+  # would leave a secret partly unredacted.
+  describe "overlap resolution — longest-match-wins" do
+    it "longest-match wins: a later-index pattern matching a LONGER span beats an earlier-index shorter one" do
       # aws_access_key_id (index 14) matches the leading 20 chars.
-      # aws_secret_access_key (index 15) could match all 40 chars.
-      # Today's behaviour: AKIA wins the 20-char prefix; the trailing 20 A's
-      # are left unredacted.
-      # ⚠ This is the case the 1.0 matcher will FIX (see pending specs below).
+      # aws_secret_access_key (index 15) matches all 40 chars.
+      # Longest-match: the 40-char secret wins; the whole span is redacted and
+      # nothing leaks. (Pre-0.15 pattern-id priority left the trailing 20 chars.)
       input = "AKIAIOSFODNN7EXAMPLE" + ("A" * 20)  # 40 chars
       result = DataRedactor.scan(input)
-      expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
-      expect(result[:matches].first[:value]).to eq("AKIAIOSFODNN7EXAMPLE")
-      expect(DataRedactor.redact(input)).to eq("[REDACTED]" + ("A" * 20))
+      expect(result[:matches].map { |m| m[:name] }).to eq(["aws_secret_access_key"])
+      expect(result[:matches].first[:value]).to eq(input)
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]")
     end
 
-    it "earlier-index pattern wins among multiple patterns matching the same exact span" do
+    it "longest-match is safer when uncertain: prefers the more-thorough redaction" do
+      # The safety argument: when we can't tell whether 40 alphanum bytes are
+      # 'one secret' or 'two adjacent secrets', redact more rather than less.
+      input = "AKIAIOSFODNN7EXAMPLE" + "B" * 20  # 40 alphanum
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]")
+    end
+
+    # The longest-match outcome must be independent of WHICH characters follow the
+    # AKIA prefix: aws_secret_access_key is [A-Za-z0-9/+=]{40}, so any 20-char
+    # suffix from that class forms a valid 40-char secret and the whole span is
+    # redacted. (Pre-0.15 sequential rewrite redacted only the 20-char prefix.)
+    {
+      "repeated A"   => "A" * 20,
+      "repeated B"   => "B" * 20,
+      "repeated Z"   => "Z" * 20,
+      "repeated 9"   => "9" * 20,
+      "mixed alnum"  => "B3xQ7mK9pL2wR5tZ8nV4",
+      "lowercase"    => "abcdefghijklmnopqrst",
+      "with slashes" => "B/B/B/B/B/B/B/B/B/B/",
+    }.each do |label, suffix|
+      it "redacts the whole 40-char secret regardless of the following bytes (#{label})" do
+        input = "AKIAIOSFODNN7EXAMPLE" + suffix
+        expect(DataRedactor.redact(input)).to eq("[REDACTED]")
+        result = DataRedactor.scan(input)
+        expect(result[:matches].map { |m| m[:name] }).to eq(["aws_secret_access_key"])
+        expect(result[:matches].first[:value]).to eq(input)
+      end
+    end
+
+    it "keeps the longest secret but not bytes beyond it: AKIA + 40 trailing alnum redacts the first 40" do
+      # aws_secret_access_key is exactly {40}, so on AKIA(20)+40 alnum it claims
+      # [0,40) (the longest single match at start 0); the trailing 20 survive
+      # because no enabled pattern matches them.
+      input = "AKIAIOSFODNN7EXAMPLE" + ("x" * 40)  # 60 alphanum
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:name] }).to eq(["aws_secret_access_key"])
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]" + ("x" * 20))
+    end
+
+    it "ties broken by pattern-id: multiple patterns matching the same exact span pick the lowest index" do
       # 11-digit number: polish_pesel (81), belgian_national_number (82),
-      # norwegian_fodselsnummer (83), polish_pesel_2 (87) all match.
-      # polish_pesel at the lowest index wins (preserved post-1.0 by the
-      # pattern-id tiebreak).
+      # norwegian_fodselsnummer (83), polish_pesel_2 (87) all match the same
+      # 11-char span. Equal length → lowest pattern-id (polish_pesel) wins.
       input = "id 85121612345 end"
       result = DataRedactor.scan(input)
       expect(result[:matches].map { |m| m[:name] }).to eq(["polish_pesel"])
     end
 
-    it "a 9-digit number matches czech_rodne_cislo (its regex allows the / to be optional), winning over more-specific 9-digit patterns at higher indices" do
-      # czech_rodne_cislo (index 69) is `[0-9]{6}/?[0-9]{3,4}` — the / is
-      # optional so it matches 9 consecutive digits.
-      # passport_9digits (84), dutch_bsn (85), austrian_abgabenkontonummer (86)
-      # all also match 9 digits — but index 69 < 84,85,86 so czech wins.
-      # All four match the same 9-char span so this case is unchanged post-1.0.
+    it "tie broken by pattern-id among 9-digit patterns (czech_rodne_cislo, lowest index, wins)" do
+      # czech_rodne_cislo (index 69) is `[0-9]{6}/?[0-9]{3,4}` — the / is optional,
+      # so it matches 9 consecutive digits, same span as passport_9digits (84),
+      # dutch_bsn (85), austrian_abgabenkontonummer (86). Equal length → index 69 wins.
       input = "num 123456789 end"
       result = DataRedactor.scan(input)
       expect(result[:matches].map { |m| m[:name] }).to eq(["czech_rodne_cislo"])
     end
 
-    it "credit_card consumes 16 digits, leaving no 11-digit run for national-ID patterns to match" do
-      # credit_card (index 56) matches a 16-digit Visa.
-      # polish_pesel/belgian/norwegian/etc. (indices 81-87) would each match
-      # an 11-digit slice — but credit_card runs first and replaces with
-      # [REDACTED], so the digit-only patterns see no 11-digit run.
-      # Post-1.0 longest-match also picks credit_card (16 > 11), unchanged.
+    it "the longer credit_card span beats the shorter 11-digit national-ID slices it contains" do
+      # credit_card (index 56) matches a 16-digit Visa; polish_pesel/belgian/etc.
+      # (81-87) would each match an 11-digit slice inside it. 16 > 11, so the
+      # credit_card span wins and the shorter overlapping slices are dropped.
       input = "card=4111111111111111 end"
       result = DataRedactor.scan(input)
       expect(result[:matches].map { |m| m[:name] }).to eq(["credit_card"])
     end
 
-    # DIVERGENCE (scan, rewrite-dependent): on the original buffer idx-15
-    # ([A-Za-z0-9/+=]{40}) matches the full 60-char span [0,60), which overlaps
-    # idx-14's [0,20). mm_resolve drops it. The old sequential engine rewrote
-    # chars 0-19 first, leaving the 40 x's in isolation for idx-15 to match at
-    # working pos 10 → original pos 20. Single-pass can't see that second match.
-    it "DIVERGENCE — scan: aws_secret match exposed by rewrite is invisible to single-pass engine" do
-      input = "AKIAIOSFODNN7EXAMPLE" + ("x" * 40)  # AKIA (20) + 40 alphanum
+    it "the longest github token wins over an aws_secret slice starting one byte later" do
+      # github_classic_pat (ghp_ + 36 = 40 chars) matches [0,40); aws_secret_access_key
+      # would match [4,44). Both are length 40, but github starts earlier, so its span
+      # is offered first and claims the region. The trailing 11-digit run abuts an
+      # alnum byte (no boundary), so the boundary-wrapped digit patterns can't match it.
+      input = "ghp_ABCDEFGHIJabcdefghij0123456789ABCDEF85121612345"
       result = DataRedactor.scan(input)
-      names = result[:matches].map { |m| m[:name] }
-      # Old sequential engine: ["aws_access_key_id", "aws_secret_access_key"]
-      # v19 single-pass engine: only aws_access_key_id (idx-15 [0,60) overlaps idx-14 [0,20))
-      expect(names).to eq(["aws_access_key_id"])
+      expect(result[:matches].map { |m| m[:name] }).to eq(["github_classic_pat"])
+      expect(DataRedactor.redact(input)).to eq("[REDACTED]85121612345")
     end
 
-    it "consumes the 'specific prefix' even when only it matches; later patterns see leftovers verbatim" do
-      # Only AKIA fits (need 40 chars for secret; only have 39).
-      # No actual overlap — both policies match only AKIA.
+    it "only the prefix matches when no longer span is possible; leftovers survive verbatim" do
+      # Only AKIA fits (a 40-char secret needs 40 alnum after 'key='; only 39 here).
+      # No overlap to resolve — aws_access_key_id claims its 20 chars.
       input = "key=AKIAIOSFODNN7EXAMPLEextrabytesfor20"
       result = DataRedactor.scan(input)
       expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
     end
-
-    # The AKIA-prefix behaviour must be independent of WHICH characters follow,
-    # not an artefact of repeated 'A's. aws_secret_access_key is [A-Za-z0-9/+=]{40}
-    # so any of these 20-char suffixes COULD form a 40-char secret on the original
-    # buffer — yet today's sequential rewrite redacts only the 20-char AKIA prefix
-    # because aws_access_key_id (idx 14) rewrites it before idx 15 ever runs.
-    # This is the contract the ported engine's overlap resolver (mm_resolve,
-    # "index-order greedy claim") must reproduce byte-for-byte. See TODO.md §1d Gap 5.
-    {
-      "repeated A"  => "A" * 20,
-      "repeated B"  => "B" * 20,
-      "repeated Z"  => "Z" * 20,
-      "repeated 9"  => "9" * 20,
-      "mixed alnum" => "B3xQ7mK9pL2wR5tZ8nV4",
-      "lowercase"   => "abcdefghijklmnopqrst",
-      "with slashes" => "B/B/B/B/B/B/B/B/B/B/",
-    }.each do |label, suffix|
-      it "redacts only the 20-char AKIA prefix regardless of the following bytes (#{label})" do
-        input = "AKIAIOSFODNN7EXAMPLE" + suffix
-        # Only the AKIA prefix is claimed; the 40-char-secret pattern is blocked by
-        # the prior rewrite, so the suffix survives verbatim.
-        expect(DataRedactor.redact(input)).to eq("[REDACTED]" + suffix)
-        result = DataRedactor.scan(input)
-        expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
-        expect(result[:matches].first[:value]).to eq("AKIAIOSFODNN7EXAMPLE")
-      end
-    end
   end
 
-  # Rewrite-created/destroyed boundary cases — two sensitive tokens that ABUT with
-  # NO separator between them. The glibc engine rewrote patterns sequentially, so a
-  # lower-index pattern's [REDACTED] could introduce a '['/']' boundary that an
-  # adjacent boundary-wrapped pattern then matched on the rewritten buffer. The v19
-  # engine scans the ORIGINAL buffer in one pass and cannot see a boundary the
-  # rewrite would create — this is its ONE documented behavioural divergence from
-  # the old engine (TODO.md §1d Gap 5, "accepted divergence"): the second token is
-  # left unredacted. Accepted because it only arises for directly-abutting secrets
-  # with no separator (rare in real text), the old output was itself a rewrite
-  # artifact, and the planned 1.0 longest-match policy redacts the whole region.
-  describe "overlap resolution — rewrite-created-boundary divergence (accepted)" do
-    it "DIVERGENCE: an SSN abutting an IPv4 (no separator) leaves the SSN unredacted under the v19 engine" do
+  # Two sensitive tokens that ABUT with NO separator between them. The v19 engine
+  # scans the ORIGINAL buffer in one pass and cannot see a word boundary that a
+  # rewrite would have created. A boundary-wrapped pattern needs a non-alnum byte
+  # (or buffer edge) on each side, so when its token directly abuts an alnum run it
+  # simply does not match the original text — the abutting token is left as-is.
+  # These cases are rare in real text (always separator-delimited) and the surviving
+  # bytes are a cryptographically-dead partial token, not a recoverable secret.
+  describe "overlap resolution — directly-abutting tokens (no separator)" do
+    it "an SSN abutting an IPv4 (no separator) leaves the SSN unredacted" do
       # 123-45-6789 has no boundary char after '6789' (next byte is '1'), so us_ssn
-      # cannot match the original text. The old glibc engine redacted 192.168.1.1
-      # first, creating a '[' that then bounded the SSN → "[REDACTED][REDACTED]".
-      # The v19 single-pass engine never sees that created boundary, so only ipv4
-      # is redacted. This is the accepted Gap-5 divergence.
+      # cannot match the original text; only ipv4 is redacted.
       input = "123-45-6789192.168.1.1"
       expect(DataRedactor.redact(input)).to eq("123-45-6789[REDACTED]")
     end
 
-    it "a greedy earlier match can leave a mangled half-token (rewrite destroys a boundary)" do
-      # ipv4 greedily consumes "192.168.1.1", leaving "123-45-6789"; but the
-      # leading digits were eaten, so only "3-45-6789" remains after [REDACTED].
+    it "a greedy match leaves a mangled half-token when a boundary is absent" do
+      # ipv4 matches "192.168.1.1", leaving "123-45-6789"; but the leading digits
+      # abut the ipv4 with no boundary, so only "3-45-6789" survives after [REDACTED].
       input = "192.168.1.1123-45-6789"
       expect(DataRedactor.redact(input)).to eq("[REDACTED]3-45-6789")
-    end
-
-    it "an alnum run after a prefixed key: aws_secret_access_key (idx 15) claims 40 chars before github (idx 19)" do
-      # aws_secret_access_key [A-Za-z0-9/+=]{40} runs before github_classic_pat and
-      # matches 40 chars starting just after 'ghp_', swallowing into the digit run:
-      # ghp_[REDACTED]1612345. Another earlier-index-wins case, not a clean ghp_ hit.
-      input = "ghp_ABCDEFGHIJabcdefghij0123456789ABCDEF85121612345"
-      expect(DataRedactor.redact(input)).to eq("ghp_[REDACTED]1612345")
-    end
-  end
-
-  # Specs marked `pending` describe the INTENDED 1.0 matcher behaviour
-  # (longest-match wins, tiebreak by pattern-id). They fail today by design,
-  # so they're skipped; the combined-matcher PR will unmark them and remove
-  # the corresponding "today's behaviour" specs above.
-  describe "overlap resolution — intended 1.0 longest-match-wins behaviour" do
-    it "longest-match wins: AKIA+suffix that forms a valid 40-char secret is redacted whole" do
-      pending "1.0.0: combined matcher implements longest-match policy"
-      input = "AKIAIOSFODNN7EXAMPLE" + ("A" * 20)  # 40 alphanum chars
-      # Under longest-match, aws_secret_access_key (40 chars) beats
-      # aws_access_key_id (20 chars). Whole span redacted; nothing leaks.
-      expect(DataRedactor.redact(input)).to eq("[REDACTED]")
-      names = DataRedactor.scan(input)[:matches].map { |m| m[:name] }
-      expect(names).to eq(["aws_secret_access_key"])
-    end
-
-    it "ties broken by pattern-id (preserving today's behaviour for tied lengths)" do
-      # 11-digit number: 4 patterns match the same 11-char span. Today's
-      # pattern-id behaviour AND post-1.0 longest-with-id-tiebreak both pick
-      # polish_pesel. Not marked pending — this spec passes under either
-      # policy and documents the invariant tied lengths preserve.
-      input = "id 85121612345 end"
-      names = DataRedactor.scan(input)[:matches].map { |m| m[:name] }
-      expect(names).to eq(["polish_pesel"])
-    end
-
-    it "longest-match safer when uncertain: prefers the more-thorough redaction" do
-      pending "1.0.0: combined matcher implements longest-match policy"
-      # This is the safety argument: when we can't tell whether bytes are
-      # 'one secret' or 'two adjacent secrets', redact more rather than less.
-      input = "AKIAIOSFODNN7EXAMPLE" + "B" * 20  # 40 alphanum
-      expect(DataRedactor.redact(input)).to eq("[REDACTED]")
     end
   end
 
