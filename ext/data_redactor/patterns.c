@@ -425,18 +425,21 @@ const char *pattern_strings[NUM_PATTERNS] = {
     /* ---- Tier 2: Long prefixed tokens ---- */
     /*  6: GitHub PAT fine-grained (github_pat_ + 82 chars) */
     "github_pat_[0-9a-zA-Z_]{82}",
-    /*  7: JWT (three base64url segments) */
-    "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+",
+    /*  7: JWT (three base64url segments). Tails bounded at RE_DUP_MAX (255):
+     * a JWT is unusable once its front is gone, so a bounded prefix is enough to
+     * neutralize it. Bounding restores a finite max_len (re-enables the engine's
+     * literal back-up skip) and removes the O(N^2) greedy-tail worst case. */
+    "eyJ[A-Za-z0-9_-]{10,255}\\.eyJ[A-Za-z0-9_-]{10,255}\\.[A-Za-z0-9_-]{1,255}",
     /*  8: Grafana API Token (base64 of {\"k\":\") */
-    "eyJrIjoi[A-Za-z0-9_=-]{42,}",
+    "eyJrIjoi[A-Za-z0-9_=-]{42,255}",
     /*  9: SSH Public Key */
-    "ssh-(rsa|ed25519|ecdsa) [a-zA-Z0-9/+=]{20,}",
+    "ssh-(rsa|ed25519|ecdsa) [a-zA-Z0-9/+=]{20,255}",
     /* 10: Bearer Token */
-    "[Bb]earer [a-zA-Z0-9_.=/+:-]{12,}",
+    "[Bb]earer [a-zA-Z0-9_.=/+:-]{12,255}",
     /* 11: Anthropic API Key (sk-ant-apiNN-... ~ 95+ chars) */
-    "sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{90,}",
+    "sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{90,255}",
     /* 12: OpenAI Project API Key (sk-proj-...) */
-    "sk-proj-[A-Za-z0-9_-]{20,}",
+    "sk-proj-[A-Za-z0-9_-]{20,255}",
     /* 13: Google API Key (AIza + 35 chars) */
     "AIza[0-9A-Za-z_-]{35}",
     /* 14: AWS Access Key ID (all prefixes + 16 chars) */
@@ -444,7 +447,7 @@ const char *pattern_strings[NUM_PATTERNS] = {
     /* 15: AWS Secret Access Key (40 base64 chars) */
     "[A-Za-z0-9/+=]{40}",
     /* 16: SendGrid API Key */
-    "SG\\.[a-zA-Z0-9_-]{5,}\\.[a-zA-Z0-9_-]{5,}",
+    "SG\\.[a-zA-Z0-9_-]{5,255}\\.[a-zA-Z0-9_-]{5,255}",
     /* 17: Amazon MWS Auth Token */
     "amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     /* 18: LaunchDarkly API Key (api-UUID or sdk-UUID) */

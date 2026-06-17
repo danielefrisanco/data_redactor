@@ -50,6 +50,29 @@ jobs:
       - name: Build and run the allocation-regression gate
         run: benchmark/run_alloc_gate.sh
 
+  throughput-gate:
+    name: Relative throughput regression gate
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      # Absolute MB/s is too noisy to gate on (5-15% runner variance), but the
+      # RATIO of the C engine to a pure-Ruby gsub loop running the SAME patterns
+      # cancels runner speed: a slow runner slows both paths equally. We gate on
+      # that ratio with a loose floor (known result ~2.25x; floor 1.5x), so the
+      # job only trips on a real regression. Throughput is printed informationally.
+      - name: Compile C extension
+        run: bundle exec rake compile
+
+      - name: Run the relative-throughput gate
+        run: bundle exec ruby benchmark/ci_throughput_gate.rb
+
   cross-compile-smoke:
     name: Cross-compile smoke test (x86_64-linux)
     runs-on: ubuntu-latest

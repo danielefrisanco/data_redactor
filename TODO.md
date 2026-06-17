@@ -39,20 +39,40 @@ Key insight: **redaction does not need to match the whole token to neutralize it
 A JWT is unusable once its front is gone, so matching `eyJ` + a bounded prefix and
 redacting that is sufficient for safety. So:
 
-- [ ] Evaluate bounding the greedy tails: `[A-Za-z0-9_-]+` → `[A-Za-z0-9_-]{N,M}`
-      (pick N large enough to neutralize, e.g. ≥ the smallest real signature) and
-      `{10,}` → `{10,M}`. Restores a bounded `max_len`, kills the O(N²) worst case,
-      enables more skip optimizations.
-- [ ] Decide the policy: redaction-for-safety (bounded tail OK, leaves the token's
-      tail visible but cryptographically dead) vs redaction-for-privacy (must not
-      leak any of it → keep unbounded). May differ per tag.
+- [x] **DONE (0.14.1, `feat/bound-greedy-tails`).** Bounded the open-ended tails of
+      seven Tier-2 token patterns at `RE_DUP_MAX` (255): `jwt`, `grafana_api_token`,
+      `ssh_public_key`, `bearer_token`, `anthropic_api_key`, `openai_project_api_key`,
+      `sendgrid_api_key`. `{n,}` → `{n,255}`, JWT's trailing `+` → `{1,255}`. 255 was
+      chosen over a per-pattern tuned bound (the hvb precedent; safe on musl) — flat,
+      consistent, generous enough to fully redact realistic tokens. Restores a finite
+      `max_len` and removes the O(N²) worst case.
+- [x] **Policy decided: redaction-for-safety (flat, not optional).** A 255-char cap
+      already redacts the whole front of any realistic token; only a cryptographically
+      -dead tail of an >255-char token survives, so the privacy gain of staying
+      unbounded is near-zero. NOT made per-call optional — see the optional-mode note
+      below for the rejected design and its drawbacks.
+- [ ] (Future, low priority) **Optional / per-tag "redaction-for-privacy" mode.**
+      Idea: let a caller (or a per-tag policy) force the unbounded behaviour so *every*
+      byte of an over-long token is redacted, not just the bounded prefix. Drawbacks
+      that made us defer it: (1) the v19 engine compiles ONE immutable shared pattern
+      table at init — a per-call toggle needs TWO compiled copies of each affected
+      pattern (bounded + unbounded) and runtime selection, which fights the single-table
+      design (the same reason customs run on a separate glibc path); (2) the benefit is
+      marginal — a 255-cap already kills the token, the surviving tail is dead; (3) it
+      adds public API surface for a case nobody has asked for. If it ever ships, a
+      per-tag policy baked at init is cleaner than a per-call flag. Revisit only on a
+      concrete request.
 - [ ] Re-examine whether the `jwt` regex itself is correct (three base64url
       segments, `eyJ` anchor on each). Real JWT signature lengths are fixed per alg
       (HS256≈43, ES256≈86, RS256≈342) — could anchor lengths instead of `+`.
-- [ ] Apply the same bounded-tail review to other patterns with trailing `+`/`{n,}`
-      (audit `ext/data_redactor/patterns.c`). NOTE: this is a **gem pattern change**
-      governed by CLAUDE.md pattern tiers + false-positive rules, separate from the
-      matcher-engine prototypes. Any change needs positive + negative spec coverage.
+      (Still open: 0.14.1 only capped the tail, did not tighten to per-alg lengths.)
+- [x] **Applied the bounded-tail review to all Tier-2 patterns with trailing `+`/`{n,}`.**
+      The Tier-1 URL/email/keyname-value tails (`[^[:space:]]+`, `[^"]+`, etc.) were
+      deliberately left unbounded: they are delimiter-terminated (stop at whitespace/
+      quote/delimiter), a different risk class, and bounding them could truncate a
+      legitimate long URL or value mid-token. Each bounded pattern got a positive
+      (over-255 token still neutralized) spec; existing positive specs cover the
+      in-bounds case. No new false-positive risk (the bound only shrinks what matches).
 
 ### 1c. Fix v18.1 EOL-at-buffer-end bug (DFA path drops `$`-terminated matches) ✅ FIXED (v19.1)
 
@@ -1102,12 +1122,19 @@ mislead more than inform.
       + `${BASH_SOURCE[0]}`, but Alpine ships only busybox `sh` (no bash) — made the
       script POSIX-sh portable (`#!/bin/sh`, `set -eu`, `$0`). Verified end-to-end in a
       `ruby:3.3-alpine` container (compile → smoke → gate, 0 allocs, exit 0).
-- [ ] **CI throughput-trend visualization (follow-up, lower priority).** Add
-      `github-action-benchmark` (or similar) running the gem-level
-      `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting a before/after PR comment
-      with history on `gh-pages`. Informational only (or a loose ≥20% gate) — GitHub
-      runners have 5–15% run-to-run variance, so throughput can't be a hard gate the
-      way allocs-per-scan can. Nice-to-have for spotting slow drift over time.
+- [x] **CI throughput regression gate (0.14.1, `feat/bound-greedy-tails`).** **DONE.**
+      Rather than `github-action-benchmark` + `gh-pages` history (heavier; flaky absolute
+      numbers on shared runners), added a self-contained `throughput-gate` job to
+      `ci.yml` running `benchmark/ci_throughput_gate.rb`. It gates on the C-engine
+      **ratio** to a pure-Ruby gsub loop over the same patterns — the ratio cancels the
+      5–15% runner variance because a slow runner slows both paths equally. Loose floor
+      (`MIN_RATIO=1.5`; known result ~2.25–2.32×), so it only trips on a real regression;
+      throughput is printed informationally. Includes a correctness guard (same redaction
+      count) so a "faster" engine that redacts less can't pass.
+- [ ] (Future, optional) **Throughput-trend visualization over time.** The gate above
+      catches a regression *within a PR* but keeps no history. If slow drift across many
+      small PRs becomes a concern, layer `github-action-benchmark` on top to plot the
+      ratio on `gh-pages` and post before/after PR comments. Nice-to-have, not blocking.
 
 ---
 
