@@ -120,7 +120,17 @@ const int boundary_wrapped[NUM_PATTERNS] = {
     1, /* 84: Passport 9 digits */
     1, /* 85: Dutch BSN (8-9 digits) */
     1, /* 86: Austrian Abgabenkontonummer (9 digits) */
-    1  /* 87: Polish PESEL duplicate */
+    1, /* 87: Polish PESEL duplicate */
+    0  /* 88: Key-name-anchored secret (KEY=VALUE / KEY: VALUE) */
+};
+
+/*
+ * keyname_anchored[i] == 1 marks a KEY<sep>VALUE pattern whose match span has
+ * the key + separator (and any quotes) stripped so only VALUE is redacted.
+ * Mutually exclusive with boundary_wrapped[] above. See patterns.h.
+ */
+const int keyname_anchored[NUM_PATTERNS] = {
+    [88] = 1,
 };
 
 /*
@@ -178,7 +188,8 @@ const int pattern_tags[NUM_PATTERNS] = {
     TAG_TRAVEL,       /* 84: passport 9 digits */
     TAG_NATIONAL_ID,  /* 85: Dutch BSN */
     TAG_TAX_ID,       /* 86: Austrian Abgabenkontonummer */
-    TAG_NATIONAL_ID   /* 87: Polish PESEL duplicate */
+    TAG_NATIONAL_ID,  /* 87: Polish PESEL duplicate */
+    TAG_CREDENTIALS   /* 88: Key-name-anchored secret */
 };
 
 const char *pattern_names[NUM_PATTERNS] = {
@@ -269,7 +280,8 @@ const char *pattern_names[NUM_PATTERNS] = {
     "passport_9digits",              /* 84 */
     "dutch_bsn",                     /* 85 */
     "austrian_abgabenkontonummer",   /* 86 */
-    "polish_pesel_2"                 /* 87 */
+    "polish_pesel_2",                /* 87 */
+    "keyname_anchored_secret"        /* 88 */
 };
 
 /*
@@ -387,7 +399,8 @@ const char *pattern_required_literal[NUM_PATTERNS] = {
     NULL,             /* 84: passport 9 digits — pure digits */
     NULL,             /* 85: Dutch BSN — pure digits */
     NULL,             /* 86: Austrian Abgabenkontonummer — pure digits */
-    NULL              /* 87: Polish PESEL duplicate — pure digits */
+    NULL,             /* 87: Polish PESEL duplicate — pure digits */
+    NULL              /* 88: Key-name-anchored — key name is an alternation, no single required literal */
 };
 
 /*
@@ -587,5 +600,27 @@ const char *pattern_strings[NUM_PATTERNS] = {
     /* 86: Austrian Abgabenkontonummer (9 digits) */
     "[0-9]{9}",
     /* 87: Polish PESEL duplicate */
-    "[0-9]{11}"
+    "[0-9]{11}",
+    /* 88: Key-name-anchored secret (dotenv KEY=VALUE / YAML KEY: VALUE).
+     * POSIX ERE has no /i, so each key name is char-class case-folded by hand.
+     * Keys ordered longest-first so leftmost-longest picks the full name.
+     * The key word may be surrounded by other key-name chars on either side
+     * (unanchored left; [A-Za-z0-9_]* right) so compound names match both ways:
+     * POSTGRES_DB_PASSWORD= (prefix) and PASSWORD_POSTGRES= (suffix).
+     * Separator is = or : with optional surrounding space. Value is either a
+     * quoted run ("..."/'...') or an unquoted token of >=6 chars that stops at
+     * whitespace, quotes, ; , : =. The matcher strips key+sep (keyname_anchored)
+     * so only the value is redacted, the full compound key name is kept. */
+    "([Cc][Ll][Ii][Ee][Nn][Tt]_[Ss][Ee][Cc][Rr][Ee][Tt]"
+    "|[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]"
+    "|[Aa][Pp][Ii]_[Kk][Ee][Yy]"
+    "|[Aa][Pp][Ii][Kk][Ee][Yy]"
+    "|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]"
+    "|[Pp][Aa][Ss][Ss][Ww][Dd]"
+    "|[Ss][Ee][Cc][Rr][Ee][Tt]"
+    "|[Tt][Oo][Kk][Ee][Nn]"
+    "|[Pp][Ww][Dd])"
+    "[A-Za-z0-9_]*"
+    "[[:space:]]*[=:][[:space:]]*"
+    "(\"[^\"]+\"|'[^']+'|[^[:space:]\"';,:=]{6,})"
 };
