@@ -1122,12 +1122,19 @@ mislead more than inform.
       + `${BASH_SOURCE[0]}`, but Alpine ships only busybox `sh` (no bash) — made the
       script POSIX-sh portable (`#!/bin/sh`, `set -eu`, `$0`). Verified end-to-end in a
       `ruby:3.3-alpine` container (compile → smoke → gate, 0 allocs, exit 0).
-- [ ] **CI throughput-trend visualization (follow-up, lower priority).** Add
-      `github-action-benchmark` (or similar) running the gem-level
-      `benchmark/vs_pure_ruby.rb` + `throughput.rb`, posting a before/after PR comment
-      with history on `gh-pages`. Informational only (or a loose ≥20% gate) — GitHub
-      runners have 5–15% run-to-run variance, so throughput can't be a hard gate the
-      way allocs-per-scan can. Nice-to-have for spotting slow drift over time.
+- [x] **CI throughput regression gate (0.14.1, `feat/bound-greedy-tails`).** **DONE.**
+      Rather than `github-action-benchmark` + `gh-pages` history (heavier; flaky absolute
+      numbers on shared runners), added a self-contained `throughput-gate` job to
+      `ci.yml` running `benchmark/ci_throughput_gate.rb`. It gates on the C-engine
+      **ratio** to a pure-Ruby gsub loop over the same patterns — the ratio cancels the
+      5–15% runner variance because a slow runner slows both paths equally. Loose floor
+      (`MIN_RATIO=1.5`; known result ~2.25–2.32×), so it only trips on a real regression;
+      throughput is printed informationally. Includes a correctness guard (same redaction
+      count) so a "faster" engine that redacts less can't pass.
+- [ ] (Future, optional) **Throughput-trend visualization over time.** The gate above
+      catches a regression *within a PR* but keeps no history. If slow drift across many
+      small PRs becomes a concern, layer `github-action-benchmark` on top to plot the
+      ratio on `gh-pages` and post before/after PR comments. Nice-to-have, not blocking.
 
 ---
 

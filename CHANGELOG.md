@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CI throughput regression gate** (`throughput-gate` job). Runs
+  `benchmark/ci_throughput_gate.rb`, which gates on the ratio of the C engine to
+  a pure-Ruby gsub loop over the same patterns (the ratio cancels CI-runner
+  speed variance, unlike absolute MB/s). Loose floor (1.5×; known result
+  ~2.25×), informational throughput output, plus a correctness guard so an
+  engine that redacts less cannot pass as "faster". Repo/CI only — not packaged.
+
 ## [0.14.1] - 2026-06-17
 
 ### Changed
