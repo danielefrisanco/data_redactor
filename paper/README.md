@@ -166,12 +166,13 @@ Tracked from research log §14.4. `[ ]` = not done, `[~]` = partial/draft.
       Callgrind is deterministic/reproducible anyway, disclosed in the §5.1
       footnote. Onigmo's hot path is stripped libonig (no debug symbols) so its
       pre-filter/automaton split is not separable — reported as one bucket (†).
-- [ ] **Reproducibility artifact** *(author to develop)* — self-contained Makefile
-      / Docker packaging the prototypes + bench scripts so a reviewer can rerun the
-      sweep. S:P&E encourages; arXiv benefits. If it lands: add an availability
-      footnote/section + repo URL. If it does NOT land before submission: the
-      `prototypes/` dir + `paper/` Makefile already make it reproducible in-repo;
-      mention that instead.
+- [x] **Reproducibility artifact** — `paper/repro/` (Dockerfile + reviewer-facing
+      Makefile + README). Pins the Ubuntu 22.04 / gcc 11 / libonig / libpcre2 /
+      valgrind toolchain and regenerates the density sweep, the Callgrind profiling
+      table, and the figures via `make -C paper/repro {build,sweep,profile,figures,
+      all,verify}`. Added a "Data and artifact availability" section to main.tex
+      (after the acks) stating what reproduces exactly (profiling) vs. in-shape
+      (sweep ms), and that the glibc baseline column is the reused powersave draft.
 - [x] **Table generation** — `paper/plot_density_sweep.py` turns the CSV →
       `booktabs` LaTeX (`paper/data/density_table.tex`) + the figure + the
       crossover report. Numbers are generated, not hand-typed.
