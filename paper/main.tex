@@ -581,6 +581,22 @@ and one corpus, and we scope every such number accordingly. A reader may reasona
 expect a different crossover density on a different pattern mix; the direction of the
 effect is what we claim generally.
 
+\paragraph{From prototype bench to shipped path.} A standing risk in
+prototype-driven work is that the number that justified the design is measured in a
+harness the production system never executes. We checked this directly. The headline
+prototype speedups of the chosen engine over the host's Onigmo, measured in the
+standalone C harness against the fixed pattern table, are
+\(2.21\times\)/\(2.16\times\)/\(1.80\times\)/\(1.84\times\) for the sparse, medium,
+dense, and environment-variable payloads. Re-measured \emph{in the gem}, through the
+real \texttt{DataRedactor.redact} entry point after the port---string in, redacted
+string out, with the library's own allocation and pattern-resolution work on the
+path---the same payloads give \(2.33\times\)/\(2.30\times\)/\(1.75\times\)/\(1.82\times\).
+The two sets agree within measurement noise: the matcher is the same matcher, and the
+small shifts---tenths of a multiplier, in both directions---are the gem's per-call
+string allocation and pattern-resolution overhead, not a change in the engine. The
+point is not the second decimal place but that the prototype's verdict held when the
+engine moved onto the shipped path, where it is the number that actually reaches users.
+
 \paragraph{The exact-output target changed mid-project, on purpose.} Gate~2 demands
 byte-for-byte-identical output to a reference, but we revised the reference once,
 and the revision is worth stating plainly because it cuts against a naive reading of
