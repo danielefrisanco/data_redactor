@@ -701,9 +701,12 @@ search, including its dead ends, is the evidence for all three.
 
 %% AI-use disclosure (paper/README.md §4).
 \begin{acks}
-The author used Claude (Anthropic) for drafting, literature triage, and
-code/benchmark implementation; the author reviewed and is responsible for all
-content.
+This paper, and the engineering it reports, were produced by the sole author
+working with Claude (Anthropic) as an instrument under the author's direction.
+The author set the hypotheses and the algorithmic approach, directed the
+research, benchmarking, and prototyping, and reviewed and is accountable for
+every claim and result. Appendix~\ref{app:method} gives the full account of how
+the tool was used and where the author's judgement overrode it.
 \end{acks}
 
 \section*{Data and artifact availability}
@@ -717,6 +720,54 @@ the instruction attribution---are reproducible across machines, the latter exact
 (it counts instructions, not cycles). The glibc baseline column of
 Table~\ref{tab:density} is the reused \texttt{powersave} draft and is not re-run by
 the artifact, as discussed in \S\ref{sec:discussion}.
+
+\appendix
+
+\section{How this work was produced}
+\label{app:method}
+
+This work was carried out by the sole author with a large language model (Claude,
+Anthropic) used as an instrument throughout. Because the tool's involvement was
+substantial, this appendix records what it did, what the author did, and where the
+two diverged, so the reader can calibrate trust in the results rather than guess at
+it. The short version: the author owns the hypotheses, the engineering decisions,
+and accountability for every number; the tool accelerated research, implementation,
+measurement, and writing under that direction.
+
+\paragraph{What the author set.} The author chose the problem and its constraints
+(the three binary gates and the all-density robustness objective of
+\S\ref{sec:constraints}), formed the central hypotheses---that a per-pattern lazy
+DFA could clear the pattern count where a single shared DFA could not, and that an
+extract-a-literal pre-filter pipeline would lose to a plain JIT at every density---and
+specified the algorithmic shape of the engine, including the two selective merges and
+the intuition for why only the pure-digit and IBAN subsets are safe to merge. These
+were the author's design commitments, stated before the experiments that tested them.
+
+\paragraph{What the tool did under direction.} Given those hypotheses and designs,
+the tool was directed to survey related work and assemble candidate citations, to
+implement the prototype engines and the benchmark and profiling harnesses, to run
+the density sweep and the Callgrind attribution, and to draft and revise this
+manuscript. Each of these was a directed task with an author-specified goal, not an
+autonomous decision; the author read the harness code, the raw results, and the prose,
+and revised or rejected output that did not hold up.
+
+\paragraph{Where the author's judgement overrode the tool.} Two cases are worth
+recording because they show the division of labour working as intended. First, an
+early account of the incumbent's slowness attributed the cost largely to heap
+allocation. The author was unconvinced and directed a Callgrind instruction-attribution
+study, which \emph{disproved} that account: allocation is under~1\% of the incumbent's
+instructions, and the cost is dominated by automaton evaluation and per-call search
+setup (\S\ref{sec:findings}, Table~\ref{tab:profile}). The paper reports the corrected,
+measured account, not the original inferred one. Second, the bibliography was assembled
+with several placeholder entries; the author verified each remaining citation against
+its primary record (DBLP, arXiv, or the publisher) before it was allowed to stand, and
+entries that could not be confirmed were left uncited rather than printed on trust.
+
+\paragraph{Accountability.} The author has reviewed the full manuscript, the
+experimental code, and the results, and is solely responsible for them. The tool is
+disclosed here as a method, not credited as an author: it holds no view, takes no
+responsibility, and made no claim that the author did not check and adopt as the
+author's own.
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{refs}
