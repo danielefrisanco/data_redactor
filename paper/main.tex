@@ -682,6 +682,18 @@ code/benchmark implementation; the author reviewed and is responsible for all
 content.
 \end{acks}
 
+\section*{Data and artifact availability}
+The prototypes, benchmark and profiling harnesses, raw results, and figure/table
+generators are in the project repository. A self-contained Docker artifact
+(\texttt{paper/repro/}) pins the toolchain of \S\ref{sec:eval} and regenerates the
+density sweep, the Callgrind instruction-attribution table (Table~\ref{tab:profile}),
+and the figures with a single command: \texttt{make -C paper/repro all}. Absolute
+timings depend on the host CPU; the qualitative results---the density crossover and
+the instruction attribution---are reproducible across machines, the latter exactly
+(it counts instructions, not cycles). The glibc baseline column of
+Table~\ref{tab:density} is the reused \texttt{powersave} draft and is not re-run by
+the artifact, as discussed in \S\ref{sec:discussion}.
+
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{refs}
 
