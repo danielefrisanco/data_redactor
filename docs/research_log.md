@@ -2573,3 +2573,53 @@ The research has material for a **systems/experience report paper** (12–15 pag
 1. Post preprint to arXiv (cs.PL + cs.DS) once benchmarks are rigorous.
 2. Submit to **Software: Practice and Experience** as primary venue.
 3. If SPE reviewers push back on novelty, revise and retarget **USENIX ATC**.
+
+## 15. Callgrind instruction attribution (2026-06-18) — and a correction to §8.6
+
+Closes the "profiling evidence" item (§14.4.2): instead of `perf` cycle samples
+(hardware-counter access was blocked by `kernel.perf_event_paranoid` on this
+machine), we used **Callgrind**, which counts instructions retired per function
+*exactly* — deterministic and reproducible across runs and machines, which suits
+a paper better than sampled cycles.
+
+**Harness (all new files, nothing existing touched):**
+`prototypes/multi_pattern_matcher/profile_driver.c` (one driver, `-DENGINE_{GLIBC,
+ONIG,V19}` includes the engine source and calls its scan over the same seed-42
+~1 MB payload as `bench_malloc.c`), `profile_engines.sh` (builds the three drivers,
+runs `valgrind --tool=callgrind`, dumps `callgrind_annotate`), and
+`profile_categorize.py` (buckets per-function Ir into mechanism categories). Table
+generator: `paper/gen_profile_table.py` → `paper/data/profile_table.tex`. Raw
+dumps in `paper/data/profile_<engine>.txt`, summary in `profile_summary.csv`.
+
+**Result (% of instructions retired, one shared payload, 18 146 matches/scan on
+all three engines — a free cross-engine correctness check):**
+
+| engine | automaton eval | per-call setup | literal pre-filter | allocation |
+|--------|---------------:|---------------:|-------------------:|-----------:|
+| glibc `regexec` | 73.4% | 25.9% | 0% | **0.5%** |
+| Onigmo | 96.7% (†) | <0.1% | (†) | 0.6% |
+| v19 lazy DFA | 91.3% | <0.1% | 6.0% (`memmem`) | **0.1%** |
+
+(†) Onigmo's hot functions are stripped libonig statics (no debug symbols); BM
+pre-filter and NFA stepping cannot be separated, so they are reported as one
+bucket. glibc's "per-call setup" is `re_string_reconstruct` (13.4%) +
+`__strlen_avx2` (12.5%) — rebuilding the search string and measuring the remaining
+tail on every call.
+
+**Correction to §8.6.** §8.6 attributed glibc's slowness to "O(N) **state-log
+allocation** … glibc allocates ~88 MB of state-log per `redact` call." The
+instruction profile does **not** support the *allocation* part: `malloc`/`free`/
+`realloc` together are 0.5% of instructions. The dominant costs are (a) the
+automaton evaluation inside `re_search_internal` (53% alone) and (b) the O(N)
+per-call **search-string reconstruction + strlen**, which is real and proportional
+to input length but is *string/position setup, not heap allocation*. So the §8.6
+intuition — "there is a mandatory O(N) per-call cost in glibc that Onigmo's
+fixed-size stack avoids" — is correct in shape; the mechanism is per-call search
+structure setup, not an 88 MB heap allocation. This is independently corroborated
+by `bench_malloc.c`'s timing split (malloc churn ≈ 0%, `regexec` ≈ 94%): both
+methods agree allocation is not the bottleneck.
+
+**Paper impact.** §5.1's second factor was rewritten from "an allocation gap"
+to "a per-call setup cost (O(N) search-string reconstruction)", and the
+instruction-attribution table was added as Table~\ref{tab:profile} with a methods
+footnote disclosing Callgrind-not-perf and the Onigmo stripped-symbol limitation.

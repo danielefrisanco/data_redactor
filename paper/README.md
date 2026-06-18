@@ -151,14 +151,21 @@ Tracked from research log §14.4. `[ ]` = not done, `[~]` = partial/draft.
       the pipeline is *strictly dominated* by plain JIT at every density (no
       crossover between them); the genuine crossover is pipeline-vs-pure-Ruby at
       ~11 hits/KB. Re-run pending (rigor item above).
-- [ ] **Profiling evidence** *(author to develop)* — perf / callgrind showing
-      cycles in glibc (alloc) vs Onigmo (BM) vs v19 (table lookup). Would turn the
-      §5.1 claim ("bottleneck is per-call state-log allocation, not missing BM")
-      from inferred-by-timing into measured. HIGH VALUE — it is the one open item
-      where new data materially strengthens the paper. If it lands: add a short
-      profiling paragraph/figure to §5.1. If it does NOT land: §5.1 already stands
-      on the timing shape + the mechanism argument; scope profiling as future work
-      in §7 (one sentence), do not fabricate counter numbers.
+- [x] **Profiling evidence** — Callgrind instruction-count attribution across
+      glibc / Onigmo / v19 on one shared payload, added to §5.1 as
+      Table~\ref{tab:profile}. Harness: `prototypes/multi_pattern_matcher/`
+      `profile_driver.c` + `profile_engines.sh` + `profile_categorize.py`; table
+      generator `paper/gen_profile_table.py` → `paper/data/profile_table.tex`
+      (+ per-engine dumps `paper/data/profile_<engine>.txt`,
+      `paper/data/profile_summary.csv`). **The data CORRECTED the draft claim:**
+      glibc's cost is automaton evaluation (~73%) + O(N) per-call search-string
+      setup (~26%); **allocation is <1%**, not the bottleneck. (Cross-checked by
+      `bench_malloc.c`: malloc churn ≈ 0%, regexec ≈ 94%.) §5.1 was rewritten from
+      "allocation gap" to "no pre-filter + per-call O(N) setup." Used Callgrind not
+      perf because hardware-counter access (`perf_event_paranoid`) was blocked;
+      Callgrind is deterministic/reproducible anyway, disclosed in the §5.1
+      footnote. Onigmo's hot path is stripped libonig (no debug symbols) so its
+      pre-filter/automaton split is not separable — reported as one bucket (†).
 - [ ] **Reproducibility artifact** *(author to develop)* — self-contained Makefile
       / Docker packaging the prototypes + bench scripts so a reviewer can rerun the
       sweep. S:P&E encourages; arXiv benefits. If it lands: add an availability

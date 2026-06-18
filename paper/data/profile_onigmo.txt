@@ -1,0 +1,514 @@
+--------------------------------------------------------------------------------
+Profile data file 'callgrind.out.onigmo' (creator: callgrind-3.18.1)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 602828921
+Trigger: Program termination
+Profiled target:  ./profile_onigmo 1 (PID 154714, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+2,987,244,826 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+1,890,988,447 (63.30%)  ???:0x0000000000027900 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+  691,428,310 (23.15%)  ???:0x0000000000025020 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+  139,041,732 ( 4.65%)  ???:0x000000000002c920 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+  119,901,915 ( 4.01%)  ???:onigenc_single_byte_mbc_enc_len [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+   59,057,147 ( 1.98%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   13,178,344 ( 0.44%)  ???:onigenc_is_mbc_newline_0x0a [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+   11,373,257 ( 0.38%)  ???:onigenc_get_prev_char_head [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+    9,799,130 ( 0.33%)  ???:0x0000000004867190 [???]
+    9,547,999 ( 0.32%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    9,518,929 ( 0.32%)  ???:onigenc_get_right_adjust_char_head [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+    6,554,064 ( 0.22%)  ???:onigenc_single_byte_left_adjust_char_head [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+    5,955,024 ( 0.20%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    5,745,624 ( 0.19%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    3,142,663 ( 0.11%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,661,181 ( 0.06%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,153,440 ( 0.04%)  ./malloc/./malloc/malloc.c:unlink_chunk.constprop.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    1,057,630 ( 0.04%)  ???:onig_search [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+    1,027,302 ( 0.03%)  ???:0x000000000001cce0'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      971,331 ( 0.03%)  ???:mm7po_scan [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+      656,460 ( 0.02%)  ???:onig_region_resize [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      569,900 ( 0.02%)  ???:onig_region_clear [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      547,050 ( 0.02%)  ???:onig_region_free [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      459,982 ( 0.02%)  ???:main [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+      309,995 ( 0.01%)  ???:onig_initialize_match_param [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      226,485 ( 0.01%)  ./malloc/./malloc/arena.c:free
+      218,820 ( 0.01%)  ???:0x0000000000023a70 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      218,820 ( 0.01%)  ???:onig_region_new [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      207,155 ( 0.01%)  ./string/../sysdeps/x86_64/multiarch/strlen-avx2.S:__strlen_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+      150,942 ( 0.01%)  ???:0x0000000004867150 [???]
+      147,432 ( 0.00%)  ???:0x00000000048671e0 [???]
+      145,880 ( 0.00%)  ???:onig_free_match_param_content [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      131,291 ( 0.00%)  ???:0x0000000000013870 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      126,155 ( 0.00%)  ./malloc/./malloc/malloc.c:calloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+      118,346 ( 0.00%)  ???:0x00000000000122e0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      111,511 ( 0.00%)  ???:0x0000000000014440 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      110,887 ( 0.00%)  ???:0x0000000000015e50 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+      109,410 ( 0.00%)  ???:onig_region_init [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       93,458 ( 0.00%)  ???:0x000000000001e5f0'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       72,843 ( 0.00%)  ???:0x000000000001c5d0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       61,688 ( 0.00%)  ???:0x000000000001c9f0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       56,322 ( 0.00%)  ???:onig_compile [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       55,034 ( 0.00%)  ./elf/./elf/dl-tunables.c:__GI___tunables_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+       50,042 ( 0.00%)  ???:0x00000000000212f0'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       44,417 ( 0.00%)  ???:0x000000000001bdc0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       44,390 ( 0.00%)  ./elf/./elf/dl-lookup.c:do_lookup_x [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+       41,339 ( 0.00%)  ???:0x00000000000171c0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       37,964 ( 0.00%)  ???:0x00000000048671d0 [???]
+       37,889 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+       36,470 ( 0.00%)  ???:0x000000000010b1c0 [???]
+       36,470 ( 0.00%)  ???:0x000000000010b220 [???]
+       36,470 ( 0.00%)  ???:0x000000000010b270 [???]
+       35,405 ( 0.00%)  ./elf/../sysdeps/x86_64/dl-machine.h:_dl_relocate_object
+       35,035 ( 0.00%)  ???:0x0000000000011a80 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       34,414 ( 0.00%)  ./elf/./elf/dl-lookup.c:_dl_lookup_symbol_x [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+       31,518 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+       28,017 ( 0.00%)  ???:0x000000000002f010 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       25,283 ( 0.00%)  ???:onig_node_str_cat [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       25,180 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+       24,441 ( 0.00%)  ???:0x00000000000171c0'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       24,430 ( 0.00%)  ???:0x000000000010b1a0 [???]
+       24,206 ( 0.00%)  ???:0x000000000010b1f0 [???]
+       22,942 ( 0.00%)  ???:0x0000000000020900'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       22,511 ( 0.00%)  ???:0x000000000000f3f0'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       22,433 ( 0.00%)  ???:onig_free_body [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       19,461 ( 0.00%)  ./elf/./elf/do-rel.h:_dl_relocate_object
+       18,883 ( 0.00%)  ???:0x0000000000010df0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       18,146 ( 0.00%)  ???:0x000000000001cce0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       17,769 ( 0.00%)  ???:0x000000000001a2d0'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       17,017 ( 0.00%)  ???:0x0000000000010d30 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       16,743 ( 0.00%)  ???:0x000000000001d8c0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       16,526 ( 0.00%)  ???:onig_init_for_match_at [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       15,825 ( 0.00%)  ???:onigenc_single_byte_mbc_to_code [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       15,600 ( 0.00%)  ???:0x00000000000212f0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       15,067 ( 0.00%)  ???:0x0000000000019940 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       14,697 ( 0.00%)  ???:0x0000000000019940'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       12,229 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+       11,125 ( 0.00%)  ???:onig_parse_tree [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       10,435 ( 0.00%)  ./stdio-common/./stdio-common/vfprintf-internal.c:__vfprintf_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+       10,359 ( 0.00%)  ???:0x00000000000322b0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+       10,324 ( 0.00%)  ???:onig_reg_init [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        9,895 ( 0.00%)  ./string/../sysdeps/x86_64/strcmp.S:strcmp [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        9,529 ( 0.00%)  ???:0x0000000000032520 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        9,001 ( 0.00%)  ???:0x000000000001d8c0'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        8,982 ( 0.00%)  ???:onig_node_free'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        8,974 ( 0.00%)  ???:0x000000000001c900 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        8,761 ( 0.00%)  ???:0x0000000000019b50'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        8,667 ( 0.00%)  ???:0x0000000000020440 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        8,487 ( 0.00%)  ???:0x0000000000020900 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        8,432 ( 0.00%)  ./elf/./elf/dl-lookup.c:check_match [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        7,899 ( 0.00%)  ???:0x000000000001bd20 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        7,830 ( 0.00%)  ???:onigenc_single_byte_code_to_mbclen [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        7,210 ( 0.00%)  ???:0x000000000001e5f0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        7,031 ( 0.00%)  ???:0x0000000000021f80 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        6,405 ( 0.00%)  ???:0x000000000001b4c0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        6,198 ( 0.00%)  ???:0x000000000001a030 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        6,083 ( 0.00%)  ???:onig_strcpy [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        5,600 ( 0.00%)  ./libio/./libio/genops.c:_IO_default_xsputn [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        5,073 ( 0.00%)  ???:0x0000000000019b50 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        5,024 ( 0.00%)  ???:0x0000000000010a50 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        4,801 ( 0.00%)  ???:0x000000000000ef60 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        4,731 ( 0.00%)  ./malloc/./malloc/arena.c:calloc
+        4,717 ( 0.00%)  ./elf/./elf/dl-tunables.h:__GI___tunables_init
+        4,565 ( 0.00%)  ???:onigenc_with_ascii_strncmp [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        4,488 ( 0.00%)  ???:0x000000000000eec0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        4,427 ( 0.00%)  ???:0x000000000001a2d0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        4,175 ( 0.00%)  ???:0x000000000000f3f0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        4,094 ( 0.00%)  ???:onig_new [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        3,565 ( 0.00%)  ???:0x00000000000321a0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        3,356 ( 0.00%)  ./elf/./elf/dl-version.c:_dl_check_map_versions [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        3,184 ( 0.00%)  ???:mm7po_init [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+        3,154 ( 0.00%)  ???:0x00000000048671a0 [???]
+        3,085 ( 0.00%)  ./elf/../sysdeps/x86/dl-cacheinfo.h:intel_check_word.constprop.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        3,080 ( 0.00%)  ???:0x000000000000e920 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        3,062 ( 0.00%)  ???:onigenc_strlen [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        2,610 ( 0.00%)  ???:onig_node_new_alt [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        2,424 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+        2,275 ( 0.00%)  ./elf/./elf/dl-load.c:_dl_map_object_from_fd [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        2,222 ( 0.00%)  ./elf/../bits/stdlib-bsearch.h:intel_check_word.constprop.0
+        1,919 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strchr-avx2.S:__strchrnul_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,746 ( 0.00%)  ./elf/./elf/dl-cache.c:_dl_cache_libcmp [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        1,632 ( 0.00%)  ???:0x000000000000ea40 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        1,596 ( 0.00%)  ???:0x000000000000efb0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        1,411 ( 0.00%)  ./elf/../sysdeps/generic/dl-protected.h:do_lookup_x
+        1,368 ( 0.00%)  ./libio/./libio/vsnprintf.c:__vsnprintf_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,344 ( 0.00%)  ???:0x0000000000010660 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+        1,336 ( 0.00%)  ./elf/./elf/dl-deps.c:_dl_map_object_deps [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        1,231 ( 0.00%)  ./elf/./elf/rtld.c:dl_main [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+        1,164 ( 0.00%)  ???:0x0000000004867210 [???]
+        1,152 ( 0.00%)  ./libio/./libio/strops.c:_IO_str_init_static_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          946 ( 0.00%)  ./elf/./elf/dl-load.c:open_verify.constprop.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          936 ( 0.00%)  ./stdio-common/../libio/libioP.h:__vfprintf_internal
+          890 ( 0.00%)  ???:onig_names_free [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          889 ( 0.00%)  ./elf/./elf/dl-load.c:_dl_map_object [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          883 ( 0.00%)  ./elf/../sysdeps/x86_64/dl-machine.h:_dl_start
+          876 ( 0.00%)  ./elf/./elf/dl-load.c:open_path [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          832 ( 0.00%)  ./elf/./elf/get-dynamic-info.h:_dl_map_object_from_fd
+          815 ( 0.00%)  ./elf/./elf/do-rel.h:_dl_start
+          801 ( 0.00%)  ???:onig_free [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          801 ( 0.00%)  ???:onig_node_free [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          787 ( 0.00%)  ./elf/./elf/dl-misc.c:_dl_name_match_p [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          782 ( 0.00%)  ???:onigenc_strdup [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          776 ( 0.00%)  ./malloc/./malloc/malloc.c:ptmalloc_init.part.0
+          770 ( 0.00%)  ./elf/./elf/dl-minimal-malloc.c:__minimal_malloc [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          770 ( 0.00%)  ./stdio-common/./stdio-common/vfprintf-internal.c:__vfprintf_internal'2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          768 ( 0.00%)  ./elf/./elf/dl-hwcaps.c:_dl_important_hwcaps [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          765 ( 0.00%)  ./elf/./elf/dl-object.c:_dl_new_object [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          745 ( 0.00%)  ./elf/../sysdeps/generic/ldsodefs.h:do_lookup_x
+          744 ( 0.00%)  ./debug/./debug/snprintf_chk.c:__snprintf_chk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          738 ( 0.00%)  ???:onigenc_always_true_is_valid_mbc_string [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          731 ( 0.00%)  ./elf/./elf/dl-environ.c:_dl_next_ld_env_entry [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          698 ( 0.00%)  ./elf/./elf/dl-tunables.c:__tunable_get_val [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          695 ( 0.00%)  ./elf/./elf/dl-reloc.c:_dl_relocate_object [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          680 ( 0.00%)  ./elf/../elf/dl-sysdep.c:_dl_sysdep_start [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          665 ( 0.00%)  ./elf/./elf/dl-cache.c:_dl_load_cache_lookup [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          596 ( 0.00%)  ./elf/../sysdeps/x86/dl-cacheinfo.h:handle_intel.constprop.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          576 ( 0.00%)  ./libio/./libio/genops.c:_IO_setb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          572 ( 0.00%)  ???:onigenc_step [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          552 ( 0.00%)  ./libio/./libio/genops.c:_IO_no_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          552 ( 0.00%)  ./libio/./libio/genops.c:_IO_old_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          519 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strlen-vec.S:strlen [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          509 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/../strchr.S:index [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          504 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:mempcpy [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          468 ( 0.00%)  ./elf/../sysdeps/generic/ldsodefs.h:_dl_relocate_object
+          462 ( 0.00%)  ???:mm7po_free [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+          457 ( 0.00%)  ./elf/./dl-map-segments.h:_dl_map_object_from_fd
+          456 ( 0.00%)  ./stdio-common/./stdio-common/printf-parse.h:__vfprintf_internal
+          446 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:memset [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          437 ( 0.00%)  ./elf/./elf/dl-hwcaps_split.c:_dl_hwcaps_split_masked [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          420 ( 0.00%)  ???:0x0000000000019d50 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          390 ( 0.00%)  ???:0x0000000004914620 [???]
+          387 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:memcpy [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          373 ( 0.00%)  ./elf/./elf/dl-sort-maps.c:dfs_traversal.part.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          350 ( 0.00%)  ./elf/../elf/dl-tls.c:_dl_allocate_tls_storage [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          336 ( 0.00%)  ???:onig_is_code_in_cc_len [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          335 ( 0.00%)  ./elf/./get-dynamic-info.h:dl_main
+          320 ( 0.00%)  ???:onig_is_code_in_cc [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          318 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/open64_nocancel.c:__open_nocancel [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          315 ( 0.00%)  ./elf/./dl-find_object.h:_dl_find_object_from_map [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          312 ( 0.00%)  ./elf/./elf/dl-load.c:_dl_init_paths [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          312 ( 0.00%)  ???:onig_positive_int_multiply [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          311 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          306 ( 0.00%)  ./elf/./elf/dl-fini.c:_dl_fini [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          296 ( 0.00%)  ./elf/../sysdeps/x86/dl-prop.h:_dl_map_object_from_fd
+          286 ( 0.00%)  ./elf/./elf/dl-sort-maps.c:_dl_sort_maps [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          268 ( 0.00%)  ./elf/./elf/dl-lookup-direct.c:_dl_lookup_direct [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          251 ( 0.00%)  ./elf/./elf/dl-load.c:open_verify.constprop.1 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          248 ( 0.00%)  ./elf/./elf/dl-minimal.c:strsep [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          245 ( 0.00%)  ./elf/./elf/dl-tunables.c:__GI___tunable_set_val [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          243 ( 0.00%)  ./elf/./get-dynamic-info.h:_dl_start
+          243 ( 0.00%)  ./libio/./libio/libioP.h:_IO_default_xsputn
+          233 ( 0.00%)  ./string/../sysdeps/x86_64/strcspn.S:strcspn [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          218 ( 0.00%)  ./stdio-common/./stdio-common/_itoa.c:_itoa_word [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          215 ( 0.00%)  ./elf/../sysdeps/x86/dl-cacheinfo.h:get_common_cache_info.constprop.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          210 ( 0.00%)  ./elf/../sysdeps/x86/dl-prop.h:dl_main
+          207 ( 0.00%)  ./elf/../sysdeps/x86/dl-cacheinfo.h:init_cpu_features.constprop.0
+          206 ( 0.00%)  ./elf/./elf/dl-find_object.c:_dlfo_process_initial [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          202 ( 0.00%)  ???:0x00000000049144d0 [???]
+          195 ( 0.00%)  ./elf/./elf/dl-init.c:call_init.part.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          188 ( 0.00%)  ./elf/./elf/dl-runtime.c:_dl_fixup [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          183 ( 0.00%)  ???:onigenc_always_true_is_allowed_reverse_match [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          181 ( 0.00%)  ???:0x000000000001a030'2 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          180 ( 0.00%)  ???:0x000000000010b170 [???]
+          178 ( 0.00%)  ???:0x000000000010b190 [???]
+          178 ( 0.00%)  ???:0x000000000010b200 [???]
+          175 ( 0.00%)  ./elf/./elf/dl-error-skeleton.c:_dl_catch_exception [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          171 ( 0.00%)  ./elf/../sysdeps/x86/cpu-features.c:init_cpu_features.constprop.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          168 ( 0.00%)  ./stdlib/./stdlib/cxa_finalize.c:__cxa_finalize [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          168 ( 0.00%)  ???:onig_node_new_bag [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+          159 ( 0.00%)  ./elf/./elf/dl-object.c:_dl_add_to_namespace_list [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          156 ( 0.00%)  ./elf/./elf/dl-load.c:fillin_rpath.isra.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          153 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          152 ( 0.00%)  ./elf/../sysdeps/x86/cpu-features.c:update_active.constprop.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          146 ( 0.00%)  ???:0x0000000004914490 [???]
+          145 ( 0.00%)  ./elf/./elf/dl-setup_hash.c:_dl_setup_hash [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          142 ( 0.00%)  ./setjmp/../sysdeps/x86_64/setjmp.S:__sigsetjmp [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          140 ( 0.00%)  ./elf/./elf/dl-minimal.c:lookup_malloc_symbol [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          130 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/fstatat64.c:fstatat [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          128 ( 0.00%)  ./elf/./elf/dl-find_object.c:_dlfo_sort_mappings [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          117 ( 0.00%)  ./malloc/./malloc/malloc.c:tcache_init.part.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          116 ( 0.00%)  ./elf/./elf/dl-init.c:_dl_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          110 ( 0.00%)  ./elf/./elf/rtld.c:_dl_start [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          107 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__mempcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          104 ( 0.00%)  ./libio/./libio/genops.c:_IO_flush_all_lockp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          102 ( 0.00%)  ./elf/../elf/dl-tls.c:_dl_allocate_tls_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+          101 ( 0.00%)  ./stdlib/../stdlib/strtol_l.c:____strtol_l_internal [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          100 ( 0.00%)  ./elf/./elf/dl-minimal-malloc.c:__minimal_calloc [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           95 ( 0.00%)  ./elf/./dl-load.h:_dl_map_object_from_fd
+           92 ( 0.00%)  ./stdio-common/./stdio-common/vfprintf-internal.c:buffered_vfprintf [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           85 ( 0.00%)  ./elf/./elf/dl-version.c:_dl_check_all_versions [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           84 ( 0.00%)  ./libio/./libio/genops.c:_IO_cleanup [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           83 ( 0.00%)  ./libio/./libio/fileops.c:_IO_file_xsputn@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           82 ( 0.00%)  ./elf/../sysdeps/x86_64/dl-trampoline.h:_dl_runtime_resolve_xsave [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           80 ( 0.00%)  ./elf/./elf/dl-load.c:_dl_process_pt_gnu_property [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           79 ( 0.00%)  ./elf/./elf/rtld.c:init_tls [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           79 ( 0.00%)  ./stdlib/./stdlib/exit.c:__run_exit_handlers [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           76 ( 0.00%)  ./elf/../elf/dl-tls.c:_dl_determine_tlsoffset [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           74 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/dl-sysdep.c:_dl_discover_osversion [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           74 ( 0.00%)  ./misc/./misc/sbrk.c:sbrk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  ./elf/./elf/dl-deps.c:openaux [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           72 ( 0.00%)  ./elf/./elf/dl-load.c:_dl_dst_count [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           71 ( 0.00%)  ./csu/../csu/libc-start.c:__libc_start_main@@GLIBC_2.34 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           71 ( 0.00%)  ./elf/./elf/rtld.c:handle_preload_list [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           69 ( 0.00%)  ./malloc/./malloc/arena.c:ptmalloc_init.part.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           65 ( 0.00%)  ./elf/../sysdeps/generic/dl-hash.h:__rtld_malloc_init_real
+           64 ( 0.00%)  ./string/./string/strdup.c:strdup [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           63 ( 0.00%)  ./elf/./elf/dl-audit.c:_dl_audit_activity_nsid [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           63 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-memmove.h:memcpy@@GLIBC_2.14
+           63 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-memmove.h:memmove
+           60 ( 0.00%)  ./elf/../sysdeps/x86/cpu-features.c:get_common_indices.constprop.0 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           60 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/stat64.c:stat [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           60 ( 0.00%)  ./malloc/./malloc/scratch_buffer_set_array_size.c:__libc_scratch_buffer_set_array_size [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           57 ( 0.00%)  ./elf/../sysdeps/posix/dl-fileid.h:_dl_map_object_from_fd
+           57 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-avx2.h:strlen
+           54 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.constprop.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           52 ( 0.00%)  ./libio/./libio/fileops.c:_IO_file_overflow@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           51 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strcmp.c:strcmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           50 ( 0.00%)  ???:0x000000000010b210 [???]
+           49 ( 0.00%)  ./stdio-common/../libio/libioP.h:__vfprintf_internal'2
+           48 ( 0.00%)  ???:0x000000000010b160 [???]
+           46 ( 0.00%)  ./elf/./elf/dl-load.c:expand_dynamic_string_token [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           46 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-memset.h:memset
+           46 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strrchr-avx2.S:__strrchr_avx2 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           45 ( 0.00%)  ./posix/./posix/register-atfork.c:__unregister_atfork [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           44 ( 0.00%)  ./elf/./dl-hwcaps.h:_dl_important_hwcaps
+           43 ( 0.00%)  ./elf/./elf/dl-minimal.c:__rtld_malloc_init_real [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           43 ( 0.00%)  ./nptl/./nptl/pthread_mutex_lock.c:pthread_mutex_lock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           43 ( 0.00%)  ???:0x0000000004914650 [???]
+           42 ( 0.00%)  ./elf/../sysdeps/nptl/dl-mutex.c:__rtld_mutex_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           42 ( 0.00%)  ./elf/../sysdeps/x86/get-isa-level.h:update_active.constprop.0
+           42 ( 0.00%)  ./elf/./elf/dl-misc.c:_dl_sysdep_read_whole_file [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           42 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:mprotect [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           42 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/ifunc-evex.h:wmemchr
+           41 ( 0.00%)  ./string/../sysdeps/x86_64/memcmp.S:bcmp [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           40 ( 0.00%)  ./elf/../sysdeps/x86/get-isa-level.h:_dl_hwcaps_subdirs_active
+           39 ( 0.00%)  ./stdlib/./stdlib/cxa_atexit.c:__cxa_atexit [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           38 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-avx2.h:strnlen
+           38 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/ifunc-avx2.h:wcschr
+           37 ( 0.00%)  ./elf/../elf/dl-tls.c:_dl_tls_static_surplus_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           37 ( 0.00%)  ./elf/./elf/dl-find_object.c:_dl_find_object_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           37 ( 0.00%)  ./libio/./libio/fileops.c:_IO_file_write@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           37 ( 0.00%)  ./nptl/../sysdeps/unix/sysv/linux/x86/elision-conf.c:__lll_elision_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           36 ( 0.00%)  ./elf/../sysdeps/nptl/dl-tls_init_tp.c:__tls_init_tp [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           35 ( 0.00%)  ./elf/./elf/dl-tunables.h:__GI___tunable_set_val
+           34 ( 0.00%)  ./nptl/./nptl/pthread_mutex_unlock.c:pthread_mutex_unlock@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           34 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/ifunc-wmemset.h:wmemset
+           33 ( 0.00%)  ???:onigenc_not_support_get_ctype_code_range [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+           32 ( 0.00%)  ./stdlib/./stdlib/cxa_atexit.c:__new_exitfn [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           30 ( 0.00%)  ./elf/../sysdeps/nptl/dl-tls_init_tp.c:rtld_mutex_dummy [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           30 ( 0.00%)  ./elf/../sysdeps/x86/dl-cet.c:_dl_cet_check [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           30 ( 0.00%)  ./elf/./elf/dl-debug.c:_dl_debug_initialize [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           30 ( 0.00%)  ./elf/./elf/dl-hwcaps_split.c:_dl_hwcaps_contains [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           30 ( 0.00%)  ./nptl/./nptl/libc-cleanup.c:__libc_cleanup_push_defer [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           30 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcpy.h:strncpy
+           29 ( 0.00%)  ./debug/./debug/fprintf_chk.c:__fprintf_chk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           29 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           28 ( 0.00%)  ./csu/../sysdeps/nptl/libc_start_call_main.h:(below main) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           28 ( 0.00%)  ./elf/../elf/dl-tls.c:_dl_add_to_slotinfo [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           28 ( 0.00%)  ./elf/./elf/dl-debug.c:_dl_debug_update [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           28 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/fstat64.c:fstat [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           28 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/pread64_nocancel.c:__pread64_nocancel [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           27 ( 0.00%)  ./malloc/./malloc/morecore.c:__glibc_morecore [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           27 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/brk.c:brk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           26 ( 0.00%)  ./libio/./libio/genops.c:_IO_doallocbuf [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           26 ( 0.00%)  ???:0x00000000000010e0 [/usr/libexec/valgrind/vgpreload_core-amd64-linux.so]
+           25 ( 0.00%)  ./elf/../include/rtld-malloc.h:_dl_new_object
+           25 ( 0.00%)  ./elf/../sysdeps/nptl/pthread_early_init.h:__libc_early_init
+           25 ( 0.00%)  ./elf/./elf/dl-audit.c:_dl_audit_objclose [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           25 ( 0.00%)  ./misc/./misc/init-misc.c:__init_misc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           25 ( 0.00%)  ./string/../sysdeps/x86/cacheinfo.h:__x86_cacheinfo
+           24 ( 0.00%)  ./elf/./elf/dl-call-libc-early-init.c:_dl_call_libc_early_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           24 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/close_nocancel.c:__GI___close_nocancel [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           24 ( 0.00%)  ./nptl/./nptl/libc-cleanup.c:__libc_cleanup_pop_restore [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           24 ( 0.00%)  ./stdio-common/./stdio-common/printf-parse.h:__vfprintf_internal'2
+           23 ( 0.00%)  ./elf/./elf/dl-error-skeleton.c:_dl_catch_error [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           21 ( 0.00%)  ./debug/../sysdeps/x86_64/multiarch/ifunc-memmove.h:__memcpy_chk
+           21 ( 0.00%)  ./nptl/./nptl/pthread_mutex_conf.c:__pthread_tunables_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           21 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-evex.h:memchr
+           21 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-evex.h:rawmemchr
+           21 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-memmove.h:mempcpy
+           20 ( 0.00%)  ./elf/./dl-sym-post.h:lookup_malloc_symbol
+           20 ( 0.00%)  ./elf/./elf/dl-minimal-malloc.c:__minimal_free [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           20 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-memcmp.h:bcmp
+           20 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/ifunc-memcmp.h:wmemcmp
+           20 ( 0.00%)  ???:onig_global_callout_names_free [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+           19 ( 0.00%)  ./csu/./csu/init-first.c:_init_first [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           19 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-avx2.h:memrchr
+           19 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-avx2.h:rindex
+           19 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-avx2.h:strchrnul
+           19 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strchr.c:index [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           19 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/ifunc-avx2.h:wcscmp
+           19 ( 0.00%)  ???:0x0000000000020290 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           18 ( 0.00%)  ./elf/../sysdeps/x86/dl-procinfo.h:_dl_load_cache_lookup
+           18 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/read_nocancel.c:__read_nocancel [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           18 ( 0.00%)  ???:onig_initialize [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+           17 ( 0.00%)  ./ctype/./ctype/ctype-info.c:__ctype_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           17 ( 0.00%)  ./elf/../sysdeps/nptl/dl-tls_init_tp.c:__tls_pre_init_tp [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           17 ( 0.00%)  ./elf/./elf/dl-error-skeleton.c:_dl_receive_error [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           17 ( 0.00%)  ./elf/./elf/libc_early_init.c:__libc_early_init [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           17 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strncmp.c:strncmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           17 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/ifunc-wcslen.h:wcslen
+           17 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/ifunc-wcslen.h:wcsnlen
+           16 ( 0.00%)  ./elf/../include/scratch_buffer.h:_dl_map_object_deps
+           16 ( 0.00%)  ./elf/../sysdeps/generic/dl-cache.h:_dl_load_cache_lookup
+           16 ( 0.00%)  ./elf/./elf/dl-audit.c:_dl_audit_activity_map [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           16 ( 0.00%)  ???:0x00000000049143e0 [???]
+           15 ( 0.00%)  ./elf/../misc/sbrk.c:sbrk [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           15 ( 0.00%)  ./elf/./elf/dl-audit.c:_dl_audit_objopen [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           15 ( 0.00%)  ./elf/./elf/rtld.c:map_doit [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           15 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcpy.h:stpcpy
+           15 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcpy.h:stpncpy
+           15 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcpy.h:strcat
+           15 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcpy.h:strcpy
+           13 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/rseq-internal.h:__tls_init_tp
+           13 ( 0.00%)  ???:0x00000000000034f0 [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+           13 ( 0.00%)  ???:0x000000000000e320 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+           12 ( 0.00%)  ./elf/../include/rtld-malloc.h:_dl_check_map_versions
+           12 ( 0.00%)  ./elf/./elf/dl-cache.c:_dl_unload_cache [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           12 ( 0.00%)  ./elf/./elf/dl-hwcaps_split.c:_dl_hwcaps_split [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           12 ( 0.00%)  ./elf/./elf/dl-sort-maps.c:_dl_sort_maps_init [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           12 ( 0.00%)  ./libio/./libio/vtables.c:check_stdfiles_vtables [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           12 ( 0.00%)  ./stdlib/./stdlib/cxa_thread_atexit_impl.c:__call_tls_dtors [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ???:(below main) [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+           12 ( 0.00%)  ???:0x0000000000001170 [/usr/libexec/valgrind/vgpreload_core-amd64-linux.so]
+           12 ( 0.00%)  ???:0x0000000000003530 [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+           12 ( 0.00%)  ???:0x000000000000e360 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+           11 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/x86/dl-minsigstacksize.h:get_common_indices.constprop.0
+           11 ( 0.00%)  ./elf/./elf/rtld.c:version_check_doit [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           11 ( 0.00%)  ./libio/./libio/libioP.h:_IO_file_xsputn@@GLIBC_2.2.5
+           11 ( 0.00%)  ???:onig_end [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+           10 ( 0.00%)  ./elf/../elf/dl-tls.c:_dl_assign_tls_modid [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           10 ( 0.00%)  ./elf/../include/rtld-malloc.h:__minimal_calloc
+           10 ( 0.00%)  ./elf/./dl-tunable-types.h:__GI___tunable_set_val
+           10 ( 0.00%)  ./elf/./elf/dl-minimal.c:__rtld_malloc_init_stubs [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+           10 ( 0.00%)  ./resource/../sysdeps/unix/sysv/linux/getrlimit64.c:getrlimit [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           10 ( 0.00%)  ???:0x0000000004002050 [???]
+            9 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/access.c:access [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            9 ( 0.00%)  ./io/../sysdeps/unix/sysv/linux/write.c:write [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            9 ( 0.00%)  ./setjmp/./setjmp/sigjmp.c:__sigjmp_save [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            9 ( 0.00%)  ./stdlib/../sysdeps/unix/sysv/linux/getrandom.c:getrandom [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            9 ( 0.00%)  ???:0x000000000483f000 [???]
+            8 ( 0.00%)  ./elf/../include/rtld-malloc.h:_dl_map_object_deps
+            8 ( 0.00%)  ./elf/../nptl/nptl-stack.h:__libc_early_init
+            8 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/brk.c:brk [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            8 ( 0.00%)  ./stdlib/./stdlib/exit.c:exit [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            8 ( 0.00%)  ./string/../include/rtld-malloc.h:strdup
+            8 ( 0.00%)  ???:onigenc_end [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+            7 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/dl-vdso-setup.h:dl_main
+            7 ( 0.00%)  ./elf/../sysdeps/x86_64/dl-hwcaps-subdirs.c:_dl_hwcaps_subdirs_active [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            7 ( 0.00%)  ./stdio-common/../libio/libioP.h:buffered_vfprintf
+            7 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wcscpy.c:wcscpy [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            7 ( 0.00%)  ???:0x000000000010b000 [???]
+            7 ( 0.00%)  ???:0x0000000004867000 [???]
+            7 ( 0.00%)  ???:0x00000000049146d0 [???]
+            7 ( 0.00%)  ???:onigenc_init [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+            6 ( 0.00%)  ./elf/../elf/dl-tls.c:_dl_count_modids [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            6 ( 0.00%)  ./elf/../include/list.h:__tls_init_tp
+            6 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/x86/cpu-features.c:init_cpu_features.constprop.0
+            6 ( 0.00%)  ./elf/../sysdeps/x86/dl-get-cpu-features.c:__x86_cpu_features [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            6 ( 0.00%)  ./posix/../sysdeps/unix/syscall-template.S:uname [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            6 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strlen.c:strlen [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            5 ( 0.00%)  ./elf/../include/rtld-malloc.h:_dl_init_paths
+            5 ( 0.00%)  ./elf/../include/rtld-malloc.h:fillin_rpath.isra.0
+            5 ( 0.00%)  ./elf/../sysdeps/generic/dl-debug.h:dl_main
+            5 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/dl-vdso.h:dl_main
+            5 ( 0.00%)  ./elf/../sysdeps/x86/dl-get-cpu-features.c:_dl_x86_init_cpu_features [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            5 ( 0.00%)  ./elf/./dl-main.h:dl_main
+            5 ( 0.00%)  ./elf/./elf/dl-audit.c:_dl_audit_preinit [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            5 ( 0.00%)  ./libio/./libio/fileops.c:_IO_do_write@@GLIBC_2.2.5 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            5 ( 0.00%)  ./posix/../sysdeps/unix/sysv/linux/_exit.c:_Exit [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            5 ( 0.00%)  ./stdlib/../stdlib/strtol.c:strtol [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            5 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-sse4_2.h:strcspn
+            5 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-sse4_2.h:strpbrk
+            5 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-sse4_2.h:strspn
+            5 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcasecmp.h:strcasecmp
+            5 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcasecmp.h:strcasecmp_l
+            5 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcasecmp.h:strncasecmp
+            5 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/ifunc-strcasecmp.h:strncasecmp_l
+            5 ( 0.00%)  ???:0x0000000000001070 [/usr/libexec/valgrind/vgpreload_core-amd64-linux.so]
+            5 ( 0.00%)  ???:0x00000000000012f0 [/usr/libexec/valgrind/vgpreload_core-amd64-linux.so]
+            5 ( 0.00%)  ???:0x0000000000003480 [/home/daniele/applications/data_redactor/prototypes/multi_pattern_matcher/profile_onigmo]
+            5 ( 0.00%)  ???:0x000000000000e2b0 [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+            5 ( 0.00%)  ???:0x000000000483f334 [???]
+            4 ( 0.00%)  ./elf/../include/rtld-malloc.h:open_verify.constprop.0
+            4 ( 0.00%)  ./elf/./elf/dl-debug.c:_dl_debug_state [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            4 ( 0.00%)  ./libio/./libio/libioP.h:_IO_cleanup
+            4 ( 0.00%)  ./libio/./libio/libioP.h:_IO_flush_all_lockp
+            4 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strncpy.c:strncpy [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            4 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strnlen.c:strnlen [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            4 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wcschr.c:wcschr [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            4 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wmemchr.c:wmemchr [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            4 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wmemset.c:wmemset [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            4 ( 0.00%)  ???:0x000000000010b9e8 [???]
+            4 ( 0.00%)  ???:0x00000000048901d8 [???]
+            4 ( 0.00%)  ???:onig_init [/usr/lib/x86_64-linux-gnu/libonig.so.5.2.0]
+            3 ( 0.00%)  ./elf/../include/rtld-malloc.h:_dl_allocate_tls_storage
+            3 ( 0.00%)  ./elf/../include/rtld-malloc.h:_dl_important_hwcaps
+            3 ( 0.00%)  ./elf/../sysdeps/generic/ldsodefs.h:_dl_start
+            3 ( 0.00%)  ./elf/../sysdeps/x86/dl-hwcap.h:_dl_important_hwcaps
+            3 ( 0.00%)  ./posix/../malloc/dynarray-skeleton.c:__unregister_atfork
+            3 ( 0.00%)  ./setjmp/../sysdeps/x86_64/bsd-_setjmp.S:_setjmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            3 ( 0.00%)  ./string/../sysdeps/x86/cacheinfo.c:__x86_cacheinfo [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            3 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memcpy.c:memcpy@@GLIBC_2.14 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            3 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memmove.c:memmove [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./elf/../elf/dl-sysdep.c:_dl_sysdep_start_cleanup [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+            2 ( 0.00%)  ./elf/../include/rtld-malloc.h:_dl_find_object_init
+            2 ( 0.00%)  ./elf/../include/rtld-malloc.h:init_tls
+            2 ( 0.00%)  ./elf/../include/rtld-malloc.h:open_verify.constprop.1
+            2 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/dl-osinfo.h:dl_main
+            2 ( 0.00%)  ./elf/../sysdeps/unix/sysv/linux/dl-sysdep.c:_dl_sysdep_start
+            2 ( 0.00%)  ./elf/../sysdeps/x86_64/dl-machine.h:_dl_fixup
+            2 ( 0.00%)  ./elf/../sysdeps/x86_64/dl-runtime.h:_dl_fixup
+            2 ( 0.00%)  ./elf/./setup-vdso.h:dl_main
+            2 ( 0.00%)  ./malloc/./malloc/arena.c:sysmalloc
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memchr.c:memchr [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memcmp.c:bcmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memrchr.c:memrchr [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/memset.c:memset [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/rawmemchr.c:rawmemchr [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/stpcpy.c:stpcpy [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/stpncpy.c:stpncpy [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strcasecmp.c:strcasecmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strcasecmp_l.c:strcasecmp_l [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strcat.c:strcat [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strchrnul.c:strchrnul [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strcpy.c:strcpy [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strcspn.c:strcspn [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strncase.c:strncasecmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strncase_l.c:strncasecmp_l [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strpbrk.c:strpbrk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strrchr.c:rindex [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/strspn.c:strspn [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wcscmp.c:wcscmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wcslen.c:wcslen [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wcsnlen.c:wcsnlen [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ./wcsmbs/../sysdeps/x86_64/multiarch/wmemcmp.c:wmemcmp [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            2 ( 0.00%)  ???:0x000000000010b150 [???]
+            2 ( 0.00%)  ???:0x000000000010b1d0 [???]
+            2 ( 0.00%)  ???:0x000000000010b1e0 [???]
+            2 ( 0.00%)  ???:0x000000000010b230 [???]
+            2 ( 0.00%)  ???:0x000000000010b260 [???]
+            2 ( 0.00%)  ???:0x0000000004002080 [???]
+            2 ( 0.00%)  ???:0x000000000483f040 [???]
+            2 ( 0.00%)  ???:0x0000000004867130 [???]
+            2 ( 0.00%)  ???:0x00000000049145f0 [???]
+            1 ( 0.00%)  ./debug/../sysdeps/x86_64/multiarch/memcpy_chk.c:__memcpy_chk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            1 ( 0.00%)  ./elf/../sysdeps/x86_64/dl-machine.h:_dl_sysdep_start
+            1 ( 0.00%)  ./string/../sysdeps/x86_64/multiarch/mempcpy.c:mempcpy [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
