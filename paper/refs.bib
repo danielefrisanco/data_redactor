@@ -1,6 +1,7 @@
 %% refs.bib — seeded from research_log.md §3 (bibliography) and §14.3 (key
-%% related work to cite). TODO: verify each entry's exact venue/pages/DOI before
-%% submission; some are placeholders pending a citation check.
+%% related work to cite). All entries verified 2026-06-18 against DBLP / arXiv /
+%% publisher records. The only entry currently \cited is patel2023blare;
+%% hybridsa2024, resharp2025, herczeg2014pcrejit are verified leads, uncited.
 
 %% ---- Foundational algorithms ----
 
@@ -48,35 +49,72 @@
   note      = {SIMD multi-pattern matcher; x86-only -- disqualified for our portability}
 }
 
+%% VERIFIED 2026-06-18 against the published PDF (jigneshpatel.org/publ/BLARE.pdf)
+%% and the ACM Reference Format on its first page. BLARE is the system name; the
+%% paper title is "Exploiting Structure in Regular Expression Queries".
 @article{patel2023blare,
-  author  = {Patel, others},
-  title   = {BLARE: TODO verify authors/title},
-  journal = {Proceedings of the ACM on Management of Data (PACMMOD/SIGMOD)},
+  author  = {Zhang, Ling and Deep, Shaleen and Floratou, Avrilia and
+             Gruenheid, Anja and Patel, Jignesh M. and Zhu, Yiwen},
+  title   = {Exploiting Structure in Regular Expression Queries},
+  journal = {Proceedings of the ACM on Management of Data (PACMMOD)},
+  volume  = {1},
+  number  = {2},
+  articleno = {152},
+  numpages  = {28},
   year    = {2023},
-  note    = {TODO verify. Closest structural cousin: extract-literal + confirm decomposition}
+  doi     = {10.1145/3589297},
+  note    = {System name: BLARE. Closest structural cousin:
+             extract-a-literal + confirm decomposition}
 }
 
-@inproceedings{hybridsa2024,
-  author    = {TODO},
-  title     = {HybridSA: GPU-accelerated Shift-And Multi-pattern Matching},
-  booktitle = {OOPSLA},
+%% The entries below are NOT currently cited anywhere in main.tex (confirmed by
+%% grepping \cite). Kept as research-log leads; verify remaining fields if cited.
+
+%% VERIFIED 2026-06-18: splashcon.org program page + doi.org + ACM DL fields.
+@article{hybridsa2024,
+  author    = {Le Glaunec, Alexis and Kong, Lingkun and Mamouras, Konstantinos},
+  title     = {HybridSA: GPU Acceleration of Multi-Pattern Regex Matching using
+               Bit Parallelism},
+  journal   = {Proceedings of the ACM on Programming Languages (PACMPL)},
+  volume    = {8},
+  number    = {OOPSLA2},
+  articleno = {331},
+  pages     = {1699--1728},
+  numpages  = {30},
   year      = {2024},
-  note      = {TODO verify authors/exact title/pages}
+  doi       = {10.1145/3689771},
+  note      = {OOPSLA 2024. Not currently cited.}
 }
 
-@inproceedings{resharp2025,
-  author    = {TODO},
-  title     = {RE\#: Derivative-based Regex with Linear-time Guarantees},
-  booktitle = {POPL},
+%% VERIFIED 2026-06-18: arXiv:2407.20479 + published DOI 10.1145/3704837
+%% (PACMPL Vol. 9, POPL 2025) + ACM DL fields.
+@article{resharp2025,
+  author    = {Varatalu, Ian Erik and Veanes, Margus and Ernits, Juhan-Peep},
+  title     = {RE\#: High Performance Derivative-Based Regex Matching with
+               Intersection, Complement and Lookarounds},
+  journal   = {Proceedings of the ACM on Programming Languages (PACMPL)},
+  volume    = {9},
+  number    = {POPL},
+  articleno = {54},
+  numpages  = {32},
   year      = {2025},
-  note      = {TODO verify authors/exact title/pages}
+  doi       = {10.1145/3704837},
+  note      = {POPL 2025; also arXiv:2407.20479. Not currently cited.}
 }
 
-@inproceedings{zherczeg_pcrejit,
-  author = {Z{\'a}herczeg, Zolt{\'a}n},
-  title  = {The PCRE JIT Compiler},
-  year   = {TODO},
-  note   = {TODO verify venue/year. PCRE JIT design; ~6.36x avg vs interpreter}
+%% VERIFIED 2026-06-18 via DBLP (Zolt\'an Herczeg) and the CGO 2014 proceedings.
+%% Note the corrected key spelling: the author is Herczeg, not "Z\'aherczeg".
+@inproceedings{herczeg2014pcrejit,
+  author    = {Herczeg, Zolt{\'a}n},
+  title     = {Extending the PCRE Library with Static Backtracking Based
+               Just-in-Time Compilation Support},
+  booktitle = {Proceedings of the 12th Annual IEEE/ACM International Symposium
+               on Code Generation and Optimization (CGO)},
+  pages     = {306--315},
+  year      = {2014},
+  doi       = {10.1145/2544137.2544146},
+  note      = {PCRE JIT design (static backtracking + SLJIT back-end).
+               Not currently cited.}
 }
 
 %% ---- Tools / engines referenced (not necessarily cited) ----
