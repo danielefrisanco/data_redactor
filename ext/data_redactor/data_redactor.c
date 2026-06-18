@@ -68,9 +68,11 @@ void Init_data_redactor(void) {
     rb_define_const(mDataRedactor, "BUILTIN_PATTERN_BOUNDARY", rb_ary_freeze(builtin_boundary));
 
     /* Placeholder mode constants. */
-    rb_define_const(mDataRedactor, "PH_MODE_PLAIN",  INT2NUM(PLACEHOLDER_MODE_PLAIN));
-    rb_define_const(mDataRedactor, "PH_MODE_TAGGED", INT2NUM(PLACEHOLDER_MODE_TAGGED));
-    rb_define_const(mDataRedactor, "PH_MODE_HASH",   INT2NUM(PLACEHOLDER_MODE_HASH));
+    rb_define_const(mDataRedactor, "PH_MODE_PLAIN",         INT2NUM(PLACEHOLDER_MODE_PLAIN));
+    rb_define_const(mDataRedactor, "PH_MODE_TAGGED",        INT2NUM(PLACEHOLDER_MODE_TAGGED));
+    rb_define_const(mDataRedactor, "PH_MODE_HASH",          INT2NUM(PLACEHOLDER_MODE_HASH));
+    rb_define_const(mDataRedactor, "PH_MODE_LENGTH",        INT2NUM(PLACEHOLDER_MODE_LENGTH));
+    rb_define_const(mDataRedactor, "PH_MODE_TAGGED_LENGTH", INT2NUM(PLACEHOLDER_MODE_TAGGED_LENGTH));
 
     /* Tag bitmask values used by the Ruby wrapper to build only/except masks. */
     rb_define_const(mDataRedactor, "TAG_CREDENTIALS", INT2NUM(TAG_CREDENTIALS));

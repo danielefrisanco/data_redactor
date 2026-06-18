@@ -3,9 +3,11 @@
 
 #include <stddef.h>
 
-#define PLACEHOLDER_MODE_PLAIN  0  /* use ph.str verbatim                  */
-#define PLACEHOLDER_MODE_TAGGED 1  /* "[REDACTED:TAGNAME]"                 */
-#define PLACEHOLDER_MODE_HASH   2  /* "[TAGNAME_xxxx]" (4-hex djb2 suffix) */
+#define PLACEHOLDER_MODE_PLAIN         0  /* use ph.str verbatim                  */
+#define PLACEHOLDER_MODE_TAGGED        1  /* "[REDACTED:TAGNAME]"                 */
+#define PLACEHOLDER_MODE_HASH          2  /* "[TAGNAME_xxxx]" (4-hex djb2 suffix) */
+#define PLACEHOLDER_MODE_LENGTH        3  /* "[REDACTED:16]" (byte-length)        */
+#define PLACEHOLDER_MODE_TAGGED_LENGTH 4  /* "[REDACTED:TAGNAME:16]"              */
 
 typedef struct {
     int         mode;

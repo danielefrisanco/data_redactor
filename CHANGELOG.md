@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Length-aware placeholder modes.** `placeholder: :length` replaces each match
+  with `[REDACTED:N]` and `placeholder: :tagged_length` with `[REDACTED:TAGNAME:N]`,
+  where `N` is the **byte length** of the redacted value. Readers can gauge what
+  was there without seeing it. Both compose with `only:`/`except:` and are
+  forwarded by `redact_deep`, `redact_json`, and the integrations. Additive —
+  two new values for the existing `placeholder:` keyword; no behaviour changes.
+
 ## [0.15.0] - 2026-06-17
 
 ### Changed
