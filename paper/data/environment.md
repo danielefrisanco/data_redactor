@@ -23,20 +23,25 @@ section is reproducible.
 - libpcre2 10.39-3ubuntu0.1 (PCRE2 JIT baseline)
 
 ## Timing caveats (disclose in paper)
-- **Two runs exist.** (1) DRAFT: 2026-06-14, iters=10/reps=5, shared laptop with
-  other apps running, `powersave`. (2) CLEAN: 2026-06-14, iters=10/reps=10,
-  machine otherwise idle, frequency cap removed. The CLEAN run is the one whose
-  numbers the paper should use.
-- **CPU governor on the CLEAN run.** `performance` was requested
-  (`cpupower frequency-set -g performance`) but on this AMD `amd-pstate` system the
-  kernel kept reporting `powersave` (only `powersave`/`performance` are offered and
-  the active-mode driver did not honor the switch). In practice cores boost to
-  ~4.7 GHz under load (observed; policy max 4.77 GHz). Mitigation: the headline
-  metric is **ms_min over reps**, which captures the best (fully-boosted) reps and
-  discards downclocked ones, so per-rep frequency wander is largely filtered.
-  median/mean are also recorded to show spread.
+- **Runs.** (1) CLEAN (fast engines): 2026-06-14, iters=10/reps=10, machine
+  otherwise idle, performance clock. (2) glibc baseline (performance):
+  `density_sweep_glibc_perf.csv`, 2026-06-18, iters=10/reps=10, machine idle,
+  governor verified at `performance` (16 cores), cores at ~4.6-4.7 GHz under load.
+  These two together are the numbers the paper uses, at one consistent operating
+  point. An older DRAFT (`density_sweep_draft.csv`, iters=10/reps=5, shared laptop,
+  power-saving) is retained for provenance only and is no longer used by the table
+  or figures.
+- **CPU governor.** On this AMD `amd-pstate` (active, `amd-pstate-epp`) system, the
+  cores run at full clock (~4.7 GHz under load; policy max 4.77 GHz) at the
+  performance operating point. For the CLEAN fast-engine run the governor readout
+  showed `powersave` but the silicon boosted to ~4.7 GHz under load (i.e. effectively
+  performance, confirmed by the per-scan times); for the 2026-06-18 glibc run the
+  governor was explicitly switched to `performance` and verified across all 16 cores.
+  Headline metric is **ms_min over reps**, which captures the best (fully-boosted)
+  reps; median/mean are recorded to show spread.
 - The CROSSOVER SHAPE is robust regardless (all engines run in one process under
-  identical conditions); only absolute ms carry the governor caveat.
+  identical conditions); only absolute ms carry any governor sensitivity, and the
+  ordering/crossover were identical under the older power-saving draft.
 - Laptop part (mobile Ryzen): thermal throttling possible on long runs. Sweep
   inits/frees each engine per stride to avoid one engine's heat biasing the next.
 - Single-process, single-thread timing (GVL held); the GVL-release / parallelism

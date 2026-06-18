@@ -10,19 +10,16 @@ Produces, from one (or two) CSV(s):
 Headline metric is ms_min (least scheduler/GC noise; see environment.md). The
 figure also shows the median band so the spread is visible.
 
-TWO OPERATING POINTS. The fast engines come from the CLEAN run (--csv: machine
-idle, reps=10). The glibc-regexec baseline is the slow incumbent reproduction;
-re-running it at the densest strides is prohibitively long (research_log §8.5,
-environment.md), so we reuse the DRAFT run for it (--baseline-csv: shared laptop,
-powersave, reps=5). This is honest and even useful: the baseline is so far behind
-that the *shape* — incumbent buried far above every shippable engine — is the same
-under powersave, and "still slow even when the fast engines had MORE resources"
-only strengthens the gap. The two-operating-point provenance is disclosed in
-environment.md and the figure caption.
+ONE OPERATING POINT. Both the fast engines (--csv: CLEAN run, machine idle,
+reps=10) and the glibc-regexec baseline (--baseline-csv: density_sweep_glibc_perf.csv,
+reps=10) were measured at the performance operating point (cores boosting to
+~4.7 GHz under load on this amd-pstate system; see environment.md). The earlier
+powersave draft (density_sweep_draft.csv) is kept in the repo for provenance but is
+no longer used by the table or figure.
 
 Usage:
   python3 paper/plot_density_sweep.py [--csv paper/data/density_sweep.csv] \\
-      [--baseline-csv paper/data/density_sweep_draft.csv]
+      [--baseline-csv paper/data/density_sweep_glibc_perf.csv]
 """
 import argparse
 import os
@@ -50,7 +47,7 @@ DATA_DIR = os.path.join(HERE, "data")
 # NOT on this curve; it must be measured separately (see paper/README.md TODO).
 ENGINES = {
     "ruby":           ("pure-Ruby gsub",        dict(color="#888888", ls="--", marker="")),
-    "glibc_baseline": ("glibc regexec (pre-v19 repro., powersave draft)", dict(color="#000000", ls="-", marker="x")),
+    "glibc_baseline": ("glibc regexec (pre-v19 repro.)", dict(color="#000000", ls="-", marker="x")),
     "c_today":        ("v19 in-gem (DataRedactor.redact)", dict(color="#ee7733", ls="-", marker="D")),
     "onigmo":         ("Onigmo (BM pre-filter)",dict(color="#117733", ls="-.", marker="")),
     "v7_pipeline":    ("AC+BM+PCRE2 JIT pipeline", dict(color="#cc3311", ls="-", marker="o")),
@@ -224,8 +221,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=DEF_CSV)
     ap.add_argument("--baseline-csv",
-                    default=os.path.join(DATA_DIR, "density_sweep_draft.csv"),
-                    help="CSV supplying glibc_baseline rows (powersave draft); "
+                    default=os.path.join(DATA_DIR, "density_sweep_glibc_perf.csv"),
+                    help="CSV supplying glibc_baseline rows (performance run); "
                          "see module docstring")
     args = ap.parse_args()
     if not os.path.exists(args.csv):
