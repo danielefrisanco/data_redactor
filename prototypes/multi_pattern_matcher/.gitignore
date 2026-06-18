@@ -8,10 +8,15 @@
 matcher*
 bench_*
 smoke*
+profile_*
+callgrind.out.*
+callgrind.log.*
 
 !*.c
 !*.h
 !*.rb
+!*.sh
+!*.py
 !Makefile
 !.gitignore
 
