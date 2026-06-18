@@ -233,6 +233,36 @@ what shipped on the way:
 
 ---
 
+## Paper (`paper/`, research/experience report)
+
+The paper is about the *work* — replacing the redaction engine under production
+constraints — not a gem changelog. Sole author; Claude used as a directed instrument
+(disclosed, not credited). Draft is `paper/main.tex` (acmart, ~14 pp, builds clean).
+
+- **Benchmark rigor + one operating point (2026-06-18).** Hardware/OS/Ruby/glibc
+  versions pinned in `paper/data/environment.md`. The original headline table spliced
+  two operating points (fast engines at performance-clock-under-boost, glibc baseline
+  at an older powersave draft) and carried a caveat. We re-ran the slow glibc baseline
+  at a verified `performance` governor (`density_sweep_glibc_perf.csv`, reps=10) so the
+  table is a single consistent comparison; the powersave draft is retained for
+  provenance only. The re-run confirmed the baseline was understated by ~1.1–1.5× under
+  powersave but changed no conclusion — glibc stays ~an order of magnitude above every
+  shippable engine, and the crossover/ordering were identical under both clocks.
+- **Profiling evidence (Callgrind).** Instruction-attribution study
+  (`prototypes/.../profile_*`) that *disproved* the original "allocation is the
+  bottleneck" account: glibc cost is automaton eval (~73%) + per-call search setup
+  (~26%), allocation <1%. The paper reports the corrected, measured account; the
+  override is recorded in the AI-use appendix.
+- **Bibliography verified (2026-06-18).** Every entry checked against DBLP / arXiv /
+  publisher: BLARE (PACMMOD 2023), HybridSA (OOPSLA 2024), RE\# (POPL 2025), PCRE-JIT
+  (Herczeg, CGO 2014). Only BLARE is cited; the rest are verified leads kept uncited.
+- **Drafting complete.** All sections written; AI-use methodology appendix +
+  acknowledgments disclosure; affiliation/CCS metadata; prototype-vs-in-gem
+  reconciliation; plain-language opener + a glossary of engines/terms. Open: arXiv
+  post, S:P&E submission, a final readability pass (see TODO.md "Paper").
+
+---
+
 ## Promotion (done)
 RubyGems push (0.5.0, 2026-05-08); GitHub repo topics; Shields.io badges; YARD docs;
 README thread-safety note; `examples/` (8 runnable scripts + index README,
