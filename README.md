@@ -103,9 +103,18 @@ DataRedactor.redact(text, placeholder: :hash)
 # "user@example.com"  → "[CONTACT_3d7a]"
 # "user@example.com"  → "[CONTACT_3d7a]"  (same every time)
 # "other@example.com" → "[CONTACT_91fc]"  (different value, different hash)
+
+# Length — embeds the byte length of the redacted value, so readers can
+# gauge what was there without seeing it.
+DataRedactor.redact(text, placeholder: :length)
+# "user@example.com"  → "[REDACTED:16]"
+
+# Tagged length — tag name plus byte length.
+DataRedactor.redact(text, placeholder: :tagged_length)
+# "user@example.com"  → "[REDACTED:CONTACT:16]"
 ```
 
-All three modes compose with `only:` and `except:`:
+All modes compose with `only:` and `except:`:
 
 ```ruby
 DataRedactor.redact(text, only: :contact, placeholder: :tagged)

@@ -863,6 +863,33 @@ RSpec.describe DataRedactor do
       end
     end
 
+    describe ":length placeholder" do
+      it "replaces with [REDACTED:N] where N is the byte length" do
+        result = DataRedactor.redact(email, placeholder: :length)
+        expect(result).to eq("[REDACTED:#{email.bytesize}]")
+        expect(result).not_to include(email)
+      end
+
+      it "uses each match's own length" do
+        result = DataRedactor.redact("#{email} #{aws}", placeholder: :length)
+        expect(result).to eq("[REDACTED:#{email.bytesize}] [REDACTED:#{aws.bytesize}]")
+      end
+    end
+
+    describe ":tagged_length placeholder" do
+      it "replaces with [REDACTED:TAGNAME:N]" do
+        result = DataRedactor.redact(email, placeholder: :tagged_length)
+        expect(result).to eq("[REDACTED:CONTACT:#{email.bytesize}]")
+        expect(result).not_to include(email)
+      end
+
+      it "uses the correct tag and length for each pattern" do
+        result = DataRedactor.redact("#{email} #{aws}", placeholder: :tagged_length)
+        expect(result).to include("[REDACTED:CONTACT:#{email.bytesize}]")
+        expect(result).to include("[REDACTED:CREDENTIALS:#{aws.bytesize}]")
+      end
+    end
+
     describe "validation" do
       it "raises ArgumentError for an invalid placeholder value" do
         expect { DataRedactor.redact(email, placeholder: 42) }

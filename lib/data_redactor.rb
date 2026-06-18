@@ -23,8 +23,10 @@ require_relative "data_redactor/name_pattern"
 #
 # @example Custom placeholder
 #   DataRedactor.redact(text, placeholder: "***")
-#   DataRedactor.redact(text, placeholder: :tagged) # => "[REDACTED:CONTACT]"
-#   DataRedactor.redact(text, placeholder: :hash)   # => "[CONTACT_a3f9]"
+#   DataRedactor.redact(text, placeholder: :tagged)        # => "[REDACTED:CONTACT]"
+#   DataRedactor.redact(text, placeholder: :hash)          # => "[CONTACT_a3f9]"
+#   DataRedactor.redact(text, placeholder: :length)        # => "[REDACTED:16]"
+#   DataRedactor.redact(text, placeholder: :tagged_length) # => "[REDACTED:CONTACT:16]"
 #
 # @example Audit / dry-run
 #   DataRedactor.scan(text)
@@ -125,12 +127,15 @@ module DataRedactor
   #   and/or pattern name(s).
   # @param except [Symbol, String, Array, nil] exclude the given tag(s)
   #   and/or pattern name(s). May be combined with +only:+.
-  # @param placeholder [String, :tagged, :hash] replacement strategy.
-  #   A String is used verbatim. +:tagged+ produces +[REDACTED:TAGNAME]+.
-  #   +:hash+ produces a deterministic +[TAGNAME_xxxx]+ token (4-hex djb2)
-  #   so the same input value always maps to the same token.
+  # @param placeholder [String, :tagged, :hash, :length, :tagged_length]
+  #   replacement strategy. A String is used verbatim. +:tagged+ produces
+  #   +[REDACTED:TAGNAME]+. +:hash+ produces a deterministic +[TAGNAME_xxxx]+
+  #   token (4-hex djb2) so the same input value always maps to the same token.
+  #   +:length+ produces +[REDACTED:N]+ and +:tagged_length+ produces
+  #   +[REDACTED:TAGNAME:N]+, where +N+ is the byte length of the redacted value.
   # @return [String] a new string with every match replaced.
-  # @raise [ArgumentError] if +placeholder:+ is not a String/:tagged/:hash.
+  # @raise [ArgumentError] if +placeholder:+ is not a String/:tagged/:hash/
+  #   :length/:tagged_length.
   # @raise [UnknownTagError] if any Symbol in +only:+/+except:+ is not in {TAGS}.
   # @raise [UnknownPatternError] if any String in +only:+/+except:+ is not in {pattern_names}.
   #
@@ -194,7 +199,7 @@ module DataRedactor
   #   Any type is accepted; non-String scalars are returned as-is.
   # @param only [Symbol, String, Array, nil] forwarded to {redact}.
   # @param except [Symbol, String, Array, nil] forwarded to {redact}.
-  # @param placeholder [String, :tagged, :hash] forwarded to {redact}.
+  # @param placeholder [String, :tagged, :hash, :length, :tagged_length] forwarded to {redact}.
   # @return [Hash, Array, String, Object] a new structure of the same shape
   #   with all String leaves redacted.
   # @raise [ArgumentError] if the structure contains a circular reference.
@@ -217,7 +222,7 @@ module DataRedactor
   # @param json_string [String] valid JSON input.
   # @param only [Symbol, String, Array, nil] forwarded to {redact}.
   # @param except [Symbol, String, Array, nil] forwarded to {redact}.
-  # @param placeholder [String, :tagged, :hash] forwarded to {redact}.
+  # @param placeholder [String, :tagged, :hash, :length, :tagged_length] forwarded to {redact}.
   # @return [String] a JSON string with all String values redacted.
   # @raise [JSON::ParserError] if +json_string+ is not valid JSON.
   #
@@ -425,17 +430,20 @@ module DataRedactor
   # Translate the user-facing +placeholder:+ value into the +(mode_int, str)+
   # pair the C layer expects.
   #
-  # @param placeholder [String, :tagged, :hash]
+  # @param placeholder [String, :tagged, :hash, :length, :tagged_length]
   # @return [Array(Integer, String)]
   # @raise [ArgumentError] if +placeholder+ is none of the accepted values.
   def resolve_placeholder(placeholder)
     case placeholder
-    when :tagged then [PH_MODE_TAGGED, ""]
-    when :hash   then [PH_MODE_HASH,   ""]
-    when String  then [PH_MODE_PLAIN,  placeholder]
+    when :tagged        then [PH_MODE_TAGGED,        ""]
+    when :hash          then [PH_MODE_HASH,          ""]
+    when :length        then [PH_MODE_LENGTH,        ""]
+    when :tagged_length then [PH_MODE_TAGGED_LENGTH, ""]
+    when String         then [PH_MODE_PLAIN,         placeholder]
     else
       raise ArgumentError,
-        "placeholder must be a String, :tagged, or :hash — got #{placeholder.inspect}"
+        "placeholder must be a String, :tagged, :hash, :length, or :tagged_length " \
+        "— got #{placeholder.inspect}"
     end
   end
 

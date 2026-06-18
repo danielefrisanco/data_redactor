@@ -20,6 +20,10 @@ size_t write_placeholder(char *buf, const placeholder_t *ph,
             unsigned int h = djb2(match, match_len) & 0xFFFF;
             return (size_t)sprintf(buf, "[%s_%04x]", ph->str, h);
         }
+        case PLACEHOLDER_MODE_LENGTH:
+            return (size_t)sprintf(buf, "[REDACTED:%zu]", match_len);
+        case PLACEHOLDER_MODE_TAGGED_LENGTH:
+            return (size_t)sprintf(buf, "[REDACTED:%s:%zu]", ph->str, match_len);
         default: /* PLACEHOLDER_MODE_PLAIN */
             {
                 size_t len = strlen(ph->str);
@@ -29,11 +33,17 @@ size_t write_placeholder(char *buf, const placeholder_t *ph,
     }
 }
 
+/* Widest decimal a size_t byte-length can print to (UINT64_MAX is 20 digits). */
+#define MAX_LEN_DIGITS 20
+
 size_t max_placeholder_len(const placeholder_t *ph) {
     size_t tag_len = strlen(ph->str);
     switch (ph->mode) {
         case PLACEHOLDER_MODE_TAGGED: return 2 + 9 + tag_len + 1; /* "[REDACTED:" + tag + "]" */
         case PLACEHOLDER_MODE_HASH:   return 1 + tag_len + 1 + 4 + 1; /* "[" + tag + "_" + 4hex + "]" */
+        case PLACEHOLDER_MODE_LENGTH: return 10 + MAX_LEN_DIGITS + 1; /* "[REDACTED:" + digits + "]" */
+        case PLACEHOLDER_MODE_TAGGED_LENGTH:
+            return 10 + tag_len + 1 + MAX_LEN_DIGITS + 1; /* "[REDACTED:" + tag + ":" + digits + "]" */
         default:                      return tag_len;
     }
 }

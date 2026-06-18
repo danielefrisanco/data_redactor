@@ -41,6 +41,14 @@ Project-specific rules for Claude Code. These override Claude's defaults.
 
 ---
 
+## TODO / DONE
+
+- `TODO.md` holds **open work only**. When a TODO item ships, **move it out of `TODO.md` and into `DONE.md`** in the same commit as the feature — delete the open entry, add a done entry noting the version it shipped in.
+- `DONE.md` keeps the *rationale and research narrative* (the "why"), not a line-by-line log — that's `CHANGELOG.md`. Match the format of the surrounding entries (e.g. the "Roadmap items shipped" list).
+- Do not leave a shipped item sitting in `TODO.md` marked done; the file is for what's still open.
+
+---
+
 ## Code style
 
 ### General

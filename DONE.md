@@ -146,6 +146,11 @@ rewrite needed.
   execution after built-ins.
 - **Configurable placeholder (0.4.0)** — plain `"***"`, `:tagged`
   (`[REDACTED:CONTACT]`), `:hash` (`[CONTACT_a3f9]`, djb2).
+- **Length-aware placeholder (0.15.1)** — `:length` (`[REDACTED:16]`) and
+  `:tagged_length` (`[REDACTED:CONTACT:16]`), where the number is the byte length
+  of the core match (boundary chars excluded, consistent with `:hash`). Two new
+  `placeholder_t` modes, one `sprintf` each; additive values on the existing
+  `placeholder:` keyword — patch bump, no API/behaviour change.
 - **Report / dry-run mode (0.5.0)** — `scan` returns `{ redacted:, matches: [...] }`
   with byte offsets into the original string.
 - **Pattern-level allowlist (0.6.0)** — `only:`/`except:` accept Symbols (tags) and

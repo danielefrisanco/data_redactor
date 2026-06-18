@@ -115,13 +115,6 @@ Flat `key: value` YAML already ships. Not yet handled:
 - Flow mappings: `{ password: secret, ... }` (terminator is `,`/`}`).
 - `=>` (hashrocket) separator — only `=` and `:` shipped. Add if requested.
 
-### Length-aware placeholder
-- `placeholder: :length` → `[REDACTED:16]`
-- `placeholder: :tagged_length` → `[REDACTED:CONTACT:16]`
-
-`write_placeholder` already receives `match` + `match_len`; each mode is one
-`sprintf` plus the Ruby symbol dispatch in `resolve_placeholder`.
-
 ### Rack `:env_logs` surface
 Scrub `PATH_INFO` / `QUERY_STRING` for downstream access loggers. Deferred — needs
 to wrap the upstream logger rather than mutate env, which has blocked the design.
