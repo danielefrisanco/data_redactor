@@ -36,6 +36,7 @@ iters    = 10     # timed scans per rep (matches bench_realistic ITERS)
 reps     = 5      # reps per (stride, engine); we report min/median/mean across reps
 quick    = false
 skip     = []     # engine names to exclude (e.g. --skip glibc_baseline)
+only     = []     # if non-empty, run ONLY these engines (e.g. --only glibc_baseline)
 ARGV.each_with_index do |a, i|
   case a
   when "--csv"   then csv_path = ARGV[i + 1]
@@ -43,6 +44,7 @@ ARGV.each_with_index do |a, i|
   when "--reps"  then reps  = Integer(ARGV[i + 1])
   when "--quick" then quick = true
   when "--skip"  then skip = ARGV[i + 1].to_s.split(",")
+  when "--only"  then only = ARGV[i + 1].to_s.split(",")
   end
 end
 
@@ -202,6 +204,7 @@ rows = []
 rows << %w[stride hits_per_kb bytes engine ms_min ms_median ms_mean iters reps]
 
 run_order = ENGINE_ORDER.reject { |n| skip.include?(n) }
+run_order = run_order.select { |n| only.include?(n) } unless only.empty?
 $stderr.puts "Density sweep — #{STRIDES.length} strides × #{run_order.length} engines"
 $stderr.puts "iters=#{iters} reps=#{reps} target=#{TARGET_BYTES} bytes seed=42"
 $stderr.puts "skipped: #{skip.empty? ? '(none)' : skip.join(', ')}"

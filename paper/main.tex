@@ -4,9 +4,8 @@
 %% Build: `make` (needs texlive + latexmk; see paper/Makefile). Not yet compiled
 %% locally — toolchain not installed at scaffold time.
 %%
-%% Structure follows paper/README.md §7. Section bodies are stubs marked TODO;
-%% the figures, the generated table, and the bibliography are already wired so the
-%% scaffold compiles to a real skeleton once a toolchain exists.
+%% Structure follows paper/README.md §7. All section bodies are drafted; figures,
+%% generated tables, and the bibliography are wired and the document compiles.
 \documentclass[acmsmall,nonacm,screen]{acmart}
 
 %% nonacm: this is a preprint, not an ACM-copyright submission. Drop for a real
@@ -21,19 +20,18 @@
 \title{The Fastest Engine Is Not the Shippable Engine: Replacing a
 Regex Engine for Data Redaction Under Production Constraints}
 
-%% Sole author + AI disclosure (paper/README.md §4). Fill affiliation/email.
+%% Sole author + AI disclosure (paper/README.md §4).
 \author{Daniele Frisanco}
 \affiliation{%
-  \institution{TODO: affiliation}
-  \country{TODO}}
+  \institution{Independent Researcher}
+  \country{Italy}}
 \email{daniele.frisanco@gmail.com}
 
 \renewcommand{\shortauthors}{Frisanco}
 
 \begin{abstract}
-%% Opener locked in paper/README.md §1 (draft B). Keep the four constraints and
-%% the "performance objective subject to constraints" shape. TODO: tighten to
-%% ~150 words and add the headline result once the clean re-run lands.
+%% Opener locked in paper/README.md §1 (draft B): the four constraints and the
+%% "performance objective subject to constraints" shape, with the headline result.
 We report on replacing the regex engine behind a data-redaction library to
 improve performance under four production constraints---zero runtime
 dependencies, byte-for-byte-identical output to the incumbent, robustness across
@@ -44,11 +42,50 @@ multi-pattern matching does not hold across densities; the best shippable design
 is a per-pattern lazy DFA with two domain-specific merges.
 \end{abstract}
 
-%% TODO: pick CCS concepts + keywords near submission.
+%% CCS concepts. Generated to match the ACM CCS 2012 taxonomy; regenerate via
+%% https://dl.acm.org/ccs if a reviewer wants the official tool output. Concept
+%% IDs below are the canonical ones for these paths.
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10003752.10003766.10003770</concept_id>
+       <concept_desc>Theory of computation~Regular languages</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10011007.10011074.10011099.10011102.10011103</concept_id>
+       <concept_desc>Software and its engineering~Software performance</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10002978.10003014.10003017</concept_id>
+       <concept_desc>Security and privacy~Data anonymization and sanitization</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Theory of computation~Regular languages}
+\ccsdesc[500]{Software and its engineering~Software performance}
+\ccsdesc[300]{Security and privacy~Data anonymization and sanitization}
+
 \keywords{regular expressions, multi-pattern matching, data redaction,
 lazy DFA, performance engineering, Ruby C extensions}
 
 \maketitle
+
+\noindent\emph{In plain terms.} This paper is about the search engine inside a
+data-redaction library: a tool that scans text for secrets and personal data---API
+keys, bank account numbers, national identifiers---and replaces each with a
+placeholder before the text is logged, stored, or shared. The library recognizes a
+fixed, curated catalogue of such token types, not arbitrary user-supplied patterns,
+and must do so fast, on every line a system produces. We replace that engine, and the
+central finding is that the \emph{fastest} available engine is not the one a real
+library can ship: a shippable engine must also add no dependencies, reproduce the
+previous engine's output exactly, and stay correct under concurrency---each of which
+rules out a faster option. What follows is the story of finding the fastest engine
+that meets all three. A glossary of the engines and terms used appears at the end of
+\S\ref{sec:background}.
 
 \section{Introduction}
 \label{sec:intro}
@@ -152,6 +189,43 @@ differences favor the interpreted path decisively. The redaction engine's job is
 therefore to combine a fast multi-pattern filter with an exact confirmation step
 that does not pay either of glibc's costs---which is the design space the prototype
 search explores (\S\ref{sec:method}).
+
+\paragraph{Glossary.} The terms and engines used throughout:
+\begin{description}
+\setlength{\itemsep}{0pt}
+  \item[Redaction] Replacing each sensitive token in text with a placeholder.
+  \item[Pattern] A rule recognizing one class of sensitive token (e.g.\ an IBAN).
+  \item[Match density] Sensitive tokens per KB of text; the input axis the library
+    cannot control.
+  \item[IBAN] International Bank Account Number; a structured token type redacted here.
+  \item[PEM] The text wrapper around private-key blocks (\texttt{-----BEGIN\ldots}).
+  \item[NFA / DFA] Nondeterministic / deterministic finite automaton---the two
+    standard regex execution models; a DFA has one active state at a time, an NFA may
+    track many.
+  \item[Lazy DFA] A DFA whose states are built on demand during the scan rather than
+    all up front.
+  \item[Aho--Corasick] A classic algorithm that scans for many fixed strings at once
+    in a single pass; used here as a literal pre-filter.
+  \item[Boyer--Moore] A single-string search algorithm that skips ahead on mismatch;
+    the host engine's literal pre-filter.
+  \item[Literal pre-filter] A fast scan for fixed substrings that skips positions
+    which cannot match, fronting a slower engine.
+  \item[glibc \texttt{regexec}] The POSIX C-library regex function; the incumbent
+    engine being replaced.
+  \item[Onigmo] The regex engine inside Ruby; the interpreted baseline.
+  \item[PCRE2] Perl-Compatible Regular Expressions (v2), a widely used regex library
+    with a JIT backend.
+  \item[RE2] Google's automaton-based regex library (referenced for its multi-pattern
+    \texttt{Set} state-explosion limit).
+  \item[JIT] Just-in-time compilation; PCRE2's JIT compiles patterns to native code,
+    the fastest engine measured but dependency-disqualified.
+  \item[GVL] Ruby's Global VM Lock; releasing it lets other threads run during a C
+    call, but only if the C code is re-entrant.
+  \item[Oracle / exact output (Gate~2)] The previous engine's output, which the
+    replacement must reproduce byte-for-byte.
+  \item[Selective merge] Combining a few patterns into one pass only where their
+    structure makes it exactly safe.
+\end{description}
 
 \section{The Constraint Box}
 \label{sec:constraints}
@@ -332,12 +406,9 @@ to replace.
   \caption{Time per scan vs.\ match density (log--log), all engines. The
   reproduced pre-v19 glibc \texttt{regexec} engine sits roughly an order of
   magnitude above every shippable engine---slower than the pure-Ruby
-  \texttt{gsub} loop it was meant to beat. \emph{Two operating points:} the
-  shippable engines are from a clean run (idle machine), while the glibc baseline
-  is reused from an earlier \texttt{powersave} run, as re-measuring the slow
-  incumbent across the dense strides is impractical (\S\ref{sec:discussion}); this
-  only understates the gap, since the fast engines ran with more CPU headroom than
-  the baseline.}
+  \texttt{gsub} loop it was meant to beat. All engines, including the glibc
+  baseline, are measured at the same operating point (idle machine, performance
+  clock; see \S\ref{sec:discussion} and \texttt{environment.md}).}
   \label{fig:overview}
 \end{figure}
 
@@ -389,9 +460,9 @@ selected for worst-case density robustness must do.
 
 \begin{table}[t]
   \centering
-  \caption{Time per scan (ms, min of reps) at selected densities. Shippable
-  engines from the clean run; the glibc baseline column is the \texttt{powersave}
-  draft (\S\ref{sec:discussion}). Generated by
+  \caption{Time per scan (ms, min of reps) at selected densities. All engines,
+  including the glibc baseline, measured at the same operating point (idle
+  machine, performance clock; \S\ref{sec:discussion}). Generated by
   \texttt{paper/plot\_density\_sweep.py}.}
   \label{tab:density}
   \resizebox{\linewidth}{!}{\input{data/density_table.tex}}
@@ -557,6 +628,22 @@ and one corpus, and we scope every such number accordingly. A reader may reasona
 expect a different crossover density on a different pattern mix; the direction of the
 effect is what we claim generally.
 
+\paragraph{From prototype bench to shipped path.} A standing risk in
+prototype-driven work is that the number that justified the design is measured in a
+harness the production system never executes. We checked this directly. The headline
+prototype speedups of the chosen engine over the host's Onigmo, measured in the
+standalone C harness against the fixed pattern table, are
+\(2.21\times\)/\(2.16\times\)/\(1.80\times\)/\(1.84\times\) for the sparse, medium,
+dense, and environment-variable payloads. Re-measured \emph{in the gem}, through the
+real \texttt{DataRedactor.redact} entry point after the port---string in, redacted
+string out, with the library's own allocation and pattern-resolution work on the
+path---the same payloads give \(2.33\times\)/\(2.30\times\)/\(1.75\times\)/\(1.82\times\).
+The two sets agree within measurement noise: the matcher is the same matcher, and the
+small shifts---tenths of a multiplier, in both directions---are the gem's per-call
+string allocation and pattern-resolution overhead, not a change in the engine. The
+point is not the second decimal place but that the prototype's verdict held when the
+engine moved onto the shipped path, where it is the number that actually reaches users.
+
 \paragraph{The exact-output target changed mid-project, on purpose.} Gate~2 demands
 byte-for-byte-identical output to a reference, but we revised the reference once,
 and the revision is worth stating plainly because it cuts against a naive reading of
@@ -588,18 +675,16 @@ code is no longer possible. We verified the reproduction finds the same matches 
 the current engine on a multi-pattern sample, and we state plainly that the baseline
 is a reproduction so that no reader mistakes it for the historical binary.
 
-\paragraph{Two operating points, and an un-rerun measurement.} The shippable
-engines are timed on an otherwise-idle machine; the glibc baseline is reused from an
-earlier run taken on a shared machine under a power-saving governor. We did not
-re-measure the baseline cleanly because its cost grows with density and dominated the
-sweep already, so a clean re-run across the dense strides is impractical---and we do
-not fabricate or extrapolate numbers we did not measure. This split is disclosed in
-every figure and the data record. It is conservative for our argument: the baseline
-sits about an order of magnitude above every shippable engine even though those
-engines ran with \emph{more} CPU headroom than it did, so the true gap is at least as
-large as shown. The same power-saving data doubles as a second operating point---the
-shippable engines stay fast and the crossover holds even under constrained CPU---which
-is a robustness observation rather than a flaw.
+\paragraph{One operating point.} All engines, including the slow glibc baseline,
+are timed on the same otherwise-idle machine at the performance clock (cores
+boosting to $\approx$\,4.7\,GHz under load on this \texttt{amd-pstate} system; see
+\texttt{environment.md}). An earlier draft measured the baseline under a power-saving
+governor and was kept only as a second operating point; we re-ran the baseline at the
+performance clock so the headline table is a single consistent comparison rather than
+a spliced one, and that draft is retained in the data record for provenance. As a
+robustness aside, the engine ordering and the crossover were identical under the
+power-saving draft---the conclusions never depended on the clock, only the absolute
+milliseconds did.
 
 \paragraph{Timing methodology.} We report the minimum per-rep time as the headline,
 which captures the least-contaminated reps and discards downclocked or
@@ -659,40 +744,112 @@ technique we did not use.
 
 \section{Conclusion}
 \label{sec:conclusion}
-Replacing the regex engine behind a data-redaction library is not a search for the
-fastest engine but for the fastest \emph{eligible} one. Three binary constraints
-(zero dependencies, byte-for-byte-identical output, thread-safety in a managed
-runtime) and a worst-case-over-density objective each rule out an option that wins on
-raw speed---the JIT engine, the merged single automaton, the fastest unsynchronized
-prototype. Within that box, two findings stood out: the conventional shared-literal
-pre-filter pipeline is, in our configuration, dominated by the same engine without it
-at every density and eventually slower than the interpreted loop it was meant to
-replace; and the design that actually ships is a per-pattern lazy DFA with two
-exactly-disjoint selective merges, kept re-entrant by splitting state---including the
-lazy cache---into shared and per-thread halves. The reusable lessons are method as
-much as result: measure across the input axis the use case cannot control, enforce
-exactness as a gate rather than an aspiration, and treat the constraints of the
-deployment target as first-class inputs to the algorithm choice. The full prototype
-search, including its dead ends, is the evidence for all three.
+The one idea to carry away is that engine replacement in production is a constrained
+search, not a benchmark: the fastest engine and the shippable engine are different
+objects, and the gap between them is set by the constraints---zero dependencies,
+exact output, thread-safety---not by raw speed. Treating those constraints as
+first-class inputs to the algorithm choice, rather than as deployment afterthoughts,
+is what turned an ``embarrassingly slow C extension'' into a tractable design problem
+with a clear answer.
+
+Two of the findings along the way are reusable beyond this library. The shared-literal
+pre-filter, the standard reflex for multi-pattern matching, is not free: its benefit
+is bounded by the positions it can reject, so it erodes with match density and, in our
+configuration, loses to the very engine it fronts at every density we measured. And a
+multi-pattern lazy-DFA matcher can be made re-entrant in a managed runtime by
+partitioning state into shared-immutable and per-thread halves---\emph{including the
+lazy cache the construction fills mid-scan}---which is the enabling step for releasing
+the interpreter lock safely.
+
+The boundaries are equally concrete. The shippable engine leans on two
+specializations that hold because the domain is a closed, curated catalogue: a
+pure-digit group and a unique-prefix IBAN union. On a pattern set without such
+exactly-disjoint structure those merges simply do not fire, and the engine falls back
+to its per-pattern core---so the result is a tailored fit to a known catalogue, not a
+general-purpose regex engine, and we present it as such.
+
+For a practitioner facing a similar replacement, the transferable method is the
+checklist this search became: measure across the input axis the use case cannot
+control, make exactness a gate rather than an aspiration, and decide eligibility
+before speed. The full prototype search, dead ends included, is the evidence that the
+order of those steps is what mattered.
 
 %% AI-use disclosure (paper/README.md §4).
 \begin{acks}
-The author used Claude (Anthropic) for drafting, literature triage, and
-code/benchmark implementation; the author reviewed and is responsible for all
-content.
+This paper, and the engineering it reports, were produced by the sole author
+working with Claude (Anthropic) as an instrument under the author's direction.
+The author set the hypotheses and the algorithmic approach, directed the
+research, benchmarking, and prototyping, and reviewed and is accountable for
+every claim and result. Appendix~\ref{app:method} gives the full account of how
+the tool was used and where the author's judgement overrode it.
 \end{acks}
 
 \section*{Data and artifact availability}
-The prototypes, benchmark and profiling harnesses, raw results, and figure/table
-generators are in the project repository. A self-contained Docker artifact
+The data\_redactor library, the prototypes, the benchmark and profiling harnesses,
+the raw results, and the figure/table generators are in the public project
+repository at \url{https://github.com/danielefrisanco/data_redactor}. A
+self-contained Docker artifact
 (\texttt{paper/repro/}) pins the toolchain of \S\ref{sec:eval} and regenerates the
 density sweep, the Callgrind instruction-attribution table (Table~\ref{tab:profile}),
 and the figures with a single command: \texttt{make -C paper/repro all}. Absolute
 timings depend on the host CPU; the qualitative results---the density crossover and
 the instruction attribution---are reproducible across machines, the latter exactly
-(it counts instructions, not cycles). The glibc baseline column of
-Table~\ref{tab:density} is the reused \texttt{powersave} draft and is not re-run by
-the artifact, as discussed in \S\ref{sec:discussion}.
+(it counts instructions, not cycles). The full sweep, including the slow glibc
+baseline, is regenerated by the artifact; an earlier power-saving draft of the
+baseline is retained in the data record for provenance (\S\ref{sec:discussion}).
+
+\appendix
+
+\section{How this work was produced}
+\label{app:method}
+
+This work was carried out by the sole author with a large language model (Claude,
+Anthropic) used as an instrument throughout. Because the tool's involvement was
+substantial, this appendix records what it did, what the author did, and where the
+two diverged, so the reader can calibrate trust in the results rather than guess at
+it. The short version: the author owns the hypotheses, the engineering decisions,
+and accountability for every number; the tool accelerated research, implementation,
+measurement, and writing under that direction.
+
+\paragraph{What the author set.} The author chose the problem and its constraints
+(the three binary gates and the all-density robustness objective of
+\S\ref{sec:constraints}), formed the central hypotheses---that a per-pattern lazy
+DFA could clear the pattern count where a single shared DFA could not, and that an
+extract-a-literal pre-filter pipeline would lose to a plain JIT at every density---and
+specified the algorithmic shape of the engine: a single left-to-right pass over the
+input that tests every pattern at each position, rather than the original scheme of
+one full scan of the string per pattern; the two selective merges; and the intuition
+for why only the pure-digit and IBAN subsets are safe to merge. These were the
+author's design commitments, stated before the experiments that tested them.
+
+\paragraph{What the tool did under direction.} Given those hypotheses and designs,
+the tool was directed to survey related work and assemble candidate citations, to
+implement the prototype engines and the benchmark and profiling harnesses, to run
+the density sweep and the Callgrind attribution, and to draft and revise this
+manuscript. Each of these was a directed task with an author-specified goal, not an
+autonomous decision; the author read the harness code, the raw results, and the prose,
+and revised or rejected output that did not hold up.
+
+\paragraph{Where the author's judgement overrode the tool.} Two cases are worth
+recording because they show the division of labour working as intended. First, an
+early account of the incumbent's slowness attributed the cost largely to heap
+allocation. The author was unconvinced and directed a direct measurement: first a
+timing micro-benchmark isolating the per-call allocation, which already showed the
+malloc churn was only a few percent of runtime and not worth removing, and later a
+Callgrind instruction-attribution study that quantified it precisely. Both
+\emph{disproved} the original account: allocation is under~1\% of the incumbent's
+instructions, and the cost is dominated by automaton evaluation and per-call search
+setup (\S\ref{sec:findings}, Table~\ref{tab:profile}). The paper reports the corrected,
+measured account, not the original inferred one. Second, the bibliography was assembled
+with several placeholder entries; the author verified each remaining citation against
+its primary record (DBLP, arXiv, or the publisher) before it was allowed to stand, and
+entries that could not be confirmed were left uncited rather than printed on trust.
+
+\paragraph{Accountability.} The author has reviewed the full manuscript, the
+experimental code, and the results, and is solely responsible for them. The tool is
+disclosed here as a method, not credited as an author: it holds no view, takes no
+responsibility, and made no claim that the author did not check and adopt as the
+author's own.
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{refs}

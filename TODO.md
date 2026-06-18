@@ -133,22 +133,39 @@ asks. Cost: maintenance doubles, NIF segfaults crash the whole BEAM VM, separate
 Research log at `docs/research_log.md` is the source of truth (all prototype data,
 benchmark methodology, root-cause analysis, related work, open questions).
 
-1. Complete benchmark rigor: document hardware, OS, Ruby/glibc versions; add stddev
-   across runs; add a microbenchmark isolating AC filter overhead from confirmation
-   overhead.
-2. Add profiling evidence (perf/callgrind): show where cycles go in v2 (glibc) vs v3
-   (Onigmo) to support the "BM literal pre-filter is the decisive factor" claim.
-3. Post preprint to **arXiv** (`cs.PL` + `cs.DS`) — establishes priority, no peer
-   review.
-4. Submit to **Software: Practice and Experience** (Wiley, Q2) as the primary venue
-   (~6–12 months to decision, no conference travel).
-5. If SPE pushes back on novelty: retarget **USENIX ATC** (experience report track).
+Draft lives in `paper/main.tex` (acmart, 14 pp, builds clean). Benchmark rigor,
+profiling evidence, the consistent-operating-point sweep, the bibliography, the
+AI-use appendix, and the plain-language opener + glossary are done (see DONE.md
+"Paper"). Not yet submission-ready — the items below gate that.
 
-**Shape:** systems/experience report, 12–15 pages. Core contribution: a two-stage
-AC + fast-engine pipeline is near-optimal for mixed-prefix DLP pattern sets; the BM
-pre-filter is a worthwhile third stage; always-candidates are the binding
-constraint. Cite Hyperscan (NSDI 2019), BLARE (SIGMOD 2023), HybridSA (OOPSLA
-2024). Estimated effort: 3–4 months part-time (10–15 h/week).
+### Before arXiv-ready (one focused session)
+1. **Readability pass.** Soften the densest sentences (e.g. the Intro's "engine
+   result wearing a language disguise", multi-clause sentences in Findings/Discussion)
+   without losing precision. This is the issue the author already flagged.
+2. **Full human read-through, end to end.** All of the opener, glossary, rewritten
+   Conclusion, and caveat removals landed in one session and have not been read as a
+   continuous whole. Catch seams: does the new "In plain terms" opener duplicate §1?
+   any dangling "as discussed in §X" left by the caveat removal? figure/label refs
+   resolve?
+3. **Author to confirm the AI-use appendix is accurate** — it describes how the author
+   worked; the author owns that account.
+
+### Before journal-submission-ready
+4. **Reformat to the target venue's template.** acmart is fine for arXiv; **Software:
+   Practice and Experience** (Wiley, primary target) uses its own template — reformat
+   when committing to the venue.
+
+### Submission logistics
+5. Post preprint to **arXiv** (`cs.PL` + `cs.DS`) — establishes priority, no peer
+   review. (Do after items 1–3.)
+6. Submit to **Software: Practice and Experience** (Wiley, Q2), ~6–12 months to
+   decision, no conference travel.
+7. If SPE pushes back on novelty: retarget **USENIX ATC** (experience report track).
+
+**Shape:** systems/experience report, ~14 pages. Core thesis: engine replacement in
+production is a constrained search, not a benchmark — the fastest engine is not the
+shippable one. Cites Hyperscan (NSDI 2019), BLARE (PACMMOD 2023). HybridSA (OOPSLA
+2024), RE\# (POPL 2025), and PCRE-JIT (CGO 2014) are verified leads, kept uncited.
 
 ---
 
