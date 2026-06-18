@@ -112,9 +112,12 @@ trap (\S\ref{sec:finding-v19}).
 \section{Background}
 \label{sec:background}
 \paragraph{The task.} Redaction is multi-pattern search-and-replace over untrusted
-text. Each pattern recognizes one class of sensitive token; a scan must find every
-non-overlapping match of every pattern, in the same leftmost-longest order the host
-language's \texttt{gsub} would, and replace it. The pattern set here numbers in the
+text. Each pattern recognizes one class of sensitive token; a scan must find the
+matches of every pattern and replace them. What counts as the right \emph{set} of
+matches when two patterns overlap is itself a design decision, and one we revisited
+mid-project (\S\ref{sec:discussion}): the original behavior was whatever a loop of
+per-pattern \texttt{String\#gsub} calls produced, and we later changed it
+deliberately. The pattern set here numbers in the
 dozens and spans long-prefixed credentials (\texttt{AKIA\ldots},
 \texttt{sk\_live\_\ldots}, PEM key headers), structured tokens (IBANs, credit-card
 numbers, emails, IP addresses), and bare fixed-length digit strings (national
@@ -125,8 +128,12 @@ the paper.
 
 \paragraph{The baseline and the incumbent.} Two implementations existed before this
 work. The reference is a pure-Ruby loop that applies each pattern with
-\texttt{String\#gsub}; it is correct by definition and is the oracle for Gate~2. The
-incumbent is a C extension intended to be faster, which calls glibc \texttt{regexec}
+\texttt{String\#gsub} in turn; we treat it as the oracle for Gate~2, with the
+caveat---developed in \S\ref{sec:discussion}---that this sequential loop has its own
+overlap semantics (each pattern rewrites the regions it matches, so the
+earlier-listed pattern wins a contested region) which we initially reproduced
+exactly and later chose to change. The incumbent is a C extension intended to be
+faster, which calls glibc \texttt{regexec}
 on each pattern in turn. The C extension also carried two prior optimizations---a
 literal pre-check before each \texttt{regexec} and input chunking to bound the
 per-call allocation---which together helped but left it still several times slower
@@ -513,6 +520,28 @@ the absolute milliseconds---are ours, measured on one machine with one pattern s
 and one corpus, and we scope every such number accordingly. A reader may reasonably
 expect a different crossover density on a different pattern mix; the direction of the
 effect is what we claim generally.
+
+\paragraph{The exact-output target changed mid-project, on purpose.} Gate~2 demands
+byte-for-byte-identical output to a reference, but we revised the reference once,
+and the revision is worth stating plainly because it cuts against a naive reading of
+``exactness.'' We \emph{first} held the new engine to the original behavior exactly:
+reproduce, byte-for-byte, what the sequential loop of per-pattern
+\texttt{String\#gsub} calls produced, including its overlap rule---when two patterns
+can claim an overlapping region, the earlier-listed pattern rewrites it first and
+wins. That semantic was never a designed choice; it was an accidental by-product of
+rewriting one pattern at a time. We \emph{then} found it could leave a secret
+partly unredacted: when a long secret's prefix is itself a shorter pattern, the
+shorter match consumes the region and the trailing bytes of the real secret survive
+(an access key whose first segment matches a generic token, for example). So in a
+second step we deliberately changed the contract to longest-match-wins, with
+equal-length ties broken by pattern order, which redacts the full span and aligns
+with the overlap semantics of mainstream engines. The lesson for the constraint
+framing is that ``identical output'' is the right gate only once the reference
+itself is right; reproducing a reference exactly and then correcting the reference
+are two different commitments, and an exactness gate should not freeze a latent
+defect in place. The benchmarks in this paper were taken against the
+exact-reproduction phase, so they are unaffected; the resolver change is semantics,
+not throughput, and we measured no throughput change from it.
 
 \paragraph{The reproduced baseline.} The incumbent we benchmark is a faithful
 reproduction of the pre-replacement glibc engine (plain sequential

@@ -151,11 +151,20 @@ Tracked from research log §14.4. `[ ]` = not done, `[~]` = partial/draft.
       the pipeline is *strictly dominated* by plain JIT at every density (no
       crossover between them); the genuine crossover is pipeline-vs-pure-Ruby at
       ~11 hits/KB. Re-run pending (rigor item above).
-- [ ] **Profiling evidence** — perf / callgrind showing cycles in glibc (alloc)
-      vs Onigmo (BM) vs v19 (table lookup). Supports "bottleneck is per-call
-      state-log allocation, not missing BM".
-- [ ] **Reproducibility artifact** — self-contained Makefile / Docker packaging
-      prototypes + bench scripts. S:P&E encourages; arXiv benefits.
+- [ ] **Profiling evidence** *(author to develop)* — perf / callgrind showing
+      cycles in glibc (alloc) vs Onigmo (BM) vs v19 (table lookup). Would turn the
+      §5.1 claim ("bottleneck is per-call state-log allocation, not missing BM")
+      from inferred-by-timing into measured. HIGH VALUE — it is the one open item
+      where new data materially strengthens the paper. If it lands: add a short
+      profiling paragraph/figure to §5.1. If it does NOT land: §5.1 already stands
+      on the timing shape + the mechanism argument; scope profiling as future work
+      in §7 (one sentence), do not fabricate counter numbers.
+- [ ] **Reproducibility artifact** *(author to develop)* — self-contained Makefile
+      / Docker packaging the prototypes + bench scripts so a reviewer can rerun the
+      sweep. S:P&E encourages; arXiv benefits. If it lands: add an availability
+      footnote/section + repo URL. If it does NOT land before submission: the
+      `prototypes/` dir + `paper/` Makefile already make it reproducible in-repo;
+      mention that instead.
 - [x] **Table generation** — `paper/plot_density_sweep.py` turns the CSV →
       `booktabs` LaTeX (`paper/data/density_table.tex`) + the figure + the
       crossover report. Numbers are generated, not hand-typed.
@@ -330,3 +339,21 @@ S:P&E submission.
   framed as honest methodology (human-directed, AI-executed search loop), not
   self-deprecation or AI-credit. Placement (methods note vs appendix vs expanded
   \acks) TBD.
+- **2026-06-18** — Gem advanced to 0.15.1 since the draft merged (PR #30). Paper is
+  an experience report on the WORK, not a gem changelog, so we do NOT chase every
+  post-draft update (`:length` placeholders, CI throughput gate, 0.14.x). We DO
+  fold in the one change that is about the work: the **two-phase overlap semantics**.
+  Phase 1 reproduced the original sequential-`gsub` overlap rule byte-for-byte
+  (earlier-listed pattern wins a contested region — an accidental by-product, not a
+  design); phase 2 (gem 0.15.0) deliberately switched to **longest-match-wins**
+  because the old rule could leave a secret partly unredacted (long secret whose
+  prefix is a shorter pattern → trailing bytes leak). Written into Background +
+  a new §7 paragraph ("The exact-output target changed mid-project, on purpose"):
+  an exactness gate is right only once the reference is right; reproducing a
+  reference and then correcting it are different commitments. Benchmarks were taken
+  against phase 1 and are unaffected (resolver = semantics, no throughput change).
+- **2026-06-18** — Division of remaining work: AUTHOR will develop the two
+  data-producing items (profiling evidence, reproducibility artifact); both have
+  a documented "if it lands / if it doesn't" path in §6 so the paper is not blocked
+  on them. Claude handles the prose items (AI-use write-up, citation check,
+  in-gem/prototype reconciliation, metadata stubs).
