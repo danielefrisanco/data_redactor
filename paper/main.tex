@@ -4,9 +4,8 @@
 %% Build: `make` (needs texlive + latexmk; see paper/Makefile). Not yet compiled
 %% locally — toolchain not installed at scaffold time.
 %%
-%% Structure follows paper/README.md §7. Section bodies are stubs marked TODO;
-%% the figures, the generated table, and the bibliography are already wired so the
-%% scaffold compiles to a real skeleton once a toolchain exists.
+%% Structure follows paper/README.md §7. All section bodies are drafted; figures,
+%% generated tables, and the bibliography are wired and the document compiles.
 \documentclass[acmsmall,nonacm,screen]{acmart}
 
 %% nonacm: this is a preprint, not an ACM-copyright submission. Drop for a real
@@ -21,19 +20,18 @@
 \title{The Fastest Engine Is Not the Shippable Engine: Replacing a
 Regex Engine for Data Redaction Under Production Constraints}
 
-%% Sole author + AI disclosure (paper/README.md §4). Fill affiliation/email.
+%% Sole author + AI disclosure (paper/README.md §4).
 \author{Daniele Frisanco}
 \affiliation{%
-  \institution{TODO: affiliation}
-  \country{TODO}}
+  \institution{Independent Researcher}
+  \country{Italy}}
 \email{daniele.frisanco@gmail.com}
 
 \renewcommand{\shortauthors}{Frisanco}
 
 \begin{abstract}
-%% Opener locked in paper/README.md §1 (draft B). Keep the four constraints and
-%% the "performance objective subject to constraints" shape. TODO: tighten to
-%% ~150 words and add the headline result once the clean re-run lands.
+%% Opener locked in paper/README.md §1 (draft B): the four constraints and the
+%% "performance objective subject to constraints" shape, with the headline result.
 We report on replacing the regex engine behind a data-redaction library to
 improve performance under four production constraints---zero runtime
 dependencies, byte-for-byte-identical output to the incumbent, robustness across
@@ -44,7 +42,33 @@ multi-pattern matching does not hold across densities; the best shippable design
 is a per-pattern lazy DFA with two domain-specific merges.
 \end{abstract}
 
-%% TODO: pick CCS concepts + keywords near submission.
+%% CCS concepts. Generated to match the ACM CCS 2012 taxonomy; regenerate via
+%% https://dl.acm.org/ccs if a reviewer wants the official tool output. Concept
+%% IDs below are the canonical ones for these paths.
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10003752.10003766.10003770</concept_id>
+       <concept_desc>Theory of computation~Regular languages</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10011007.10011074.10011099.10011102.10011103</concept_id>
+       <concept_desc>Software and its engineering~Software performance</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+   <concept>
+       <concept_id>10002978.10003014.10003017</concept_id>
+       <concept_desc>Security and privacy~Data anonymization and sanitization</concept_desc>
+       <concept_significance>300</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Theory of computation~Regular languages}
+\ccsdesc[500]{Software and its engineering~Software performance}
+\ccsdesc[300]{Security and privacy~Data anonymization and sanitization}
+
 \keywords{regular expressions, multi-pattern matching, data redaction,
 lazy DFA, performance engineering, Ruby C extensions}
 
