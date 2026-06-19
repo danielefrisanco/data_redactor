@@ -333,6 +333,17 @@ The full hardware, OS, compiler, and library versions are recorded with the data
 the incumbent we compare against is a faithful reproduction of the pre-replacement
 glibc engine, discussed in \S\ref{sec:discussion}.
 
+\paragraph{Use of AI tools.} This work used a large language model---Claude
+(Anthropic), Claude Opus 4---as a directed instrument, under the author's
+specification and review, for surveying related work and assembling candidate
+citations, implementing the prototype engines and the benchmark and profiling
+harnesses, running the density sweep and the Callgrind attribution, and drafting and
+revising the manuscript text. The author set the hypotheses and the algorithmic
+design, verified every result and citation, and is solely accountable for the
+content; the tool is not, and cannot be, an author. Appendix~\ref{app:method} gives
+the full account, including two cases where the author's judgement corrected the
+tool's output.
+
 \section{Findings}
 \label{sec:findings}
 
@@ -793,7 +804,7 @@ every claim and result. Appendix~\ref{app:method} gives the full account of how
 the tool was used and where the author's judgement overrode it.
 \end{acks}
 
-\section*{Data and artifact availability}
+\section*{Data Availability Statement}
 The data\_redactor library, the prototypes, the benchmark and profiling harnesses,
 the raw results, and the figure/table generators are in the public project
 repository at \url{https://github.com/danielefrisanco/data_redactor}. A
