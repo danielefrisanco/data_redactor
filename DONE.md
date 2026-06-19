@@ -258,8 +258,13 @@ constraints — not a gem changelog. Sole author; Claude used as a directed inst
   (Herczeg, CGO 2014). Only BLARE is cited; the rest are verified leads kept uncited.
 - **Drafting complete.** All sections written; AI-use methodology appendix +
   acknowledgments disclosure; affiliation/CCS metadata; prototype-vs-in-gem
-  reconciliation; plain-language opener + a glossary of engines/terms. Open: arXiv
-  post, S:P&E submission, a final readability pass (see TODO.md "Paper").
+  reconciliation; plain-language opener + a glossary of engines/terms.
+- **arXiv-ready (2026-06-19).** Two external review passes addressed: exact
+  per-thread memory bound (~0.86 MB, was "well under a megabyte"); boundary-wrap
+  semantics clarified and rendered as a clean \texttt{} block; readability pass on
+  the densest sentences. Author read the full draft and signed off on the AI-use
+  appendix. `make dist` emits the upload file `frisanco-fastest-engine-2026.pdf`.
+  Open: arXiv post, then Wiley-template reformat + S:P&E submission (TODO.md "Paper").
 
 ---
 

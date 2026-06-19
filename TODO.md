@@ -133,34 +133,38 @@ asks. Cost: maintenance doubles, NIF segfaults crash the whole BEAM VM, separate
 Research log at `docs/research_log.md` is the source of truth (all prototype data,
 benchmark methodology, root-cause analysis, related work, open questions).
 
-Draft lives in `paper/main.tex` (acmart, 14 pp, builds clean). Benchmark rigor,
-profiling evidence, the consistent-operating-point sweep, the bibliography, the
-AI-use appendix, and the plain-language opener + glossary are done (see DONE.md
-"Paper"). Not yet submission-ready — the items below gate that.
+Draft lives in `paper/main.tex` (acmart, 14 pp, builds clean). **arXiv-ready:**
+benchmark rigor, profiling evidence, the consistent-operating-point sweep, the
+verified bibliography, the AI-use appendix, plain-language opener + glossary,
+readability pass, full author read-through, and AI-appendix sign-off are all done
+(see DONE.md "Paper"). Build the upload file with `make -C paper dist` →
+`paper/frisanco-fastest-engine-2026.pdf`.
 
-### Before arXiv-ready (one focused session)
-1. **Readability pass.** Soften the densest sentences (e.g. the Intro's "engine
-   result wearing a language disguise", multi-clause sentences in Findings/Discussion)
-   without losing precision. This is the issue the author already flagged.
-2. **Full human read-through, end to end.** All of the opener, glossary, rewritten
-   Conclusion, and caveat removals landed in one session and have not been read as a
-   continuous whole. Catch seams: does the new "In plain terms" opener duplicate §1?
-   any dangling "as discussed in §X" left by the caveat removal? figure/label refs
-   resolve?
-3. **Author to confirm the AI-use appendix is accurate** — it describes how the author
-   worked; the author owns that account.
+### Submission logistics (open)
+1. **Post preprint to arXiv** (`cs.PL` primary, cross-list `cs.DS`).
+   - Account needs endorsement for `cs.PL` if first submission there.
+   - Upload the **LaTeX source** (arXiv recompiles): `main.tex`, `refs.bib`, the
+     `figures/*.pdf`, `data/*.tex` inputs, and `acmart.cls`/`ACM-Reference-Format.bst`
+     if not in arXiv's TeX Live. Easiest: upload a zip of `paper/` minus build junk.
+     Include `main.bbl` so arXiv need not rerun BibTeX.
+   - Set license (arXiv non-exclusive, or CC-BY). Title/abstract/authors must match.
+2. **Submit to Software: Practice and Experience** (Wiley, Q2), ~6–12 mo to decision.
+   - **Reformat to Wiley's template first** (WileyNJD-v2) — acmart is arXiv-only.
+   - Submit via Wiley's ScholarOne portal: cover letter, suggested reviewers, the
+     AI-use disclosure (appendix already covers it; restate in the portal's AI field).
+   - arXiv preprint is allowed by S:P&E; cite the arXiv ID in the cover letter.
+3. If S:P&E pushes back on novelty: retarget **USENIX ATC** (experience report track).
 
-### Before journal-submission-ready
-4. **Reformat to the target venue's template.** acmart is fine for arXiv; **Software:
-   Practice and Experience** (Wiley, primary target) uses its own template — reformat
-   when committing to the venue.
-
-### Submission logistics
-5. Post preprint to **arXiv** (`cs.PL` + `cs.DS`) — establishes priority, no peer
-   review. (Do after items 1–3.)
-6. Submit to **Software: Practice and Experience** (Wiley, Q2), ~6–12 months to
-   decision, no conference travel.
-7. If SPE pushes back on novelty: retarget **USENIX ATC** (experience report track).
+### Versioning across the submission pipeline
+The paper is **not** versioned in the PDF (nothing to go stale) and is **not** tied
+to the gem's SemVer. Version provenance is tracked three ways:
+- **git tags** at each external milestone — the precise snapshot of what was uploaded:
+  `paper-arxiv-v1`, `paper-spe-submit`, `paper-spe-r1`, `paper-arxiv-v2`, …
+- **arXiv** assigns the public `vN` on every replacement (canonical citable version).
+- each **journal** assigns its own manuscript ID + revision rounds (R1, R2).
+Workflow: tag → upload to arXiv (`paper-arxiv-v1`); revise for a journal → reformat to
+its template → tag (`paper-spe-submit`) → submit; if a revision is substantial, also
+push it back to arXiv (becomes `v2`) and tag `paper-arxiv-v2`.
 
 **Shape:** systems/experience report, ~14 pages. Core thesis: engine replacement in
 production is a constrained search, not a benchmark — the fastest engine is not the

@@ -99,7 +99,8 @@ mis-written, or that C does not help here---is a category error. The variable th
 changed between the two paths was not the language but the regex engine: the C path
 drove glibc's POSIX \texttt{regexec}, the interpreted path drove the host's own
 engine with a Boyer--Moore literal pre-filter and bounded per-call state. The slow
-result is an engine result wearing a language disguise (\S\ref{sec:finding-alloc}).
+result is about the engine, not the language; it only looks like a language
+problem (\S\ref{sec:finding-alloc}).
 
 That observation reframes the project. The goal is performance, but performance is
 not the only thing we are allowed to optimize. A shippable redaction engine must
@@ -110,9 +111,9 @@ range of match densities, because a redaction library cannot choose its input. E
 of those constraints disqualifies an option that is attractive on raw speed: the
 fastest engine we measured fails the dependency constraint, the textbook
 single-automaton speedup fails the exactness constraint, and the fastest prototypes
-failed thread-safety until a specific refactor. The thesis of the paper is in that
-sentence: \emph{the fastest engine is not the shippable engine}, and finding the
-shippable one is a constrained search, not a benchmark.
+failed thread-safety until a specific refactor. That is the paper's thesis:
+\emph{the fastest engine is not the shippable engine}, and finding the shippable one
+is a constrained search, not a benchmark.
 
 We ran that search as a sequence of prototypes, each isolating one decision, and
 report it honestly---including the dead ends, because the search is the evidence.
@@ -499,9 +500,14 @@ test, not learned by partitioning a conflict graph.
   \(\texttt{[0-9]}\{lo,hi\}\) (national identifiers of various fixed lengths) are
   replaced by one linear pass that finds each maximal run of digits and, for a run
   of length \(L\), emits exactly the members whose length window contains \(L\).
-  Because every member is boundary-wrapped, this reproduces the incumbent's
-  per-pattern non-overlapping match stream byte-for-byte, including the line-anchor
-  edge cases---rather than nine independent scans of the buffer.
+  Every member is boundary-wrapped---each pattern is bracketed by a non-alphanumeric
+  boundary, \texttt{(\^{}|[\^{}0-9A-Za-z])(\ldots)([\^{}0-9A-Za-z]|\$)}, so a digit
+  run only matches when flanked by a non-digit or a buffer/line edge.
+  That is why a shorter member can never match a sub-segment of a longer digit
+  string: the interior of a longer run has digits on both sides and fails the
+  boundary. Working on \emph{maximal} runs therefore reproduces the incumbent's
+  per-pattern non-overlapping match stream byte-for-byte, including the line-edge
+  cases---rather than nine independent scans of the buffer.
   \item \emph{IBAN union pass.} The eighteen IBAN patterns each begin with a unique
   two-letter country code; in the per-pattern engine each runs its own
   whole-buffer literal sweep for that code---eighteen sweeps that, on text without
@@ -550,10 +556,12 @@ shared writes, the redaction call can release the interpreter lock around the
 built-in pass for inputs above a few kilobytes, so a large redaction on one thread
 no longer stalls the others; small inputs keep the lock to avoid the release
 overhead. The price is one DFA cache per scanning thread. Two details keep that
-affordable. First, an allocation floor: the per-pattern state array starts small
-and doubles, and since most patterns settle at a handful of states, the
-steady-state footprint is well under a megabyte per thread with no throughput
-change. Second, reclamation: a thread-exit destructor frees the whole per-thread
+affordable. First, an allocation floor: the per-pattern state array starts at
+eight states and doubles, and since most patterns settle at a handful (1--14
+states; \(45\) at most), the steady-state footprint is \(\approx\!0.86\)\,MB per
+scanning thread---down from \(\approx\!3.2\)\,MB before the floor was tuned---with no
+throughput change, since the few larger DFAs just do a couple of extra warm-up
+doublings off the hot path. Second, reclamation: a thread-exit destructor frees the whole per-thread
 block, so a process that churns short-lived scanning threads keeps flat memory
 instead of leaking a cache per dead thread, while fixed thread pools simply reuse
 the block.
@@ -663,8 +671,8 @@ framing is that ``identical output'' is the right gate only once the reference
 itself is right; reproducing a reference exactly and then correcting the reference
 are two different commitments, and an exactness gate should not freeze a latent
 defect in place. The benchmarks in this paper were taken against the
-exact-reproduction phase, so they are unaffected; the resolver change is semantics,
-not throughput, and we measured no throughput change from it.
+exact-reproduction phase, so they are unaffected: the resolver change is a
+semantic one, and we measured no throughput change from it.
 
 \paragraph{The reproduced baseline.} The incumbent we benchmark is a faithful
 reproduction of the pre-replacement glibc engine (plain sequential

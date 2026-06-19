@@ -13,12 +13,19 @@
 #   make distclean  -> also remove main.pdf
 
 MAIN    := main
+DIST    := frisanco-fastest-engine-2026
 PYTHON  := python3
 SWEEP   := data/density_sweep.csv
 
-.PHONY: all figures watch clean distclean
+.PHONY: all dist figures watch clean distclean
 
 all: $(MAIN).pdf
+
+# Build and copy to a descriptive, submission-ready filename (the name to
+# upload to arXiv / attach to a journal submission).
+dist: $(MAIN).pdf
+	cp $(MAIN).pdf $(DIST).pdf
+	@echo "wrote $(DIST).pdf"
 
 $(MAIN).pdf: $(MAIN).tex refs.bib data/density_table.tex \
              figures/density_overview.pdf figures/density_crossover.pdf
@@ -41,4 +48,4 @@ clean:
 	rm -f $(MAIN).bbl $(MAIN).run.xml
 
 distclean: clean
-	rm -f $(MAIN).pdf
+	rm -f $(MAIN).pdf $(DIST).pdf
