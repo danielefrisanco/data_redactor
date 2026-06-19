@@ -99,7 +99,8 @@ mis-written, or that C does not help here---is a category error. The variable th
 changed between the two paths was not the language but the regex engine: the C path
 drove glibc's POSIX \texttt{regexec}, the interpreted path drove the host's own
 engine with a Boyer--Moore literal pre-filter and bounded per-call state. The slow
-result is an engine result wearing a language disguise (\S\ref{sec:finding-alloc}).
+result is about the engine, not the language; it only looks like a language
+problem (\S\ref{sec:finding-alloc}).
 
 That observation reframes the project. The goal is performance, but performance is
 not the only thing we are allowed to optimize. A shippable redaction engine must
@@ -110,9 +111,9 @@ range of match densities, because a redaction library cannot choose its input. E
 of those constraints disqualifies an option that is attractive on raw speed: the
 fastest engine we measured fails the dependency constraint, the textbook
 single-automaton speedup fails the exactness constraint, and the fastest prototypes
-failed thread-safety until a specific refactor. The thesis of the paper is in that
-sentence: \emph{the fastest engine is not the shippable engine}, and finding the
-shippable one is a constrained search, not a benchmark.
+failed thread-safety until a specific refactor. That is the paper's thesis:
+\emph{the fastest engine is not the shippable engine}, and finding the shippable one
+is a constrained search, not a benchmark.
 
 We ran that search as a sequence of prototypes, each isolating one decision, and
 report it honestly---including the dead ends, because the search is the evidence.
@@ -670,8 +671,8 @@ framing is that ``identical output'' is the right gate only once the reference
 itself is right; reproducing a reference exactly and then correcting the reference
 are two different commitments, and an exactness gate should not freeze a latent
 defect in place. The benchmarks in this paper were taken against the
-exact-reproduction phase, so they are unaffected; the resolver change is semantics,
-not throughput, and we measured no throughput change from it.
+exact-reproduction phase, so they are unaffected: the resolver change is a
+semantic one, and we measured no throughput change from it.
 
 \paragraph{The reproduced baseline.} The incumbent we benchmark is a faithful
 reproduction of the pre-replacement glibc engine (plain sequential
