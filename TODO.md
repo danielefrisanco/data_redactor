@@ -155,6 +155,17 @@ readability pass, full author read-through, and AI-appendix sign-off are all don
    - arXiv preprint is allowed by S:P&E; cite the arXiv ID in the cover letter.
 3. If S:P&E pushes back on novelty: retarget **USENIX ATC** (experience report track).
 
+### Versioning across the submission pipeline
+The paper is **not** versioned in the PDF (nothing to go stale) and is **not** tied
+to the gem's SemVer. Version provenance is tracked three ways:
+- **git tags** at each external milestone — the precise snapshot of what was uploaded:
+  `paper-arxiv-v1`, `paper-spe-submit`, `paper-spe-r1`, `paper-arxiv-v2`, …
+- **arXiv** assigns the public `vN` on every replacement (canonical citable version).
+- each **journal** assigns its own manuscript ID + revision rounds (R1, R2).
+Workflow: tag → upload to arXiv (`paper-arxiv-v1`); revise for a journal → reformat to
+its template → tag (`paper-spe-submit`) → submit; if a revision is substantial, also
+push it back to arXiv (becomes `v2`) and tag `paper-arxiv-v2`.
+
 **Shape:** systems/experience report, ~14 pages. Core thesis: engine replacement in
 production is a constrained search, not a benchmark — the fastest engine is not the
 shippable one. Cites Hyperscan (NSDI 2019), BLARE (PACMMOD 2023). HybridSA (OOPSLA
