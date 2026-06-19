@@ -6,6 +6,12 @@
 
 A Ruby gem with a C extension for high-performance regex-based redaction of sensitive data from strings.
 
+> 📄 The engineering behind the v19 matching engine is written up as an experience
+> report, *"The Fastest Engine Is Not the Shippable Engine: Replacing a Regex Engine
+> for Data Redaction Under Production Constraints,"* currently under review at
+> *Software: Practice and Experience* (Manuscript ID 7985366). Source and the
+> reproducibility bundle are in [`paper/`](paper/).
+
 ## What it does
 
 DataRedactor scans text for sensitive data — API keys and cloud secrets, IBANs,

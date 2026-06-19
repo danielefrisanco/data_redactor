@@ -133,27 +133,23 @@ asks. Cost: maintenance doubles, NIF segfaults crash the whole BEAM VM, separate
 Research log at `docs/research_log.md` is the source of truth (all prototype data,
 benchmark methodology, root-cause analysis, related work, open questions).
 
-Draft lives in `paper/main.tex` (acmart, 14 pp, builds clean). **arXiv-ready:**
-benchmark rigor, profiling evidence, the consistent-operating-point sweep, the
-verified bibliography, the AI-use appendix, plain-language opener + glossary,
-readability pass, full author read-through, and AI-appendix sign-off are all done
-(see DONE.md "Paper"). Build the upload file with `make -C paper dist` →
-`paper/frisanco-fastest-engine-2026.pdf`.
+Draft lives in `paper/main.tex` (acmart). **Submitted to Software: Practice and
+Experience** on 2026-06-19 as an Experience Report — **Manuscript ID 7985366**,
+status "In Screening" (Wiley submission ID 9f2cb74b-c51a-4e47-b5b2-12bb9b7085f6).
+The exact submitted snapshot is git tag `paper-spe-submit`. See DONE.md "Paper".
 
-### Submission logistics (open)
-1. **Post preprint to arXiv** (`cs.PL` primary, cross-list `cs.DS`).
-   - Account needs endorsement for `cs.PL` if first submission there.
-   - Upload the **LaTeX source** (arXiv recompiles): `main.tex`, `refs.bib`, the
-     `figures/*.pdf`, `data/*.tex` inputs, and `acmart.cls`/`ACM-Reference-Format.bst`
-     if not in arXiv's TeX Live. Easiest: upload a zip of `paper/` minus build junk.
-     Include `main.bbl` so arXiv need not rerun BibTeX.
-   - Set license (arXiv non-exclusive, or CC-BY). Title/abstract/authors must match.
-2. **Submit to Software: Practice and Experience** (Wiley, Q2), ~6–12 mo to decision.
-   - **Reformat to Wiley's template first** (WileyNJD-v2) — acmart is arXiv-only.
-   - Submit via Wiley's ScholarOne portal: cover letter, suggested reviewers, the
-     AI-use disclosure (appendix already covers it; restate in the portal's AI field).
-   - arXiv preprint is allowed by S:P&E; cite the arXiv ID in the cover letter.
-3. If S:P&E pushes back on novelty: retarget **USENIX ATC** (experience report track).
+### Open
+1. **Wait for the S:P&E editorial decision** (screening → review, ~6–12 mo). The
+   submission cannot be edited unless returned. If returned/revise: upload the
+   revised PDF + the editable `.tex` source (Wiley wants source at revision stage),
+   tag `paper-spe-r1`, and respond to reviews.
+2. **arXiv: blocked for now.** A first submission needs endorsement, and the author
+   has no institutional email and no endorser, so all CS categories are gated. Revisit
+   once there is an endorser (e.g. after acceptance, or a willing established arXiv
+   author). S:P&E permits a preprint, so this can be added later; if posted, update
+   the preprint with a link to the published article.
+3. If S:P&E rejects on scope/novelty: retarget **USENIX ATC** (experience report
+   track) or another practice venue.
 
 ### Versioning across the submission pipeline
 The paper is **not** versioned in the PDF (nothing to go stale) and is **not** tied

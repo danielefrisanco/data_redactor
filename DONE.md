@@ -264,7 +264,17 @@ constraints — not a gem changelog. Sole author; Claude used as a directed inst
   semantics clarified and rendered as a clean \texttt{} block; readability pass on
   the densest sentences. Author read the full draft and signed off on the AI-use
   appendix. `make dist` emits the upload file `frisanco-fastest-engine-2026.pdf`.
-  Open: arXiv post, then Wiley-template reformat + S:P&E submission (TODO.md "Paper").
+- **Submitted to Software: Practice and Experience (2026-06-19).** Experience Report,
+  **Manuscript ID 7985366**, status "In Screening." Submitted via Wiley Free Format
+  (no template reformat needed) as a LaTeX bundle + compiled PDF. Added the fields
+  Wiley requires: ORCID (0009-0008-4503-9933), funding statement, conflict-of-interest
+  disclosure (author maintains the library under study), AI-use disclosure in the
+  Methods section naming the model, and a "Data Availability Statement" linking the
+  repo. Cover letter framed it as an experience report and named the scope fit. Exact
+  submitted snapshot is git tag `paper-spe-submit`.
+  - **arXiv not done:** first-submission endorsement is required and the author has no
+    institutional email or endorser, so all CS categories are gated. Deferred; S:P&E
+    allows a preprint, so it can be added later.
 
 ---
 
