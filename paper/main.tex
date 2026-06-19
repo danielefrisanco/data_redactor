@@ -501,8 +501,8 @@ test, not learned by partitioning a conflict graph.
   replaced by one linear pass that finds each maximal run of digits and, for a run
   of length \(L\), emits exactly the members whose length window contains \(L\).
   Every member is boundary-wrapped---each pattern is bracketed by a non-alphanumeric
-  boundary, \((\char`\^|[\char`\^0\text{-}9A\text{-}Za\text{-}z])(\ldots)([\char`\^0\text{-}9A\text{-}Za\text{-}z]|\$)\),
-  so a digit run only matches when flanked by a non-digit or a buffer/line edge.
+  boundary, \texttt{(\^{}|[\^{}0-9A-Za-z])(\ldots)([\^{}0-9A-Za-z]|\$)}, so a digit
+  run only matches when flanked by a non-digit or a buffer/line edge.
   That is why a shorter member can never match a sub-segment of a longer digit
   string: the interior of a longer run has digits on both sides and fails the
   boundary. Working on \emph{maximal} runs therefore reproduces the incumbent's
