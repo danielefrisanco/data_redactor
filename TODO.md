@@ -74,13 +74,11 @@ pass. Only if scan-heavy large inputs ever matter.
 
 ## CI / testing
 
-- **Fuzz / ASan CI harness** — the `OP_EOL` OOB read (already fixed) was found by
-  ASan; a CI fuzz job would catch regressions. See
-  `docs/standalone_matcher_design.md` risk table.
-- **musl load-and-smoke CI matrix job** — the release build only cross-compiles; it
-  never `require`s the gem on musl, which is how the `hvb {138,300}` > `RE_DUP_MAX`
-  load-time bug shipped (fixed 0.10.1). A load-and-smoke step on `ruby:3.x-alpine`
-  would catch this class. (The zero-alloc gate already runs under musl.)
+- **musl load-and-smoke across a Ruby matrix** (optional) — the `musl-load` job
+  already `require`s the gem and smoke-tests redaction on `ruby:3.3-alpine`
+  (the load-and-smoke class is covered). Widening it to a `3.1`–`3.4` Alpine
+  matrix would catch a musl regcomp divergence that is Ruby-version specific.
+  Nice-to-have, not blocking.
 - **Throughput-trend visualization over time** (optional) — the in-PR throughput
   gate keeps no history. If slow drift across many small PRs becomes a concern,
   layer `github-action-benchmark` on `gh-pages` to plot the ratio and post
