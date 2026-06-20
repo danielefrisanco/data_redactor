@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Opt-in `#redact` refinements.** `require "data_redactor/refinements"` then
+  `using DataRedactor::Refinements` adds `#redact` to `String` (→
+  `DataRedactor.redact`) and to `Hash`/`Array` (→ `DataRedactor.redact_deep`), e.g.
+  `"email a@b.com".redact` and `chat.ask(user_input.redact)`. Refinements are
+  lexically scoped, so they never pollute the core classes globally — apps that
+  don't opt in are unaffected and there is no collision risk. Forwards
+  `only:`/`except:`/`placeholder:`; never mutates the receiver.
+  `DataRedactor.redact` remains the primary API.
 - **Length-aware placeholder modes.** `placeholder: :length` replaces each match
   with `[REDACTED:N]` and `placeholder: :tagged_length` with `[REDACTED:TAGNAME:N]`,
   where `N` is the **byte length** of the redacted value. Readers can gauge what
