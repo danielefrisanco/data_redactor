@@ -324,6 +324,24 @@ safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 
 `content` may be a plain String or an array of content blocks/parts (`{ type: "text", text: "..." }`) — only the `text` of `text` blocks is redacted; image and other block types pass through untouched. For Claude, a top-level `system:` String is also redacted; for OpenAI, a `{ role: "system" }` message in the array is redacted like any other. Pass a bare `messages` array or the whole request Hash (with a `messages` key) — either works.
 
+### RubyLLM
+
+[RubyLLM](https://rubyllm.com) is a unified Ruby client for every major LLM provider — and a perfect match for `data_redactor`: anything you send to a model is exactly the kind of free text that leaks secrets and PII. Because RubyLLM takes plain strings, you can scrub them with `DataRedactor.redact` before they leave the process — no extra integration required:
+
+```ruby
+require "ruby_llm"
+require "data_redactor"
+
+chat = RubyLLM.chat(model: "claude-opus-4-8")
+chat.with_instructions(DataRedactor.redact("You are a support agent for ACME Corp."))
+
+user_input = "My card is 4111 1111 1111 1111 and my email is alice@example.com"
+chat.ask(DataRedactor.redact(user_input))
+# the model receives: "My card is [REDACTED] and my email is [REDACTED]"
+```
+
+Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.redact` before passing it to `ask`. This is a per-call step you opt into — RubyLLM does not yet expose a request hook for automatic, transparent redaction of every outbound call ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765) tracks the connection-middleware hook that would enable it).
+
 ## Detected patterns (89 total)
 
 The table below is a representative sample. Use `DataRedactor.pattern_names` for the canonical, machine-readable list — it stays in sync with the C extension automatically.
