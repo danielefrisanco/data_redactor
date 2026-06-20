@@ -220,13 +220,44 @@ Two hook points:
    call (callbacks can't auto-intercept outbound — see correction above). Won't
    break on RubyLLM internals. Covers prompt + system + history; NOT tool args /
    wire body.
-2. **Faraday request middleware (needs an upstream unlock — no monkeypatch).**
+2. **Faraday request middleware (needs an upstream unlock — preferred path).**
    Insert a `request` middleware that redacts the JSON request body on the wire —
    catches user prompts, the `system` prompt, AND tool-call arguments for *every*
    provider. But `setup_middleware` is private and there's no public injection
-   point, so this is gated on upstream adding one. **Monkeypatching is ruled out.**
-   Build the middleware on the existing `Claude`/`OpenAI` shape walkers
-   (`deep_copy` → walk → `redact_text_blocks` → re-serialise).
+   point, so this is gated on upstream adding one (#765). Build the middleware on
+   the existing `Claude`/`OpenAI` shape walkers (`deep_copy` → walk →
+   `redact_text_blocks` → re-serialise). **Caveat from the #765 body:** their
+   design runs user middleware "after JSON encoding, just before the adapter" — so
+   on the request path we'd get the **already-serialized JSON string**, not the
+   Hash (parse → redact → re-serialise; workable but less clean). Our #765 comment
+   asks them to guarantee pre-`request :json` (Hash) ordering instead.
+3. **Monkeypatch (LAST RESORT — the only way to get automatic redaction TODAY,
+   pre-#765).** The #765 body documents that **three observability gems already
+   monkeypatch RubyLLM** with three different strategies:
+   `sinaptia/ruby_llm-instrumentation` (includes modules + aliases originals),
+   `thoughtbot/opentelemetry-instrumentation-ruby_llm` (prepends `Chat`/`Embedding`),
+   `sergey-homenko/llm_cost_tracker` (prepends `Provider#complete`/`#embed`/
+   `#transcribe`). So it's a proven (if fragile) pattern, and prepending
+   `Provider#complete` to redact `messages`/`payload` before `super` would give us
+   automatic redaction now. **Cons:** unstable load order between patching gems,
+   alias/prepend collisions, breaks whenever RubyLLM reshapes internals (#765 exists
+   precisely to retire this). Only revisit if a user needs automatic redaction
+   before #765 lands AND accepts the fragility. Default remains: wait for #765.
+
+   **TODO before attempting any monkeypatch: study how the three gems actually do
+   it** (they've already found the sharp edges — copy what works, avoid what
+   collides). Read:
+   - `sinaptia/ruby_llm-instrumentation` — module include + aliasing originals.
+   - `thoughtbot/opentelemetry-instrumentation-ruby_llm` — `prepend` on
+     `RubyLLM::Chat` / `RubyLLM::Embedding`.
+   - `sergey-homenko/llm_cost_tracker` — `prepend` on `RubyLLM::Provider#complete`
+     / `#embed` / `#transcribe` (closest to what we'd want: `Provider#complete` is
+     where `payload` is built, so prepending it lets us redact `messages`/`payload`
+     before `super`).
+   Compare: which method they hook, `prepend` vs alias, how they guard against
+   double-patching, how they detect the RubyLLM version, and where they break on
+   upgrades. Decide our hook point (likely `prepend Provider#complete`) from real
+   precedent, not guesswork.
 
    **Upstream issue already exists AND is PR-ready: crmne/ruby_llm#765**
    ("[FEATURE] Expose `config.faraday_middleware` so observability gems can stop
