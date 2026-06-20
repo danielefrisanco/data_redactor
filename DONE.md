@@ -180,8 +180,23 @@ rewrite needed.
 and match correctly on `ruby:3.3-alpine`. Surfaced + fixed a real load-time bug
 (0.10.1): `hashicorp_vault_batch_token`'s `{138,300}` exceeds POSIX `RE_DUP_MAX`
 (255) — glibc accepts it, musl's `regcomp` rejects it, so the native musl gem raised
-at `require`. Capped to `{138,255}`. (A musl *load*-and-smoke CI job is still wanted
-— tracked in TODO.md.)
+at `require`. Capped to `{138,255}`. A musl *load*-and-smoke CI job (`musl-load`)
+now `require`s the gem and smoke-tests redaction on `ruby:3.3-alpine`, so this
+class can no longer ship undetected.
+
+### ASan/UBSan memory-safety gate (`ci/fuzz-asan-harness`)
+The v19.1 `OP_EOL` out-of-bounds read — an EOL-anchored match probing one byte
+past the buffer end — was found by AddressSanitizer and is invisible to the Ruby
+specs (it never corrupts output, only reads a redzone). A new CI job builds the
+matcher engine standalone under `-fsanitize=address,undefined
+-fno-sanitize-recover=all` and drives it over an adversarial corpus (anchors
+flush to buffer bounds, empty/one-byte inputs, all-boundary runs, max-length
+`{m,n}` tokens, truncated multibyte tails) plus a seeded splitmix64 fuzz loop,
+including the custom-pattern add/scan/remove lifecycle (use-after-free territory).
+Deterministic (fixed corpus + fixed seed), so it's a hard gate like alloc-gate,
+not a flaky coverage-guided fuzzer. `benchmark/ci_asan_fuzz.c` +
+`benchmark/run_asan_fuzz.sh`; mirrors the `ci_alloc_gate.c` standalone-build
+pattern (include `matcher.c`, link `patterns.c`, no Ruby).
 
 ---
 

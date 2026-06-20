@@ -50,6 +50,20 @@ jobs:
       - name: Build and run the allocation-regression gate
         run: benchmark/run_alloc_gate.sh
 
+  asan-fuzz-gate:
+    name: ASan/UBSan memory-safety gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      # No Ruby needed: builds the matcher engine standalone under
+      # -fsanitize=address,undefined and drives it over an adversarial corpus +
+      # a seeded fuzz loop. The v19.1 OP_EOL out-of-bounds read was found by
+      # ASan and is invisible to the Ruby specs; this gate catches that class.
+      # Deterministic (fixed corpus + fixed seed) -> hard gate, like alloc-gate.
+      - name: Build and run the ASan/UBSan fuzz gate
+        run: benchmark/run_asan_fuzz.sh
+
   throughput-gate:
     name: Relative throughput regression gate
     runs-on: ubuntu-latest
