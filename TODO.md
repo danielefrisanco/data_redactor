@@ -79,10 +79,6 @@ pass. Only if scan-heavy large inputs ever matter.
   (the load-and-smoke class is covered). Widening it to a `3.1`–`3.4` Alpine
   matrix would catch a musl regcomp divergence that is Ruby-version specific.
   Nice-to-have, not blocking.
-- **Throughput-trend visualization over time** (optional) — the in-PR throughput
-  gate keeps no history. If slow drift across many small PRs becomes a concern,
-  layer `github-action-benchmark` on `gh-pages` to plot the ratio and post
-  before/after PR comments. Nice-to-have, not blocking.
 
 ---
 

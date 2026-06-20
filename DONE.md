@@ -198,6 +198,25 @@ not a flaky coverage-guided fuzzer. `benchmark/ci_asan_fuzz.c` +
 `benchmark/run_asan_fuzz.sh`; mirrors the `ci_alloc_gate.c` standalone-build
 pattern (include `matcher.c`, link `patterns.c`, no Ruby).
 
+### Throughput-trend history + PR comment (`ci/throughput-trend-viz`)
+The in-PR `throughput-gate` enforces a hard ratio floor but keeps no history, so
+slow drift across many small PRs would be invisible. A new `throughput-trend`
+job records the C/pure-Ruby ratio over time and surfaces it. Design choices that
+mattered: (1) **ratio only** in the recorded series — the absolute i/s figures
+swing 5–15% with runner speed, so feeding them to the alert threshold would fire
+false alerts; the ratio cancels runner speed, so a drop in it is a real engine
+regression. The gate emits the ratio JSON as an opt-in side effect when
+`BENCHMARK_JSON` is set, only on a passing run. (2) **No gh-pages** — the `docs`
+job already owns GitHub Pages via the Actions deploy path, and a repo's Pages has
+a single source, so the chart can't share that URL. Instead the history lives in
+`actions/cache` via `github-action-benchmark`'s `external-data-json-path` (which
+never commits/pushes), and the action posts a comment comparing each run to the
+previous baseline (`comment-always`) — the "show the result in the PR" route.
+(3) **Only main advances the series** — PR runs compare against the baseline but
+`save-data-file:false` + a main-gated cache save keep PR measurements out of the
+history, so the chart is a clean record of merged commits. `fail-on-alert` +
+`alert-threshold: 110%` make a >10% ratio drop fail the job.
+
 ---
 
 ## C extension refactor
