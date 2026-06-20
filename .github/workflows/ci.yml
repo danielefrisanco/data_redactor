@@ -87,6 +87,84 @@ jobs:
       - name: Run the relative-throughput gate
         run: bundle exec ruby benchmark/ci_throughput_gate.rb
 
+  throughput-trend:
+    name: Throughput-trend history + PR comment
+    runs-on: ubuntu-latest
+    needs: test
+
+    # The in-PR throughput-gate enforces a hard floor but keeps no history, so
+    # slow drift across many small PRs is invisible. This job records the ratio
+    # over time and surfaces it: a cached JSON file holds the series, the action
+    # posts a comment comparing each run to the previous baseline, and a drop
+    # past the alert threshold fails the job. No gh-pages branch — the docs job
+    # already owns Pages via the Actions deploy path, so the history lives in the
+    # actions/cache (external-data-json-path), not a published branch.
+
+    permissions:
+      contents: read
+      pull-requests: write   # github-action-benchmark posts the comparison comment
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Compile C extension
+        run: bundle exec rake compile
+
+      # Reuses the same gate; BENCHMARK_JSON makes it also emit the ratio in
+      # github-action-benchmark's customBiggerIsBetter schema (ratio only — the
+      # absolute i/s figures are too runner-noisy to alert on; see the gate).
+      - name: Measure throughput ratio
+        run: BENCHMARK_JSON=ratio.json bundle exec ruby benchmark/ci_throughput_gate.rb
+
+      # Persist the history file ourselves: external-data-json-path mode never
+      # commits or pushes, it only read-modify-writes a local file. The cache
+      # carries the series between runs. restore-keys lets a PR read the latest
+      # main baseline even though its own exact key has no prior entry.
+      - name: Restore throughput history
+        uses: actions/cache/restore@v5.0.5
+        with:
+          path: ./bench-cache
+          key: throughput-history-${{ github.run_id }}
+          restore-keys: |
+            throughput-history-
+
+      - name: Record + compare against baseline
+        uses: benchmark-action/github-action-benchmark@v1.22.1
+        with:
+          name: data_redactor throughput
+          tool: customBiggerIsBetter
+          output-file-path: ratio.json
+          external-data-json-path: ./bench-cache/throughput.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Ratio cancels runner speed, so a >10% drop vs. the previous run is a
+          # real engine regression, not noise. Bigger-is-better: alert fires when
+          # current < previous / 1.10.
+          alert-threshold: "110%"
+          comment-always: true
+          comment-on-alert: true
+          fail-on-alert: true
+          summary-always: true
+          auto-push: false
+          # On a PR, compare against the main baseline but do NOT append the PR's
+          # own measurement — only main pushes should advance the series, so the
+          # chart stays a clean history of merged commits.
+          save-data-file: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+      # Save the advanced history only on push to main (the series of record). PR
+      # runs compared against the baseline above but must not persist, so the
+      # cache write is gated on the same condition.
+      - name: Save throughput history
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5.0.5
+        with:
+          path: ./bench-cache
+          key: throughput-history-${{ github.run_id }}
+
   cross-compile-smoke:
     name: Cross-compile smoke test (x86_64-linux)
     runs-on: ubuntu-latest

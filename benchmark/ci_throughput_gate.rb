@@ -13,8 +13,14 @@
 #
 #   ruby benchmark/ci_throughput_gate.rb            # uses MIN_RATIO below
 #   MIN_RATIO=1.8 ruby benchmark/ci_throughput_gate.rb
+#
+# Set BENCHMARK_JSON=<path> to also write the result in github-action-benchmark's
+# customBiggerIsBetter schema, for the throughput-trend job to append to the
+# gh-pages history. This is a side effect of the same measurement — it never
+# changes the pass/fail decision (the ratio floor above is the only gate).
 
 require "benchmark/ips"
+require "json"
 require_relative "../lib/data_redactor"
 require_relative "support/corpus"
 
@@ -49,3 +55,18 @@ if ratio < MIN_RATIO
 end
 
 puts "OK: C engine #{format('%.2f', ratio)}x faster than pure Ruby (>= #{MIN_RATIO}x floor)"
+
+# Emit the trend data point only on a passing run: a regression aborts above, so
+# the history records a ratio the gate accepted, not a failing one.
+#
+# Only the RATIO goes in the alerting JSON. The absolute i/s figures swing 5-15%
+# with runner speed (the whole reason this gate is ratio-based), so feeding them
+# to github-action-benchmark's threshold would fire false alerts; they stay in
+# the log above as informational. The ratio cancels runner speed, so a drop in
+# it is a real engine regression — safe to alert on.
+if (json_path = ENV["BENCHMARK_JSON"])
+  File.write(json_path, JSON.pretty_generate([
+    { "name" => "C/pure-Ruby throughput ratio", "unit" => "x", "value" => ratio.round(3) }
+  ]))
+  puts "Wrote benchmark JSON to #{json_path}"
+end
