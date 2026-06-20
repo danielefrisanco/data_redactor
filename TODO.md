@@ -90,6 +90,15 @@ matched: Luhn (credit cards), mod-97 (IBANs), Italian Codice Fiscale check char,
 Spanish DNI letter, Brazilian CPF/CNPJ, PESEL, CNP, etc. Probably an opt-in
 per-call flag (`strict: true`) since validation costs CPU.
 
+- **Re-check the spaced-card vs Aadhaar collision after checksums land.** A
+  space-grouped credit card `4111 1111 1111 1111` currently matches
+  `indian_aadhaar` (national_id) on its first 12 digits, NOT `credit_card`
+  (financial) — the unspaced `4111111111111111` matches credit_card correctly.
+  (Found 2026-06-20 while writing `examples/ruby_llm.rb`.) Luhn (card) +
+  Verhoeff (Aadhaar) validation should disambiguate: the spaced form's 16 digits
+  pass Luhn as a Visa card, and the 12-digit Aadhaar slice would fail Verhoeff.
+  Verify this resolves once #7 is in; if not, may need ordering/anchoring work.
+
 ### Streaming API (#8)
 `DataRedactor.redact_stream(input_io, output_io)`. Chunk boundaries can split a
 match — needs an overlap/lookback window equal to the longest pattern. Solve
