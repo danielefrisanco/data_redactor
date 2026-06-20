@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was there without seeing it. Both compose with `only:`/`except:` and are
   forwarded by `redact_deep`, `redact_json`, and the integrations. Additive —
   two new values for the existing `placeholder:` keyword; no behaviour changes.
+- **CI: ASan/UBSan memory-safety gate.** New job builds the matcher engine
+  standalone under `-fsanitize=address,undefined` and drives it over an
+  adversarial corpus + seeded fuzz loop (catches the `OP_EOL`-class OOB read).
+- **CI: throughput-trend history + PR comment.** New job records the C/pure-Ruby
+  ratio over time (history in `actions/cache`, no gh-pages), posts a sticky PR
+  comment comparing each run to the previous point, and fails on a >10% drop.
 
 ## [0.15.0] - 2026-06-17
 

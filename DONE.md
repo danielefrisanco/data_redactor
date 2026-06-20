@@ -198,24 +198,34 @@ not a flaky coverage-guided fuzzer. `benchmark/ci_asan_fuzz.c` +
 `benchmark/run_asan_fuzz.sh`; mirrors the `ci_alloc_gate.c` standalone-build
 pattern (include `matcher.c`, link `patterns.c`, no Ruby).
 
-### Throughput-trend history + PR comment (`ci/throughput-trend-viz`)
+### Throughput-trend history + PR comment (`ci/throughput-trend-viz`, fixed in `fix/throughput-trend-comment-perms`)
 The in-PR `throughput-gate` enforces a hard ratio floor but keeps no history, so
-slow drift across many small PRs would be invisible. A new `throughput-trend`
-job records the C/pure-Ruby ratio over time and surfaces it. Design choices that
-mattered: (1) **ratio only** in the recorded series — the absolute i/s figures
-swing 5–15% with runner speed, so feeding them to the alert threshold would fire
-false alerts; the ratio cancels runner speed, so a drop in it is a real engine
-regression. The gate emits the ratio JSON as an opt-in side effect when
-`BENCHMARK_JSON` is set, only on a passing run. (2) **No gh-pages** — the `docs`
-job already owns GitHub Pages via the Actions deploy path, and a repo's Pages has
-a single source, so the chart can't share that URL. Instead the history lives in
-`actions/cache` via `github-action-benchmark`'s `external-data-json-path` (which
-never commits/pushes), and the action posts a comment comparing each run to the
-previous baseline (`comment-always`) — the "show the result in the PR" route.
-(3) **Only main advances the series** — PR runs compare against the baseline but
-`save-data-file:false` + a main-gated cache save keep PR measurements out of the
-history, so the chart is a clean record of merged commits. `fail-on-alert` +
-`alert-threshold: 110%` make a >10% ratio drop fail the job.
+slow drift across many small PRs would be invisible. The `throughput-trend` job
+records the C/pure-Ruby ratio over time and posts it as a PR comment.
+
+The first cut used `github-action-benchmark`; it shipped to main and produced no
+comment. Two reasons, both instructive: that action's `comment-always` posts a
+**commit** comment (commits API, needs `contents: write`), not a PR-thread
+comment, and the job had only `contents: read` — so the POST was rejected while
+the action still logged success (silent no-op). PR-thread comments are explicitly
+"future work" in that action, never implemented. So the action was dropped
+entirely in favour of a self-contained comparator (`benchmark/throughput_trend.rb`)
++ the built-in `gh` CLI.
+
+Design that shipped: (1) **ratio only** — absolute i/s swings 5–15% with runner
+speed, so it's untrackable; the ratio cancels runner speed, so a drop in it is a
+real engine regression. The gate emits the ratio JSON as an opt-in side effect
+when `BENCHMARK_JSON` is set, only on a passing run. (2) **No gh-pages** — the
+`docs` job already owns Pages via the Actions deploy path (single source), so
+history lives in `actions/cache` as a plain JSON series; nothing is committed or
+pushed. (3) **Sticky PR comment** — `throughput_trend.rb` compares the current
+ratio to the previous point and emits Markdown; a step upserts it on the PR via
+`gh api` (one comment per PR, marker-identified, edited in place). It posts even
+when the compare step fails, so a regression is visible. (4) **Only main advances
+the series** — `APPEND=1` and the cache save are gated on push-to-main, so PR
+runs compare against the baseline without polluting it. (5) A **>10% drop** makes
+the comparator exit non-zero (pipefail propagates it through the `tee`), failing
+the job.
 
 ---
 

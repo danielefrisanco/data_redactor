@@ -93,16 +93,19 @@ jobs:
     needs: test
 
     # The in-PR throughput-gate enforces a hard floor but keeps no history, so
-    # slow drift across many small PRs is invisible. This job records the ratio
-    # over time and surfaces it: a cached JSON file holds the series, the action
-    # posts a comment comparing each run to the previous baseline, and a drop
-    # past the alert threshold fails the job. No gh-pages branch — the docs job
-    # already owns Pages via the Actions deploy path, so the history lives in the
-    # actions/cache (external-data-json-path), not a published branch.
+    # slow drift across many small PRs is invisible. This job records the C/Ruby
+    # ratio over time and surfaces it: a cached JSON series holds the history,
+    # benchmark/throughput_trend.rb compares each run to the previous point,
+    # posts the result as a PR comment, and fails on a >10% ratio drop.
+    #
+    # No gh-pages branch (the docs job already owns Pages via the Actions deploy
+    # path) and no github-action-benchmark: that tool only posts COMMIT comments,
+    # not PR-thread comments, and couples history to gh-pages. We keep history in
+    # actions/cache and post with the built-in gh CLI — no third-party action.
 
     permissions:
       contents: read
-      pull-requests: write   # github-action-benchmark posts the comparison comment
+      pull-requests: write   # gh pr comment posts the trend to the PR thread
 
     steps:
       - uses: actions/checkout@v6.0.2
@@ -115,16 +118,14 @@ jobs:
       - name: Compile C extension
         run: bundle exec rake compile
 
-      # Reuses the same gate; BENCHMARK_JSON makes it also emit the ratio in
-      # github-action-benchmark's customBiggerIsBetter schema (ratio only — the
-      # absolute i/s figures are too runner-noisy to alert on; see the gate).
+      # Reuses the gate; BENCHMARK_JSON makes it also emit the ratio (ratio only
+      # — absolute i/s is too runner-noisy to track; see the gate).
       - name: Measure throughput ratio
         run: BENCHMARK_JSON=ratio.json bundle exec ruby benchmark/ci_throughput_gate.rb
 
-      # Persist the history file ourselves: external-data-json-path mode never
-      # commits or pushes, it only read-modify-writes a local file. The cache
-      # carries the series between runs. restore-keys lets a PR read the latest
-      # main baseline even though its own exact key has no prior entry.
+      # restore-keys lets a PR read the latest main baseline even though its own
+      # run_id-keyed entry has no prior hit. The series is plain JSON; nothing is
+      # committed or pushed.
       - name: Restore throughput history
         uses: actions/cache/restore@v5.0.5
         with:
@@ -133,31 +134,47 @@ jobs:
           restore-keys: |
             throughput-history-
 
-      - name: Record + compare against baseline
-        uses: benchmark-action/github-action-benchmark@v1.22.1
-        with:
-          name: data_redactor throughput
-          tool: customBiggerIsBetter
-          output-file-path: ratio.json
-          external-data-json-path: ./bench-cache/throughput.json
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Ratio cancels runner speed, so a >10% drop vs. the previous run is a
-          # real engine regression, not noise. Bigger-is-better: alert fires when
-          # current < previous / 1.10.
-          alert-threshold: "110%"
-          comment-always: true
-          comment-on-alert: true
-          fail-on-alert: true
-          summary-always: true
-          auto-push: false
-          # On a PR, compare against the main baseline but do NOT append the PR's
-          # own measurement — only main pushes should advance the series, so the
-          # chart stays a clean history of merged commits.
-          save-data-file: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # Compare vs. the previous point and write the comment body. APPEND=1 only
+      # on push to main: PR runs compare against the baseline but must not advance
+      # the series, so the history stays a clean record of merged commits. A drop
+      # >10% makes the script exit non-zero; pipefail propagates that through the
+      # tee so the step (and job) fails.
+      - name: Compare against baseline
+        id: trend
+        env:
+          RATIO_JSON: ratio.json
+          HISTORY: ./bench-cache/history.json
+          COMMIT: ${{ github.sha }}
+          APPEND: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && '1' || '0' }}
+        run: |
+          set -o pipefail
+          mkdir -p bench-cache
+          ruby benchmark/throughput_trend.rb | tee comment.md
 
-      # Save the advanced history only on push to main (the series of record). PR
-      # runs compared against the baseline above but must not persist, so the
-      # cache write is gated on the same condition.
+      # Post the trend to the PR thread. Sticky: edit the existing comment if one
+      # exists (identified by the marker), else create it — so a PR with many
+      # pushes keeps one comment, not a stack. `!cancelled()` so it still runs
+      # when the compare step FAILED on a regression, making the drop visible on
+      # the PR; skipped only if the run was cancelled.
+      - name: Post PR comment
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker='<!-- throughput-trend -->'
+          body="$marker"$'\n'"$(cat comment.md)"
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                 --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -f body="$body" >/dev/null
+            echo "updated comment $id"
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" >/dev/null
+            echo "created comment"
+          fi
+
+      # Advance the series only on push to main (the record of merged commits).
       - name: Save throughput history
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5.0.5
