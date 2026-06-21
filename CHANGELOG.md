@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Transparent `ruby_llm` integration (opt-in monkeypatch).**
+  `require "data_redactor/integrations/ruby_llm"` then
+  `DataRedactor::Integrations::RubyLLM.install!` prepends a small patch onto
+  `RubyLLM::Protocol#render`, so **every** outbound request is deep-redacted
+  before it is posted — no per-call `.redact`. One hook covers all providers
+  (Anthropic, OpenAI, Gemini, Bedrock, Responses) and scrubs the user prompt,
+  system prompt, tool definitions, and any file/command-output that an agent fed
+  back as a tool result (all inlined as strings in the payload). Forwards
+  `only:`/`except:`/`placeholder:`; idempotent; fails fast at `install!` if an
+  unsupported `ruby_llm` version is loaded or `Protocol#render` is missing.
+  **Limitation:** base64 attachments (PDFs/images/audio) and URL-referenced
+  files are not redacted — the secret bytes are encoded or remote, so patterns
+  cannot see them. This is a monkeypatch on internal API and is version-pinned;
+  the clean alternative remains per-call `DataRedactor.redact` before `chat.ask`.
+
 ## [0.16.0] - 2026-06-21
 
 ### Added

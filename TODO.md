@@ -80,6 +80,15 @@ pass. Only if scan-heavy large inputs ever matter.
   matrix would catch a musl regcomp divergence that is Ruby-version specific.
   Nice-to-have, not blocking.
 
+- **RuboCop (lint job)** — no linter today; style is enforced by hand via
+  CLAUDE.md. Add `rubocop` (+ likely `rubocop-rspec`) as a dev dependency with a
+  **curated `.rubocop.yml`** matching the house style — not the defaults, which
+  conflict with several CLAUDE.md rules (no forced comments, "three similar lines
+  beats a premature helper", keyword-arg conventions). Add a `rake rubocop` task
+  and a CI lint job. Tune cops to the existing code rather than mass-rewriting it;
+  `# rubocop:disable` is fine for deliberate divergences. Low priority — a
+  polish/contributor-experience item, not correctness.
+
 ---
 
 ## Features (roadmap, not yet started)
@@ -231,33 +240,16 @@ Two hook points:
    on the request path we'd get the **already-serialized JSON string**, not the
    Hash (parse → redact → re-serialise; workable but less clean). Our #765 comment
    asks them to guarantee pre-`request :json` (Hash) ordering instead.
-3. **Monkeypatch (LAST RESORT — the only way to get automatic redaction TODAY,
-   pre-#765).** The #765 body documents that **three observability gems already
-   monkeypatch RubyLLM** with three different strategies:
-   `sinaptia/ruby_llm-instrumentation` (includes modules + aliases originals),
-   `thoughtbot/opentelemetry-instrumentation-ruby_llm` (prepends `Chat`/`Embedding`),
-   `sergey-homenko/llm_cost_tracker` (prepends `Provider#complete`/`#embed`/
-   `#transcribe`). So it's a proven (if fragile) pattern, and prepending
-   `Provider#complete` to redact `messages`/`payload` before `super` would give us
-   automatic redaction now. **Cons:** unstable load order between patching gems,
-   alias/prepend collisions, breaks whenever RubyLLM reshapes internals (#765 exists
-   precisely to retire this). Only revisit if a user needs automatic redaction
-   before #765 lands AND accepts the fragility. Default remains: wait for #765.
-
-   **How the three gems actually patch (verified 2026-06-21 against their `main`):**
-   - `sinaptia/ruby_llm-instrumentation` — `RubyLLM::Chat.include` + `alias_method
-     :original_complete, :complete` then redefines `complete` (alias monkeypatch).
-   - `thoughtbot/opentelemetry-instrumentation-ruby_llm` — `::RubyLLM::Chat.prepend`
-     + `::RubyLLM::Embedding.singleton_class.prepend`, overriding `complete` /
-     `execute_tool` and calling `super` (prepend monkeypatch).
-   - `sergey-homenko/llm_cost_tracker` — `install_patch` → `target.prepend(patch)`
-     on `RubyLLM::Provider`; also ships its own `Faraday::Middleware` subclass.
-   **All three still monkeypatch; none use a public hook.** Notably the *author of
-   #765* (sergey) still prepends in his own gem — the issue is unsolved even for its
-   proposer. Closest precedent to what we'd want is the `Provider` prepend (that's
-   where `payload` is built, so we could redact `messages`/`payload` before `super`).
-   If we ever ship a monkeypatch fallback, copy the prepend approach + the
-   already-patched guard (`target.ancestors.include?(patch)`); avoid the alias style.
+3. **Monkeypatch (SHIPPED 0.17.0 — `Integrations::RubyLLM.install!`).** Prepends
+   `RubyLLM::Protocol#render` and deep-redacts the rendered payload before it's
+   posted; covers all providers + tool results, version-pinned + fail-fast. See
+   DONE.md for the rationale (why `Protocol#render`, the base64 limitation, why it's
+   opt-in). This is the transparent fallback until #765 lands; once it does, hook #2
+   replaces it. Reference — how the three observability gems patch (verified
+   2026-06-21): sinaptia aliases `Chat#complete`, thoughtbot prepends
+   `Chat`/`Embedding`, llm_cost_tracker prepends `Provider`. All observe-only; none
+   rewrite the payload, so none were a usable template — we patch `Protocol#render`
+   (lower, post-render) instead.
 
    **Upstream issue: crmne/ruby_llm#765** ("[FEATURE] Expose
    `config.faraday_middleware` so observability gems can stop monkey-patching",
@@ -311,6 +303,17 @@ The C core is portable; the Ruby-specific layer is thin. Two shapes: a NIF
 Elixir over `:re` (PCRE). Defer until the Ruby gem has real adoption and someone
 asks. Cost: maintenance doubles, NIF segfaults crash the whole BEAM VM, separate CI
 + Hex publishing. Documented so the option isn't forgotten.
+
+### GitHub wiki
+Set up the project wiki at https://github.com/danielefrisanco/data_redactor/wiki so
+the README can stay a focused entry point while deeper material lives in the wiki.
+Candidate pages: full pattern catalogue (per-country PII, with examples); the C
+engine internals (NFA → bytecode → lazy DFA, the v19 story — link `docs/research_log.md`);
+integration guides (Logger/Rails/Rack/Claude/OpenAI/**RubyLLM**, including the
+`install!` transparent mode and its caveats); custom-pattern + `name_pattern`
+cookbook; performance/benchmark methodology; FAQ (thread-safety, what's NOT
+redacted, base64/URL limitation). Keep it DRY — link back to CHANGELOG/DONE rather
+than restating; don't duplicate the YARD API docs (those stay on GitHub Pages).
 
 ---
 

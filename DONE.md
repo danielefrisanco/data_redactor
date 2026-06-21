@@ -166,6 +166,29 @@ rewrite needed.
   `Integrations::OpenAI` `.redact_messages` + `.redact_response`; deep-copy (never
   mutate), pass non-text blocks through, forward `only:`/`except:`/`placeholder:`,
   no SDK dependency.
+- **`#redact` refinements (0.16.0)** — `require "data_redactor/refinements"` +
+  `using DataRedactor::Refinements` adds `#redact` to String (→ `redact`) and
+  Hash/Array (→ `redact_deep`). Chose **refinements over a global monkeypatch** so
+  the sugar is lexically scoped — no collision risk, apps that don't opt in are
+  untouched. `DataRedactor.redact` stays the primary API.
+- **RubyLLM transparent integration (0.17.0)** — `Integrations::RubyLLM.install!`
+  prepends `RubyLLM::Protocol#render` and deep-redacts the rendered request payload
+  before it's posted. **Why `Protocol#render`:** since `main` moved payload assembly
+  into a per-provider protocol layer, `render` is the single point where every
+  provider (Anthropic/OpenAI/Gemini/Bedrock/Responses) has its final request Hash —
+  one hook covers them all, shape-agnostically (`redact_deep`), so it also scrubs
+  file contents and shell-command output an agent fed back as tool results (inlined
+  as strings). **Why a monkeypatch:** RubyLLM exposes no public seam to rewrite the
+  outbound body — `setup_middleware` is private, the `instrumenter` hook is
+  observe-only, and `after_tool_result` callbacks can't mutate (return value
+  discarded). #765 (Faraday-middleware option) would give a clean seam, but crmne
+  "already implemented in main" was wrong (verified: not there) and the issue was
+  reopened. **Guard rails:** opt-in `install!` (no surprise patching on require),
+  idempotent, dev-time version pin + fail-fast at install if the version is
+  unsupported or `Protocol#render` moved. **Known gap:** base64 attachments and
+  URL-referenced files aren't redacted (encoded/remote — patterns can't see them).
+  Form A (per-call `DataRedactor.redact`) stays the recommended default; this is the
+  transparent fallback until #765 lands.
 - **Distribution / QoL** — published to RubyGems (0.5.0, 2026-05-08); CI matrix
   Ruby 3.1–3.4 on Linux glibc + musl; OIDC trusted publisher; 100% YARD docs +
   GitHub Pages deploy; README thread-safety note + Shields.io badges; precompiled
