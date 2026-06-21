@@ -180,6 +180,24 @@ safe_json = DataRedactor.redact_json('{"email":"alice@example.com","count":3}')
 DataRedactor.redact_json("not json")  # => JSON::ParserError
 ```
 
+### `#redact` refinements (opt-in)
+
+Prefer `"text".redact` over `DataRedactor.redact("text")`? Opt into the refinement. It adds `#redact` to `String` (via `redact`) and to `Hash`/`Array` (via `redact_deep`) **only in the files that `using` it** — refinements are lexically scoped, so the core classes are never monkey-patched globally and there is no collision risk for apps that don't opt in. `DataRedactor.redact` remains the primary API.
+
+```ruby
+require "data_redactor/refinements"
+using DataRedactor::Refinements
+
+"email alice@example.com".redact            # => "email [REDACTED]"
+{ token: "AKIAIOSFODNN7EXAMPLE" }.redact    # => { token: "[REDACTED]" }
+["a@b.com", 3].redact                       # => ["[REDACTED]", 3]
+
+# Handy right before sending text to an LLM:
+chat.ask(user_input.redact)
+```
+
+`#redact` forwards `only:`/`except:`/`placeholder:` and never mutates the receiver. Without `using DataRedactor::Refinements` in the current file, `#redact` is not defined.
+
 ### Custom patterns
 
 Teams often have internal IDs that the gem can't ship. Register them at boot — or at runtime from any thread (registration is thread-safe, see [Thread safety](#thread-safety)):
