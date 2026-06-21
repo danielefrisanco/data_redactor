@@ -80,6 +80,15 @@ pass. Only if scan-heavy large inputs ever matter.
   matrix would catch a musl regcomp divergence that is Ruby-version specific.
   Nice-to-have, not blocking.
 
+- **RuboCop (lint job)** — no linter today; style is enforced by hand via
+  CLAUDE.md. Add `rubocop` (+ likely `rubocop-rspec`) as a dev dependency with a
+  **curated `.rubocop.yml`** matching the house style — not the defaults, which
+  conflict with several CLAUDE.md rules (no forced comments, "three similar lines
+  beats a premature helper", keyword-arg conventions). Add a `rake rubocop` task
+  and a CI lint job. Tune cops to the existing code rather than mass-rewriting it;
+  `# rubocop:disable` is fine for deliberate divergences. Low priority — a
+  polish/contributor-experience item, not correctness.
+
 ---
 
 ## Features (roadmap, not yet started)
