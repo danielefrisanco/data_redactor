@@ -358,7 +358,28 @@ chat.ask(DataRedactor.redact(user_input))
 # the model receives: "My card is [REDACTED] and my email is [REDACTED]"
 ```
 
-Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.redact` before passing it to `ask`. This is a per-call step you opt into — RubyLLM does not yet expose a request hook for automatic, transparent redaction of every outbound call ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765) tracks the connection-middleware hook that would enable it).
+Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.redact` before passing it to `ask`. This is a per-call step you opt into, and it's the recommended approach.
+
+#### Transparent mode (every request, no per-call wrapping)
+
+If you'd rather redact **every** outbound request automatically — including the system prompt, tool definitions, and any file contents or shell-command output an agent feeds back as a tool result — opt into the monkeypatch:
+
+```ruby
+require "ruby_llm"
+require "data_redactor/integrations/ruby_llm"
+
+DataRedactor::Integrations::RubyLLM.install!   # once, at boot
+
+chat = RubyLLM.chat(model: "claude-opus-4-8")
+chat.ask("my card is 4111111111111111")        # sent as "my card is [REDACTED]"
+```
+
+`install!` prepends a patch onto `RubyLLM::Protocol#render` — the one point where every provider (Anthropic, OpenAI, Gemini, Bedrock, Responses) has assembled its final request — and deep-redacts the payload before it's posted. It forwards `only:`/`except:`/`placeholder:`, is idempotent, and **fails fast** at `install!` if an unsupported `ruby_llm` version is loaded or the internal API has moved (so it never silently leaks).
+
+Two caveats, by design:
+
+- **It's a monkeypatch on RubyLLM internals**, pinned to a supported version range. Prefer per-call `DataRedactor.redact` (above) unless you specifically need transparency. RubyLLM does not yet expose a public request hook ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765) tracks the connection-middleware hook that would let us drop the patch).
+- **Base64 attachments** (PDFs, images, audio sent inline) and **URL-referenced files** are not redacted — the sensitive bytes are encoded or remote, so patterns cannot see them.
 
 ## Detected patterns (89 total)
 
