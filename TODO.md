@@ -33,17 +33,13 @@ future need arises, a bounded re-scan around each `[REDACTED]` edge would recove
 byte-identical behaviour without a full multi-pass. (See the divergence ledger in
 DONE.md.)
 
-### Full per-call thread re-entrancy
-`mm_scan` still mutates per-engine scan scratch (`iban_last_end`, `digit_last_end`,
-DFA scratch). Phase 1 is safe only because MRI's GVL serialises C-extension calls.
-Full re-entrancy needs the mutable scan scratch in a per-call context struct
-(alloca/stack or caller-supplied). Prerequisite for releasing the GVL further or
-supporting Ractors.
-
 ### Recover the ~3% small-input throughput
-Lost to the per-thread-state indirection. Hoist the `thread_state()` generation
-check out of the hot path / cache the `scan_state_t *` base; consider inlining. Low
-priority (within run variance) but worth a pass before the paper's benchmark table.
+**Partly addressed in 0.17.1** — the per-call re-entrancy refactor fetches the
+per-thread cache base **once** per `mm_scan` (not per pattern), lifting the
+`thread_state()` generation check out of the per-pattern inner loop. Remaining: if
+the small-input regression persists in the paper's benchmark table, consider
+inlining `thread_state()` or further caching the `scan_state_t *` base. Low
+priority (within run variance) — re-measure before doing more.
 
 ### Widen the GVL-free region to custom patterns
 Blocked on moving customs onto the v19 engine (multibyte-UTF-8-in-char-classes
@@ -292,6 +288,36 @@ plus a negative test that a clean payload round-trips byte-identical. Open
 question to resolve at build time: exact RubyLLM version that stabilised the
 middleware/config-registration API (pin the minimum in the integration's doc
 comment, not the gemspec).
+
+### MCP server (`data_redactor-mcp`)
+Expose redaction as a [Model Context Protocol](https://modelcontextprotocol.io)
+server so an MCP client — Claude Code (CLI / VS Code extension / desktop), or any
+other agent — can call `redact` as a tool. Use case: an agent scrubs secrets/PII
+out of text before it logs, pastes, or forwards it.
+
+**No C-code extraction needed.** MCP is just JSON-RPC over stdio (or HTTP); an MCP
+server is a small long-lived process that `require "data_redactor"` like any other
+consumer and answers `tools/call`. The C extension already *is* a reusable library
+(the compiled `.so` behind the gem) — the server links it transitively by depending
+on the gem. So this does **not** require splitting the engine out; the request's
+premise that it might is the thing to note and dismiss here.
+
+Shape (when started):
+- New entrypoint (likely a separate gem `data_redactor-mcp`, or a `bin/` + extra
+  in the same repo) so the core gem keeps **zero runtime deps** — an MCP SDK is a
+  dependency, and it must not leak into the pure gem (CLAUDE.md: "no runtime gem
+  dependencies"). Soft-require / separate-gem pattern, same as the integrations.
+- One tool, `redact`, params: `text` (required), `only`/`except` (tag filters),
+  `placeholder` — forwards straight to `DataRedactor.redact`. Optionally a
+  `redact_json` tool for structured payloads.
+- Stateless, read-only, returns a copy (the gem already guarantees this) — no
+  filesystem or network surface, which keeps it safe to register as an MCP server.
+- Decide the SDK: official Ruby MCP SDK if mature enough, else hand-roll the
+  JSON-RPC loop over stdin/stdout (small, and keeps the dep surface tiny).
+
+Open question: is this worth a tool when a caller can already `require` the gem
+directly? Value is only for **agent** workflows where the consumer is an LLM that
+can't run Ruby inline but can call MCP tools. Defer until that workflow is real.
 
 ### Rack `:env_logs` surface
 Scrub `PATH_INFO` / `QUERY_STRING` for downstream access loggers. Deferred — needs

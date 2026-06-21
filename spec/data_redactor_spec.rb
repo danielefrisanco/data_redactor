@@ -1210,6 +1210,45 @@ RSpec.describe DataRedactor do
         raise errors.pop until errors.empty?
         expect(errors).to be_empty
       end
+
+      # Per-CALL re-entrancy of the selective-merge cursors (digit run + IBAN
+      # union passes). Those cursors used to live in the per-thread scan cache;
+      # they now live in a stack-allocated scan_ctx_t, one set per mm_scan call.
+      # This test stresses exactly that: each thread redacts a batch of DISTINCT,
+      # digit/IBAN-dense inputs (every input has many adjacent digit runs and
+      # several IBANs, the cases the cursors arbitrate), each compared to its OWN
+      # single-threaded reference. If a cursor leaked across calls or across the
+      # GVL-released parallel scans, an interleaving would carry one input's
+      # cursor into another and the output would diverge from its reference.
+      it "keeps selective-merge cursors call-private under parallel digit/IBAN load" do
+        # Each input is > the 4 KB GVL threshold and packed with the merge-pass
+        # cases: spaced + unspaced card-length runs, SSNs, and multiple IBANs.
+        inputs = Array.new(12) do |k|
+          line = "rec#{k} card 4111 1111 1111 1111 acct 5500005555555559 " \
+                 "ssn 123-45-6789 iban DE89370400440532013000 " \
+                 "iban2 GB29NWBK60161331926819 nums 1234 5678 9012 3456\n"
+          line * 120 # ~12 KB each
+        end
+        references = inputs.map { |i| DataRedactor.redact(i) }
+        references.each { |r| expect(r).not_to include("4111 1111 1111 1111") }
+
+        errors = Queue.new
+        readers = Array.new(8) do
+          Thread.new do
+            150.times do
+              k = rand(inputs.length)
+              got = DataRedactor.redact(inputs[k])
+              raise "merge-cursor leak: input #{k} diverged" unless got == references[k]
+            end
+          rescue => e
+            errors << e
+          end
+        end
+        readers.each(&:join)
+
+        raise errors.pop until errors.empty?
+        expect(errors).to be_empty
+      end
     end
   end
 

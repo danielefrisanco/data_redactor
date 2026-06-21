@@ -389,10 +389,11 @@ typedef struct {
 
 /* engine_t holds ONLY immutable, compiled state — built once at mm_init()/mm_add()
  * and never written during a scan, so it is safe to share read-only across
- * threads. All per-scan mutable state (NFA scratch, merge cursors) and the lazy
- * DFA cache live in scan_state_t, which is per-thread (t_block below). This
- * split is what lets redact/scan release the GVL: with no shared writes during a
- * scan, concurrent scans on distinct threads cannot race. */
+ * threads. Mutable state is split two ways: the reusable NFA scratch + lazy DFA
+ * cache live in scan_state_t, which is per-thread (t_block below); the genuinely
+ * per-call merge cursors live in scan_ctx_t, stack-allocated by each mm_scan.
+ * This split is what lets redact/scan release the GVL: with no shared writes
+ * during a scan, concurrent scans on distinct threads cannot race. */
 typedef struct {
     prog_t      prog;
     size_t      min_len;
@@ -414,9 +415,13 @@ typedef struct {
     int         iban_member;
 } engine_t;
 
-/* Per-engine MUTABLE scan state. One per engine, owned per-thread (t_state).
- * The DFA cache warms lazily across this thread's scans; the rest is reset each
- * scan. seen_cap==0 / dfa.n_states==0 means "not yet warmed" for this thread. */
+/* Per-engine REUSABLE scan cache. One per engine, owned per-thread (t_block).
+ * The DFA cache warms lazily across this thread's scans; the NFA-VM scratch
+ * (seen/clist/nlist/estack/gen) is reset within each scan but its buffers are
+ * reused. This is pure cache — sharing it across scans changes performance, not
+ * results. seen_cap==0 / dfa.n_states==0 means "not yet warmed" for this thread.
+ * The genuinely per-CALL state (the selective-merge cursors) lives in scan_ctx_t
+ * instead, so two concurrent scans (GVL released) never share a writable cursor. */
 typedef struct {
     dfa_t       dfa;
     int        *seen;
@@ -424,9 +429,20 @@ typedef struct {
     tlist_t     clist, nlist;
     int        *estack;
     int         gen;
-    int         digit_last_end;   /* selective-merge non-overlap cursors */
-    size_t      iban_last_end;
 } scan_state_t;
+
+/* Per-CALL mutable scan context. One scan_ctx_t per mm_scan() call, owned by the
+ * caller (stack-allocated in mm_scan). Holds the only state that must NOT be
+ * shared between concurrent scans: the selective-merge non-overlap cursors, one
+ * per engine. Keeping these out of the per-thread cache is what makes the engine
+ * re-entrant — a prerequisite for Ractors and for widening the GVL-free region.
+ * `cache` points at this thread's reusable scan_state_t array (the DFA cache);
+ * the ctx borrows it, it does not own it. */
+typedef struct {
+    scan_state_t *cache;          /* borrowed: this thread's per-engine cache */
+    int          *digit_last_end; /* selective-merge cursors, one per engine */
+    size_t       *iban_last_end;
+} scan_ctx_t;
 
 static engine_t *g_eng    = NULL;
 static int       g_eng_n  = 0;    /* engines built (NUM_PATTERNS + custom_n) */
@@ -1048,11 +1064,11 @@ static size_t scan_one(int p, scan_state_t *state, const char *input, size_t len
  * 10. Selective merges (digit run pass + IBAN union pass)
  * ======================================================================== */
 
-static size_t scan_digit_group(scan_state_t *state, const char *input, size_t len,
+static size_t scan_digit_group(scan_ctx_t *ctx, const char *input, size_t len,
                                const int *enable_bits, size_t n_bits,
                                mm_match_t *out, size_t max, size_t count) {
     for (int p = 0; p < g_eng_n; p++)
-        if (g_eng[p].digit_member) state[p].digit_last_end = 0;
+        if (g_eng[p].digit_member) ctx->digit_last_end[p] = 0;
 
     size_t i = 0;
     while (i < len) {
@@ -1076,7 +1092,7 @@ static size_t scan_digit_group(scan_state_t *state, const char *input, size_t le
 
             size_t start;
             if (rs > 0 && !isalnum((unsigned char)input[rs-1]) &&
-                rs - 1 >= (size_t)state[p].digit_last_end) {
+                rs - 1 >= (size_t)ctx->digit_last_end[p]) {
                 start = rs - 1;
             } else if (rs == 0 || input[rs-1] == '\n') {
                 start = rs;
@@ -1091,22 +1107,23 @@ static size_t scan_digit_group(scan_state_t *state, const char *input, size_t le
              * separator are resolved exactly as gsub would. */
             (void)start;
             out[count++] = (mm_match_t){p, rs, re - rs};
-            state[p].digit_last_end = (int)end;
+            ctx->digit_last_end[p] = (int)end;
         }
         if (count >= max) break;
     }
     return count;
 }
 
-static size_t scan_iban_group(scan_state_t *state, const char *input, size_t len,
+static size_t scan_iban_group(scan_ctx_t *ctx, const char *input, size_t len,
                               const int *enable_bits, size_t n_bits,
                               mm_match_t *out, size_t max, size_t count) {
+    scan_state_t *cache = ctx->cache;
     for (int p = 0; p < g_eng_n; p++)
         if (g_eng[p].iban_member) {
-            state[p].iban_last_end = 0;
+            ctx->iban_last_end[p] = 0;
             engine_t *eng = &g_eng[p];
-            if (eng->use_dfa && state[p].dfa.n_states == 0) {
-                ensure_scratch(eng, &state[p]); dfa_build_start(eng, &state[p]);
+            if (eng->use_dfa && cache[p].dfa.n_states == 0) {
+                ensure_scratch(eng, &cache[p]); dfa_build_start(eng, &cache[p]);
             }
         }
 
@@ -1117,10 +1134,10 @@ static size_t scan_iban_group(scan_state_t *state, const char *input, size_t len
         int p = g_iban_pair[c0][(unsigned char)input[i + 1]];
         if (p < 0) { i++; continue; }
         if ((size_t)p < n_bits && !enable_bits[p]) { i++; continue; }
-        if (i < state[p].iban_last_end) { i++; continue; }
+        if (i < ctx->iban_last_end[p]) { i++; continue; }
 
         engine_t     *eng = &g_eng[p];
-        scan_state_t *sst = &state[p];
+        scan_state_t *sst = &cache[p];
         dfa_t *d = &sst->dfa;
         size_t match_end = (size_t)-1, sp = i;
         int st = 0;
@@ -1137,7 +1154,7 @@ static size_t scan_iban_group(scan_state_t *state, const char *input, size_t len
         if (match_end != (size_t)-1) {
             size_t span = match_end - i;
             out[count++] = (mm_match_t){p, i, span};
-            sst->iban_last_end = match_end;
+            ctx->iban_last_end[p] = match_end;
             i = (span == 0) ? i + 1 : match_end;
         } else {
             i++;
@@ -1244,19 +1261,29 @@ size_t mm_scan(const char *input, size_t len,
                const int *enable_bits, size_t n_bits,
                mm_match_t *out, size_t max) {
     if (!g_initialized) mm_init();
-    scan_state_t *state = thread_state();
+    /* Per-thread reusable cache (DFA + NFA scratch); fetched once, not per
+     * pattern, so the generation-guard indirection stays out of the inner loop. */
+    scan_state_t *cache = thread_state();
     size_t count = 0;
 
     for (int p = 0; p < g_eng_n && count < max; p++) {
         if (g_eng[p].digit_member) continue;
         if (g_eng[p].iban_member)  continue;
         if (!enabled(enable_bits, n_bits, p)) continue;
-        count = scan_one(p, state, input, len, out, max, count);
+        count = scan_one(p, cache, input, len, out, max, count);
     }
-    if (g_have_iban_group && count < max)
-        count = scan_iban_group(state, input, len, enable_bits, n_bits, out, max, count);
-    if (g_have_digit_group && count < max)
-        count = scan_digit_group(state, input, len, enable_bits, n_bits, out, max, count);
+    /* Per-call cursors: stack-allocated, one set per mm_scan, so concurrent
+     * scans (GVL released for large inputs) never share a writable cursor. Sized
+     * to g_eng_n (bounded by NUM_PATTERNS + customs); a VLA keeps it heap-free. */
+    if ((g_have_iban_group || g_have_digit_group) && count < max) {
+        int    digit_cursors[g_eng_n];
+        size_t iban_cursors[g_eng_n];
+        scan_ctx_t ctx = { cache, digit_cursors, iban_cursors };
+        if (g_have_iban_group && count < max)
+            count = scan_iban_group(&ctx, input, len, enable_bits, n_bits, out, max, count);
+        if (g_have_digit_group && count < max)
+            count = scan_digit_group(&ctx, input, len, enable_bits, n_bits, out, max, count);
+    }
     return count;
 }
 
