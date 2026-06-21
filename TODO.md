@@ -90,6 +90,15 @@ matched: Luhn (credit cards), mod-97 (IBANs), Italian Codice Fiscale check char,
 Spanish DNI letter, Brazilian CPF/CNPJ, PESEL, CNP, etc. Probably an opt-in
 per-call flag (`strict: true`) since validation costs CPU.
 
+- **Re-check the spaced-card vs Aadhaar collision after checksums land.** A
+  space-grouped credit card `4111 1111 1111 1111` currently matches
+  `indian_aadhaar` (national_id) on its first 12 digits, NOT `credit_card`
+  (financial) — the unspaced `4111111111111111` matches credit_card correctly.
+  (Found 2026-06-20 while writing `examples/ruby_llm.rb`.) Luhn (card) +
+  Verhoeff (Aadhaar) validation should disambiguate: the spaced form's 16 digits
+  pass Luhn as a Visa card, and the 12-digit Aadhaar slice would fail Verhoeff.
+  Verify this resolves once #7 is in; if not, may need ordering/anchoring work.
+
 ### Streaming API (#8)
 `DataRedactor.redact_stream(input_io, output_io)`. Chunk boundaries can split a
 match — needs an overlap/lookback window equal to the longest pattern. Solve
@@ -108,6 +117,186 @@ Flat `key: value` YAML already ships. Not yet handled:
   lines (our value grammar stops at newline).
 - Flow mappings: `{ password: secret, ... }` (terminator is `,`/`}`).
 - `=>` (hashrocket) separator — only `=` and `:` shipped. Add if requested.
+
+### RubyLLM integration (auto-interception)
+RubyLLM (`ruby_llm`, crmne) is a unified, Faraday-based client across every LLM
+provider, with strong traction. It has lifecycle hooks (`on_new_message`,
+`before_tool_call`, `with_params`) but **no redaction of its own** — scrubbing is
+left to the caller. The shipped `Claude`/`OpenAI` adapters already redact LLM
+payloads, but **passively**: the caller must remember to wrap each request. The
+value RubyLLM adds is hooking *once* to cover every provider automatically.
+
+New opt-in file `lib/data_redactor/integrations/ruby_llm.rb`
+(`require "data_redactor/integrations/ruby_llm"`), soft-require pattern, no
+gemspec dependency on `ruby_llm`. **Outbound only** (scrub what we send TO the
+provider; do not touch responses). Reuse `LLMSupport` (`deep_copy`, `fetch`/`put`,
+`redact_text_blocks`) and forward `only:`/`except:`/`placeholder:`.
+
+**No dependency on the streaming items above.** Streaming concerns the *inbound*
+response arriving in chunks; the request body is sent as one buffered JSON payload
+even when the response streams, so an outbound hook always sees the full body — no
+chunk-boundary problem. The `redact_stream` / `mm_scan_chunk` work is only needed
+if inbound (streamed-response) redaction is ever added, which is out of scope here.
+
+**On ship: write up the integration** as a LinkedIn + Medium post (see the
+Promotion section). RubyLLM has momentum; "auto-redact secrets/PII before they
+reach any LLM provider, in one require" is a strong, timely hook.
+
+**Investigated 2026-06-20 — no public Faraday-middleware hook exists.** RubyLLM
+builds its connection entirely inside `Connection#initialize`
+(`Faraday.new { ... setup_middleware(faraday) ... }`, `lib/ruby_llm/connection.rb`)
+with no yield/block or config option to inject external middleware.
+v1.14.0 added *self-registered config options* (providers declare
+`<slug>_<option>` keys — a good precedent for our own config key) and a
+*configurable Faraday adapter* (`config.faraday_adapter`), but neither lets a
+third party add a middleware. So hook #1 below is NOT a clean ~30-line job today;
+the realistic plan inverts the original priority.
+
+**Most non-prompt content IS reachable today without patching RubyLLM** (verified
+2026-06-20 against current `Chat`). The public API exposes more than the prompt:
+- `attr_reader :messages` — the full message array, *including the system message*
+  (`with_instructions` stores it as a `Message`); readable and mutable.
+- `with_instructions(text, append:)` — wrap to redact the system prompt at set time.
+- **CORRECTION (verified 2026-06-20 against `ruby_llm 1.16.0` source): the
+  `before_*`/`after_*` callbacks CANNOT do outbound redaction.** In
+  `chat.rb#complete_once`, `before_message` fires *after* `provider_completion`
+  (request already sent) AND receives **no message argument**; `run_callbacks`
+  discards return values, so all callbacks are **observe-only**. They concern the
+  *response/agentic loop*, not the outbound request. There is **no public callback
+  that exposes the outbound request body before send.**
+- `render` builds the full payload (`@provider.render(messages, tools:, params:,
+  schema:, ...)`) but is read-only from outside — there's no public seam to mutate
+  its *result* before the connection. That seam is exactly what #765/middleware adds.
+
+So the ONLY reliable public outbound mechanism today is **redact `chat.messages` +
+the system message BEFORE calling `ask`/`complete`** — a manual pre-send helper,
+not an auto-hook. (`messages` is a public, mutable accessor; `render` reads from it.)
+
+The message-layer ↔ middleware gap, restated honestly:
+- Reachable now (pre-send, manual): user prompt, **system prompt**, conversation
+  history. Tool-call *arguments* are model-generated mid-loop, so they're only
+  scrubbable outbound via the middleware.
+- Genuinely needs #765/middleware: transparent auto-interception of the *final
+  assembled wire body* (incl. tool args + provider-injected fields) in ONE
+  chokepoint, with no manual call.
+- Mutating `chat.messages` in place **alters the stored conversation** — the redacted
+  text becomes the history for all future turns. Desirable for outbound safety, but
+  it's a semantic choice (scrubbing the record), so the helper should default to a
+  copy and offer an in-place `!` variant.
+
+**FULL SEND-PATH TRACE (verified 2026-06-20 against `ruby_llm 1.16.0`, line by
+line — do not re-investigate).** `ask` → `complete` → `instrument_completion` →
+`complete_once` → `provider_completion` → `@provider.complete(messages, ...)`
+where `payload = Utils.deep_merge(render_payload(messages, ...), params)` is built
+and handed straight to `sync_response`/`stream_response` → `connection.post(url,
+payload)` → Faraday (`request :json`). Findings after checking EVERY method on
+`Chat`/`Provider`/`Connection`:
+- **No public mutation seam between body-build and send.** `render_payload` runs
+  inside the provider and `post` follows immediately; intercepting means
+  subclassing `provider.complete`/`connection.post` = monkeypatch (ruled out).
+- `instrument_completion` exposes `input_messages` but as a `.dup`, observe-only
+  (ActiveSupport-notifications instrumentation, not mutation).
+- `with_params(**)` deep-merges INTO the final body — real, but **add/override
+  only**; can't read-and-rewrite existing message text. Dead end for redaction.
+- Callbacks: observe-only (established above).
+- **Conclusion: the only outbound seam anyone can add is at Faraday = #765.** Until
+  then, scrub `chat.messages` + system BEFORE `ask` is the sole public path.
+
+**ARCHITECTURE DECISION (2026-06-20): ONE integration, two modes — not two files.**
+Both modes share the redaction core + payload shape-walking; they differ only in
+*where* the data is grabbed (messages array vs Faraday body). Build one file
+`lib/data_redactor/integrations/ruby_llm.rb`:
+- **Now (message mode):** `RubyLLM.redact_messages(messages, ...)` and
+  `RubyLLM.redact_chat(chat, ...)` (returns a scrubbed copy; `redact_chat!` mutates
+  in place). Manual pre-send call. Works on `ruby_llm` 1.15+ today, public API only.
+- **Later, additive (middleware mode), when #765 lands:** add
+  `RubyLLM.middleware`/`RubyLLM.install!(config)` to the SAME module, reusing the
+  SAME private payload-walker. New methods, no breaking change (Open/Closed). Do
+  NOT make a second integration file — that would duplicate the body walker.
+
+Two hook points:
+1. **Message-layer pre-send helper (ship NOW — public, stable).** `redact_messages`
+   / `redact_chat` scrub the messages array + system prompt before `ask`. Manual
+   call (callbacks can't auto-intercept outbound — see correction above). Won't
+   break on RubyLLM internals. Covers prompt + system + history; NOT tool args /
+   wire body.
+2. **Faraday request middleware (needs an upstream unlock — preferred path).**
+   Insert a `request` middleware that redacts the JSON request body on the wire —
+   catches user prompts, the `system` prompt, AND tool-call arguments for *every*
+   provider. But `setup_middleware` is private and there's no public injection
+   point, so this is gated on upstream adding one (#765). Build the middleware on
+   the existing `Claude`/`OpenAI` shape walkers (`deep_copy` → walk →
+   `redact_text_blocks` → re-serialise). **Caveat from the #765 body:** their
+   design runs user middleware "after JSON encoding, just before the adapter" — so
+   on the request path we'd get the **already-serialized JSON string**, not the
+   Hash (parse → redact → re-serialise; workable but less clean). Our #765 comment
+   asks them to guarantee pre-`request :json` (Hash) ordering instead.
+3. **Monkeypatch (LAST RESORT — the only way to get automatic redaction TODAY,
+   pre-#765).** The #765 body documents that **three observability gems already
+   monkeypatch RubyLLM** with three different strategies:
+   `sinaptia/ruby_llm-instrumentation` (includes modules + aliases originals),
+   `thoughtbot/opentelemetry-instrumentation-ruby_llm` (prepends `Chat`/`Embedding`),
+   `sergey-homenko/llm_cost_tracker` (prepends `Provider#complete`/`#embed`/
+   `#transcribe`). So it's a proven (if fragile) pattern, and prepending
+   `Provider#complete` to redact `messages`/`payload` before `super` would give us
+   automatic redaction now. **Cons:** unstable load order between patching gems,
+   alias/prepend collisions, breaks whenever RubyLLM reshapes internals (#765 exists
+   precisely to retire this). Only revisit if a user needs automatic redaction
+   before #765 lands AND accepts the fragility. Default remains: wait for #765.
+
+   **TODO before attempting any monkeypatch: study how the three gems actually do
+   it** (they've already found the sharp edges — copy what works, avoid what
+   collides). Read:
+   - `sinaptia/ruby_llm-instrumentation` — module include + aliasing originals.
+   - `thoughtbot/opentelemetry-instrumentation-ruby_llm` — `prepend` on
+     `RubyLLM::Chat` / `RubyLLM::Embedding`.
+   - `sergey-homenko/llm_cost_tracker` — `prepend` on `RubyLLM::Provider#complete`
+     / `#embed` / `#transcribe` (closest to what we'd want: `Provider#complete` is
+     where `payload` is built, so prepending it lets us redact `messages`/`payload`
+     before `super`).
+   Compare: which method they hook, `prepend` vs alias, how they guard against
+   double-patching, how they detect the RubyLLM version, and where they break on
+   upgrades. Decide our hook point (likely `prepend Provider#complete`) from real
+   precedent, not guesswork.
+
+   **Upstream issue already exists AND is PR-ready: crmne/ruby_llm#765**
+   ("[FEATURE] Expose `config.faraday_middleware` so observability gems can stop
+   monkey-patching", opened 2026-05-09). The reporter (sergey-homenko) posted a
+   complete implementation on 2026-05-11 — `option :faraday_middleware, -> { [] }`
+   in `configuration.rb` + a private `apply_user_middleware(faraday)` in
+   `connection.rb` called from `initialize` after `setup_middleware` (so user
+   middleware sits outside `:llm_errors`), with specs in
+   `spec/ruby_llm/connection_middleware_spec.rb`. He's "happy to ship on your OK."
+   **Bottleneck = maintainer sign-off, not code.** One open naming question he
+   raised: `faraday_middleware` (honest, locks API to Faraday) vs
+   `connection_middleware` (neutral). For us the name is irrelevant — we run on the
+   *request* side (his `:llm_errors`/raw-response note is response-side, which we
+   don't touch, being outbound-only).
+   **No PR exists yet** (verified 2026-06-20: sergey has no `ruby_llm` fork, zero
+   PRs on the repo; #765 is code-in-a-comment awaiting crmne's OK before he forks).
+   His use-case is **observability** (he maintains `llm_cost_tracker`), so his
+   design is **response-biased** — he justifies the "after `setup_middleware`"
+   placement only in terms of seeing raw responses outside `:llm_errors`. **What we
+   under-specified for: request-side ordering.** Faraday middleware is
+   bidirectional and ordering means opposite things per direction (outer = first on
+   request, last on response). We need our request-phase middleware to see the
+   payload *before* `request :json` serializes it (ideally as the Hash). Ask him to
+   make that a stated guarantee + test, not incidental.
+   **Commented on #765 (2026-06-20)** — framed as a payload-rewrite use-case (no
+   redaction/gem disclosure), asked for the request-side ordering guarantee (request
+   middleware runs ahead of `request :json` so it sees the Hash, not just response
+   middleware outside `:llm_errors`), and asked whether a branch/PR exists or it's
+   still awaiting sign-off. Awaiting reply. Drop the gem link later as a natural
+   second bump once the integration ships.
+   **Do NOT block the integration on it.** Hook #2 ships first regardless; once #765
+   lands, hook #1 is a thin middleware on the existing shape walkers.
+
+Specs: a fake Faraday stack (or recorded RubyLLM request body) asserting prompts,
+system prompt, and tool args are scrubbed outbound and responses are untouched;
+plus a negative test that a clean payload round-trips byte-identical. Open
+question to resolve at build time: exact RubyLLM version that stabilised the
+middleware/config-registration API (pin the minimum in the integration's doc
+comment, not the gemspec).
 
 ### Rack `:env_logs` surface
 Scrub `PATH_INFO` / `QUERY_STRING` for downstream access loggers. Deferred — needs
@@ -169,6 +358,11 @@ shippable one. Cites Hyperscan (NSDI 2019), BLARE (PACMMOD 2023). HybridSA (OOPS
 - Post to r/ruby and r/rails — ask for feedback, don't just sell it.
 - Write a short DEV/Medium article: "Why I built a C-extension PII redactor for
   Ruby" (the C vs pure-Ruby angle is the hook).
+- **If/when the RubyLLM integration ships** (see "RubyLLM integration" under
+  Features): write a LinkedIn post **and** a Medium article on it — angle:
+  "auto-redact secrets & PII before they reach any LLM provider, in one require."
+  RubyLLM's traction makes this a timely hook; lead with the one-line opt-in and
+  a before/after of a leaked prompt.
 - Announce on X / Mastodon with `#ruby` `#rails`.
 - Submit to [Ruby Weekly](https://rubyweekly.com) and
   [Short Ruby Newsletter](https://newsletter.shortruby.com).
