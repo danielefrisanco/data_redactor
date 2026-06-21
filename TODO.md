@@ -244,50 +244,53 @@ Two hook points:
    precisely to retire this). Only revisit if a user needs automatic redaction
    before #765 lands AND accepts the fragility. Default remains: wait for #765.
 
-   **TODO before attempting any monkeypatch: study how the three gems actually do
-   it** (they've already found the sharp edges — copy what works, avoid what
-   collides). Read:
-   - `sinaptia/ruby_llm-instrumentation` — module include + aliasing originals.
-   - `thoughtbot/opentelemetry-instrumentation-ruby_llm` — `prepend` on
-     `RubyLLM::Chat` / `RubyLLM::Embedding`.
-   - `sergey-homenko/llm_cost_tracker` — `prepend` on `RubyLLM::Provider#complete`
-     / `#embed` / `#transcribe` (closest to what we'd want: `Provider#complete` is
-     where `payload` is built, so prepending it lets us redact `messages`/`payload`
-     before `super`).
-   Compare: which method they hook, `prepend` vs alias, how they guard against
-   double-patching, how they detect the RubyLLM version, and where they break on
-   upgrades. Decide our hook point (likely `prepend Provider#complete`) from real
-   precedent, not guesswork.
+   **How the three gems actually patch (verified 2026-06-21 against their `main`):**
+   - `sinaptia/ruby_llm-instrumentation` — `RubyLLM::Chat.include` + `alias_method
+     :original_complete, :complete` then redefines `complete` (alias monkeypatch).
+   - `thoughtbot/opentelemetry-instrumentation-ruby_llm` — `::RubyLLM::Chat.prepend`
+     + `::RubyLLM::Embedding.singleton_class.prepend`, overriding `complete` /
+     `execute_tool` and calling `super` (prepend monkeypatch).
+   - `sergey-homenko/llm_cost_tracker` — `install_patch` → `target.prepend(patch)`
+     on `RubyLLM::Provider`; also ships its own `Faraday::Middleware` subclass.
+   **All three still monkeypatch; none use a public hook.** Notably the *author of
+   #765* (sergey) still prepends in his own gem — the issue is unsolved even for its
+   proposer. Closest precedent to what we'd want is the `Provider` prepend (that's
+   where `payload` is built, so we could redact `messages`/`payload` before `super`).
+   If we ever ship a monkeypatch fallback, copy the prepend approach + the
+   already-patched guard (`target.ancestors.include?(patch)`); avoid the alias style.
 
-   **Upstream issue already exists AND is PR-ready: crmne/ruby_llm#765**
-   ("[FEATURE] Expose `config.faraday_middleware` so observability gems can stop
-   monkey-patching", opened 2026-05-09). The reporter (sergey-homenko) posted a
-   complete implementation on 2026-05-11 — `option :faraday_middleware, -> { [] }`
-   in `configuration.rb` + a private `apply_user_middleware(faraday)` in
-   `connection.rb` called from `initialize` after `setup_middleware` (so user
-   middleware sits outside `:llm_errors`), with specs in
-   `spec/ruby_llm/connection_middleware_spec.rb`. He's "happy to ship on your OK."
-   **Bottleneck = maintainer sign-off, not code.** One open naming question he
-   raised: `faraday_middleware` (honest, locks API to Faraday) vs
-   `connection_middleware` (neutral). For us the name is irrelevant — we run on the
-   *request* side (his `:llm_errors`/raw-response note is response-side, which we
-   don't touch, being outbound-only).
-   **No PR exists yet** (verified 2026-06-20: sergey has no `ruby_llm` fork, zero
-   PRs on the repo; #765 is code-in-a-comment awaiting crmne's OK before he forks).
-   His use-case is **observability** (he maintains `llm_cost_tracker`), so his
-   design is **response-biased** — he justifies the "after `setup_middleware`"
-   placement only in terms of seeing raw responses outside `:llm_errors`. **What we
-   under-specified for: request-side ordering.** Faraday middleware is
-   bidirectional and ordering means opposite things per direction (outer = first on
-   request, last on response). We need our request-phase middleware to see the
-   payload *before* `request :json` serializes it (ideally as the Hash). Ask him to
-   make that a stated guarantee + test, not incidental.
+   **Upstream issue: crmne/ruby_llm#765** ("[FEATURE] Expose
+   `config.faraday_middleware` so observability gems can stop monkey-patching",
+   opened 2026-05-09). The reporter (sergey-homenko) posted a complete
+   implementation on 2026-05-11 — `option :faraday_middleware, -> { [] }` in
+   `configuration.rb` + a private `apply_user_middleware(faraday)` in
+   `connection.rb` called after `setup_middleware`, with specs. He's "happy to ship
+   on your OK." One naming question raised: `faraday_middleware` (honest, locks API
+   to Faraday) vs `connection_middleware` (neutral). For us the name is irrelevant —
+   we run on the *request* side, not his response-side `:llm_errors` concern.
+   **Status (verified 2026-06-21): NOT in `main`, issue reopened.** On 2026-06-20
+   crmne commented "It's already implemented in main", closed #765 as completed,
+   then **reopened it one minute later** — so the "completed" is walked back. Reading
+   `crmne/ruby_llm@main` directly: `connection.rb`'s `setup_middleware` is still
+   **hardcoded and private** (no `apply_user_middleware`, no loop over user
+   middleware); `configuration.rb` has **no `faraday_middleware`/`connection_middleware`
+   option**. What *is* in main and probably prompted "already implemented" is the
+   read-only **`instrumenter` hook** (`option :instrumenter` + `RubyLLM.instrument(
+   'request.ruby_llm', …)` wrapping every `post`/`get`). That's an
+   ActiveSupport-notifications-style observability seam — it covers the *observability*
+   gems' reading use-case but is **observe-only: it cannot rewrite the outbound
+   payload**, which is exactly ours. The mismatch is the likely reason for the reopen.
+   **What we still need from #765 specifically: request-side ordering.** Faraday
+   middleware is bidirectional (outer = first on request, last on response). Our
+   request-phase middleware must see the payload *before* `request :json` serializes
+   it (ideally as the Hash). The `instrumenter` hook does not give that; only the
+   `faraday_middleware` option (run ahead of the JSON encoder) does.
    **Commented on #765 (2026-06-20)** — framed as a payload-rewrite use-case (no
-   redaction/gem disclosure), asked for the request-side ordering guarantee (request
-   middleware runs ahead of `request :json` so it sees the Hash, not just response
-   middleware outside `:llm_errors`), and asked whether a branch/PR exists or it's
-   still awaiting sign-off. Awaiting reply. Drop the gem link later as a natural
-   second bump once the integration ships.
+   redaction/gem disclosure), asked for the request-side ordering guarantee, and
+   asked whether a branch/PR exists. crmne replied + reopened (above); next: a short
+   follow-up clarifying that `instrument` is observe-only so the payload-mutation
+   gap remains, offer to PR the `faraday_middleware` shape. Drop the gem link later
+   as a natural second bump once the integration ships.
    **Do NOT block the integration on it.** Hook #2 ships first regardless; once #765
    lands, hook #1 is a thin middleware on the existing shape walkers.
 
