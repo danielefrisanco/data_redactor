@@ -121,16 +121,16 @@ RSpec.describe DataRedactor::Integrations::RubyLLM do
       # Patterns run against the base64 string, never the decoded content, so a
       # secret inside the PDF/image bytes is never seen as a secret. (The encoded
       # text may itself trip a pattern incidentally; that is not protection.)
-      require "base64"
-      secret = "leaks@example.com"
-      blob = Base64.strict_encode64("secret email #{secret} inside the pdf")
-      expect(Base64.decode64(blob)).to include(secret) # the blob really carries it
+      # Fixed literal so the spec needs no `base64` lib (gone from default gems
+      # on Ruby 3.4+): this is Base64 of "secret email leaks@example.com inside
+      # the pdf", which contains a recognisable email once decoded.
+      blob = "c2VjcmV0IGVtYWlsIGxlYWtzQGV4YW1wbGUuY29tIGluc2lkZSB0aGUgcGRm"
 
       out = DataRedactor.redact_deep({ source: { type: "base64", data: blob } })
 
-      # We never redacted the email as an email — it was invisible to us.
+      # The email is invisible to us while encoded — never redacted as contact PII.
       expect(out[:source][:data]).not_to include("[REDACTED:CONTACT]")
-      expect(out[:source][:data]).not_to include(secret) # because it's encoded, not because we caught it
+      expect(out[:source][:data]).not_to include("leaks@example.com")
     end
   end
 end
