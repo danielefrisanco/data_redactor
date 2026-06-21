@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Engine re-entrancy: selective-merge cursors are now per-call, not per-thread.**
+  The digit-run and IBAN-union passes kept their non-overlap cursors in the
+  per-thread scan cache; they now live in a stack-allocated context, one set per
+  `mm_scan` call. Output is byte-for-byte unchanged — this is an internal
+  threading change with no API or behaviour difference. It makes the C engine
+  genuinely re-entrant (a prerequisite for Ractors and for widening the
+  GVL-free region) rather than relying on thread-local storage to keep concurrent
+  scans apart, and lifts the per-thread cache lookup out of the per-pattern inner
+  loop. New spec asserts merge-cursor output stays call-private under parallel
+  GVL-released digit/IBAN load.
+
 ## [0.17.0] - 2026-06-21
 
 ### Added

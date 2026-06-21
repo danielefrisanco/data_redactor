@@ -112,6 +112,27 @@ rewrite needed.
   churning threads, plus a spawn-join stress spec.
 - **README** updated: per-thread engine state + GVL-release for large inputs +
   runtime-registration guarantee.
+- **Per-call re-entrancy (0.17.1, `feat/per-call-reentrancy`).** The 0.13.0 split
+  put *all* mutable scan state in a per-thread `__thread` cache — safe under the
+  GVL, but the selective-merge cursors (`digit_last_end`, `iban_last_end`) were
+  genuinely per-*call* state hiding in a per-*thread* struct, so concurrency only
+  held because each thread reached a different cache. Why finish it: that shape
+  can't extend to Ractors (no `__thread` model for per-Ractor engines), and the
+  GVL-released path (≥4 KB, already live since 0.13.0) was relying on `__thread`
+  being the *only* thing keeping concurrent scans apart. The fix follows the
+  industry-standard regex-engine layering (RE2/Hyperscan/PCRE2): immutable
+  compiled program (shared) + reusable scratch/DFA cache (per-thread) + a
+  caller-owned per-call context. `scan_state_t` keeps the reusable DFA + NFA
+  scratch; a new `scan_ctx_t` holds the two cursor arrays, stack-allocated (VLA
+  sized to `g_eng_n`) once per `mm_scan`. Output is byte-for-byte identical
+  (334 specs incl. a new merge-cursor-isolation spec under parallel GVL-released
+  digit/IBAN load). Side benefit: the per-thread cache base is now fetched once
+  per scan instead of per pattern, lifting the generation-guard indirection out
+  of the inner loop (partial recovery of the ~3% small-input cost — see TODO).
+  **Still open for full Ractor support:** point the ctx's cache pointer at
+  per-Ractor storage instead of `__thread` (no second refactor needed — the shape
+  already allows it), and the remaining `mm_scan` scratch (NFA lists) would move
+  too. Tracked under TODO §"Widen the GVL-free region" / Ractors.
 
 ---
 
