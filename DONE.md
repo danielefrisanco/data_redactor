@@ -368,5 +368,6 @@ constraints — not a gem changelog. Sole author; Claude used as a directed inst
 
 ## Promotion (done)
 RubyGems push (0.5.0, 2026-05-08); GitHub repo topics; Shields.io badges; YARD docs;
-README thread-safety note; `examples/` (8 runnable scripts + index README,
-repo-only).
+README thread-safety note; `examples/` (12 runnable scripts + index README,
+repo-only) — incl. `rails_logger.rb`, a dependency-free Logger + Rack
+end-to-end request demo (closes #22).
