@@ -502,6 +502,7 @@ redactor/
 │   ├── logger.rb                 # Logger::Formatter integration
 │   ├── rack_middleware.rb        # Rack middleware (body + headers)
 │   ├── rails_filter.rb           # filter_parameters adapter
+│   ├── rails_logger.rb           # Rack middleware + redacting Logger, end-to-end
 │   └── llm_payload.rb            # Claude / OpenAI message + response redaction
 ├── benchmark/                    # Repo-only perf scripts (not packaged in the gem)
 │   ├── README.md                 # How to run, what each script measures
