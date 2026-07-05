@@ -330,17 +330,6 @@ Elixir over `:re` (PCRE). Defer until the Ruby gem has real adoption and someone
 asks. Cost: maintenance doubles, NIF segfaults crash the whole BEAM VM, separate CI
 + Hex publishing. Documented so the option isn't forgotten.
 
-### GitHub wiki
-Set up the project wiki at https://github.com/danielefrisanco/data_redactor/wiki so
-the README can stay a focused entry point while deeper material lives in the wiki.
-Candidate pages: full pattern catalogue (per-country PII, with examples); the C
-engine internals (NFA → bytecode → lazy DFA, the v19 story — link `docs/research_log.md`);
-integration guides (Logger/Rails/Rack/Claude/OpenAI/**RubyLLM**, including the
-`install!` transparent mode and its caveats); custom-pattern + `name_pattern`
-cookbook; performance/benchmark methodology; FAQ (thread-safety, what's NOT
-redacted, base64/URL limitation). Keep it DRY — link back to CHANGELOG/DONE rather
-than restating; don't duplicate the YARD API docs (those stay on GitHub Pages).
-
 ---
 
 ## Paper

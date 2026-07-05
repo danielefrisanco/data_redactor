@@ -371,3 +371,16 @@ RubyGems push (0.5.0, 2026-05-08); GitHub repo topics; Shields.io badges; YARD d
 README thread-safety note; `examples/` (12 runnable scripts + index README,
 repo-only) — incl. `rails_logger.rb`, a dependency-free Logger + Rack
 end-to-end request demo (closes #22).
+
+### GitHub wiki (2026-07-05)
+Set up the project wiki so the README can stay a focused entry point while deeper
+material lives one click away. Eight pages: Home (with a source-of-truth table),
+Pattern Catalogue (grouped by tag/country rather than one row per pattern — the
+per-index truth stays in `patterns.c`), C Engine Internals (NFA → bytecode → lazy
+DFA, the v19 story, links `docs/research_log.md`), Integration Guides
+(Logger/Rails/Rack/Claude/OpenAI), a **dedicated RubyLLM page** promoted as the
+flagship LLM integration (per-call + transparent `install!` with its caveats),
+Custom & Name Patterns cookbook, Performance & Benchmark methodology, and FAQ.
+Kept DRY: pages link back to CHANGELOG/DONE/README and the GitHub Pages API docs
+rather than restating them. Same commit promoted RubyLLM higher in the README
+(Usage + use-case list) and added a wiki-pointer line near the top.

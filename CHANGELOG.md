@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Project wiki.** Set up the GitHub wiki as the home for deep material so the
+  README stays a focused entry point: pattern catalogue (grouped by tag/country),
+  C engine internals (NFA → bytecode → lazy DFA, the v19 story), integration
+  guides, a dedicated RubyLLM page (per-call + transparent `install!`), custom /
+  name-pattern cookbook, benchmark methodology, and FAQ. README now links to it
+  and promotes RubyLLM higher in Usage and in the use-case list.
+
 ### Changed
 - **Engine re-entrancy: selective-merge cursors are now per-call, not per-thread.**
   The digit-run and IBAN-union passes kept their non-overlap cursors in the

@@ -6,6 +6,8 @@
 
 A Ruby gem with a C extension for high-performance regex-based redaction of sensitive data from strings.
 
+📚 **Deeper docs live in the [wiki](https://github.com/danielefrisanco/data_redactor/wiki):** the full [pattern catalogue](https://github.com/danielefrisanco/data_redactor/wiki/Pattern-Catalogue), [C engine internals](https://github.com/danielefrisanco/data_redactor/wiki/C-Engine-Internals), [integration guides](https://github.com/danielefrisanco/data_redactor/wiki/Integration-Guides) (incl. [RubyLLM](https://github.com/danielefrisanco/data_redactor/wiki/RubyLLM-Integration)), [benchmark methodology](https://github.com/danielefrisanco/data_redactor/wiki/Performance-and-Benchmarks), and [FAQ](https://github.com/danielefrisanco/data_redactor/wiki/FAQ). The [API reference](https://danielefrisanco.github.io/data_redactor/) is on GitHub Pages.
+
 > 📄 The engineering behind the v19 matching engine is written up as an experience
 > report, *"The Fastest Engine Is Not the Shippable Engine: Replacing a Regex Engine
 > for Data Redaction Under Production Constraints,"* currently under review at
@@ -35,8 +37,10 @@ Rack. You can also register your own patterns — at boot or at runtime from any
   to keep request params out of logs and error reports.
 - **HTTP request/response sanitising** — Rack middleware scrubs response bodies
   and sensitive headers in flight.
-- **Sanitising LLM / API payloads** — run `redact_deep` over a params hash or
-  `redact_json` over a JSON body before it leaves the process.
+- **Scrubbing prompts before an LLM** — with [RubyLLM](#rubyllm--redact-before-it-reaches-the-model), redact every
+  prompt, system instruction, and tool result before it reaches the model —
+  per-call, or transparently across every request. Also `redact_deep` /
+  `redact_json` over any params hash or JSON body before it leaves the process.
 - **Compliance & auditing** — `scan` reports every match with byte offsets, tag,
   and pattern name without changing the text, for false-positive tuning.
 - **Internal identifiers** — register company-specific patterns (`add_pattern`)
@@ -57,6 +61,45 @@ copy-pasteable scripts for every feature below — core redaction, scan/dry-run,
 custom patterns, deep/JSON traversal, and the Logger / Rack / Rails / LLM
 integrations. Run any of them with `bundle exec ruby examples/<name>.rb` (see
 [examples/README.md](examples/README.md)).
+
+### RubyLLM — redact before it reaches the model
+
+[RubyLLM](https://rubyllm.com) is a unified Ruby client for every major LLM provider — Anthropic, OpenAI, Gemini, Bedrock, and more — and a perfect match for `data_redactor`: anything you send to a model is exactly the kind of free text that leaks secrets and PII. Because RubyLLM takes plain strings, you can scrub them with `DataRedactor.redact` before they leave the process — no extra integration required:
+
+```ruby
+require "ruby_llm"
+require "data_redactor"
+
+chat = RubyLLM.chat(model: "claude-opus-4-8")
+chat.with_instructions(DataRedactor.redact("You are a support agent for ACME Corp."))
+
+user_input = "My card is 4111 1111 1111 1111 and my email is alice@example.com"
+chat.ask(DataRedactor.redact(user_input))
+# the model receives: "My card is [REDACTED] and my email is [REDACTED]"
+```
+
+Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.redact` before passing it to `ask`. This is a per-call step you opt into, and it's the recommended approach.
+
+#### Transparent mode (every request, no per-call wrapping)
+
+If you'd rather redact **every** outbound request automatically — including the system prompt, tool definitions, and any file contents or shell-command output an agent feeds back as a tool result — opt into the monkeypatch:
+
+```ruby
+require "ruby_llm"
+require "data_redactor/integrations/ruby_llm"
+
+DataRedactor::Integrations::RubyLLM.install!   # once, at boot
+
+chat = RubyLLM.chat(model: "claude-opus-4-8")
+chat.ask("my card is 4111111111111111")        # sent as "my card is [REDACTED]"
+```
+
+`install!` prepends a patch onto `RubyLLM::Protocol#render` — the one point where every provider (Anthropic, OpenAI, Gemini, Bedrock, Responses) has assembled its final request — and deep-redacts the payload before it's posted. It forwards `only:`/`except:`/`placeholder:`, is idempotent, and **fails fast** at `install!` if an unsupported `ruby_llm` version is loaded or the internal API has moved (so it never silently leaks).
+
+Two caveats, by design:
+
+- **It's a monkeypatch on RubyLLM internals**, pinned to a supported version range. Prefer per-call `DataRedactor.redact` (above) unless you specifically need transparency. RubyLLM does not yet expose a public request hook ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765) tracks the connection-middleware hook that would let us drop the patch).
+- **Base64 attachments** (PDFs, images, audio sent inline) and **URL-referenced files** are not redacted — the sensitive bytes are encoded or remote, so patterns cannot see them.
 
 ### Filtering by tag or pattern name
 
@@ -340,46 +383,7 @@ client.chat(parameters: { model: "gpt-4o", messages: safe_messages })
 safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 ```
 
-`content` may be a plain String or an array of content blocks/parts (`{ type: "text", text: "..." }`) — only the `text` of `text` blocks is redacted; image and other block types pass through untouched. For Claude, a top-level `system:` String is also redacted; for OpenAI, a `{ role: "system" }` message in the array is redacted like any other. Pass a bare `messages` array or the whole request Hash (with a `messages` key) — either works.
-
-### RubyLLM
-
-[RubyLLM](https://rubyllm.com) is a unified Ruby client for every major LLM provider — and a perfect match for `data_redactor`: anything you send to a model is exactly the kind of free text that leaks secrets and PII. Because RubyLLM takes plain strings, you can scrub them with `DataRedactor.redact` before they leave the process — no extra integration required:
-
-```ruby
-require "ruby_llm"
-require "data_redactor"
-
-chat = RubyLLM.chat(model: "claude-opus-4-8")
-chat.with_instructions(DataRedactor.redact("You are a support agent for ACME Corp."))
-
-user_input = "My card is 4111 1111 1111 1111 and my email is alice@example.com"
-chat.ask(DataRedactor.redact(user_input))
-# the model receives: "My card is [REDACTED] and my email is [REDACTED]"
-```
-
-Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.redact` before passing it to `ask`. This is a per-call step you opt into, and it's the recommended approach.
-
-#### Transparent mode (every request, no per-call wrapping)
-
-If you'd rather redact **every** outbound request automatically — including the system prompt, tool definitions, and any file contents or shell-command output an agent feeds back as a tool result — opt into the monkeypatch:
-
-```ruby
-require "ruby_llm"
-require "data_redactor/integrations/ruby_llm"
-
-DataRedactor::Integrations::RubyLLM.install!   # once, at boot
-
-chat = RubyLLM.chat(model: "claude-opus-4-8")
-chat.ask("my card is 4111111111111111")        # sent as "my card is [REDACTED]"
-```
-
-`install!` prepends a patch onto `RubyLLM::Protocol#render` — the one point where every provider (Anthropic, OpenAI, Gemini, Bedrock, Responses) has assembled its final request — and deep-redacts the payload before it's posted. It forwards `only:`/`except:`/`placeholder:`, is idempotent, and **fails fast** at `install!` if an unsupported `ruby_llm` version is loaded or the internal API has moved (so it never silently leaks).
-
-Two caveats, by design:
-
-- **It's a monkeypatch on RubyLLM internals**, pinned to a supported version range. Prefer per-call `DataRedactor.redact` (above) unless you specifically need transparency. RubyLLM does not yet expose a public request hook ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765) tracks the connection-middleware hook that would let us drop the patch).
-- **Base64 attachments** (PDFs, images, audio sent inline) and **URL-referenced files** are not redacted — the sensitive bytes are encoded or remote, so patterns cannot see them.
+`content` may be a plain String or an array of content blocks/parts (`{ type: "text", text: "..." }`) — only the `text` of `text` blocks is redacted; image and other block types pass through untouched. For Claude, a top-level `system:` String is also redacted; for OpenAI, a `{ role: "system" }` message in the array is redacted like any other. Pass a bare `messages` array or the whole request Hash (with a `messages` key) — either works. For [RubyLLM](#rubyllm--redact-before-it-reaches-the-model) — a unified client across every provider — see the dedicated section above, including transparent `install!` mode.
 
 ## Detected patterns (89 total)
 
