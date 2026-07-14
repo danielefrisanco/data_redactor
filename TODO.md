@@ -478,6 +478,10 @@ void. Distribution beats content: the article must go where Ruby readers already
 are, and it lands better when the gem has its adoption features in place. New
 strategy, in order:
 
+**Progress:** ready-to-send drafts for every Step 2 channel exist locally in
+`drafts/outreach.md` (gitignored). Posted so far: RubyFlow, 2026-07-14 —
+<https://rubyflow.com/p/tesaty-dataredactor-stop-secrets-and-personal-data-leaking-into-logs-and-llm-prompts>.
+
 ### Step 1 — land the adoption features first
 Do these before the next outreach push, so a visitor who clicks through finds a
 gem that installs itself and proves its claims (each has a full entry under
@@ -494,8 +498,6 @@ Features):
 - **Cross-post the Medium article to [dev.to](https://dev.to)** (set the
   canonical URL to Medium) — dev.to's `#ruby` tag has organic readership Medium
   lacks. Same for future posts: dev.to first, Medium second.
-- Post to [RubyFlow](https://rubyflow.com) — the community link blog newsletters
-  trawl for content.
 - Submit to [Ruby Weekly](https://rubyweekly.com) and
   [Short Ruby Newsletter](https://newsletter.shortruby.com) — a newsletter
   mention is worth more than a month of Medium.
