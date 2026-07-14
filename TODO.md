@@ -54,6 +54,15 @@ multibyte sequence inside `[...]` as one alternative is the gating task.
 GVL without first separating the C match-collection pass from the `VALUE`-building
 pass. Only if scan-heavy large inputs ever matter.
 
+### Close the chunk-boundary redaction miss
+`_chunk_bytes` falls back to a hard 64 KB split when a single line exceeds
+`CHUNK_SIZE`, so a token straddling that split escapes redaction. Documented as a
+limitation, but for a security tool a silent miss is the worst failure mode. Fix:
+at the no-newline fallback split only, re-scan an overlap window (longest-pattern
+length) spanning the boundary, or back the split off to the nearest non-token byte.
+Cheap, and a stepping stone to the streaming API (#8) which has the same
+boundary problem in general form.
+
 ### Other deferred engine work
 - **Custom patterns in selective merges** — pure-digit / IBAN-prefix customs won't
   join the group passes; handled per-pattern by glibc. Revisit if perf matters.
@@ -75,6 +84,28 @@ pass. Only if scan-heavy large inputs ever matter.
   (the load-and-smoke class is covered). Widening it to a `3.1`–`3.4` Alpine
   matrix would catch a musl regcomp divergence that is Ruby-version specific.
   Nice-to-have, not blocking.
+
+- **Back the Ruby 2.7 floor with CI** — the gemspec claims `>= 2.7` but the
+  matrix only tests 3.1–3.4, so the floor is an untested promise (2.7 users get
+  the source gem; precompiled binaries are 3.1+ only). Add `2.7` and `3.0` to the
+  test matrix. Keeping the floor is deliberate: legacy Rails apps stuck on old
+  Rubies are prime candidates for log redaction. If the old rubies can't be kept
+  green cheaply (dev-dep resolution, C-API drift), raise the floor to 3.1 instead
+  — either way the claim and the matrix must agree.
+
+- **ruby-head / 3.5-preview CI job (allow-failure)** — Ruby 3.5 ships December
+  2026 and the native-gem matrix must support it on day one. An allow-failure
+  `ruby-head` entry in the test matrix gives months of warning on C-API or
+  stdlib breakage instead of a release-week scramble.
+
+- **Split `spec/data_redactor_spec.rb`** — 1,800+ lines in one file. Integration
+  specs already live in `spec/integrations/`; split the main file by concern
+  (patterns / filtering / placeholders / deep-walk / custom patterns / chunking)
+  and update the CLAUDE.md testing note when done.
+
+- **Coverage tracking (SimpleCov)** — nice-to-have only; the per-pattern
+  positive/negative test discipline already does the real work. Consider only if
+  contributors arrive.
 
 - **RuboCop (lint job)** — no linter today; style is enforced by hand via
   CLAUDE.md. Add `rubocop` (+ likely `rubocop-rspec`) as a dev dependency with a

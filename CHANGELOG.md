@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loop. New spec asserts merge-cursor output stays call-private under parallel
   GVL-released digit/IBAN load.
 
+### Fixed
+- Gemspec description said "85 sensitive patterns" while the engine ships 89.
+  The description no longer hardcodes a count, so it can't drift again.
+
 ## [0.17.0] - 2026-06-21
 
 ### Added
