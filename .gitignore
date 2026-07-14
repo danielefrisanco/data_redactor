@@ -33,3 +33,6 @@ coverage/
 .env.local
 *.key
 *.pem
+
+# Local working notes (never published)
+drafts/
