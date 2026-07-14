@@ -95,6 +95,13 @@ matched: Luhn (credit cards), mod-97 (IBANs), Italian Codice Fiscale check char,
 Spanish DNI letter, Brazilian CPF/CNPJ, PESEL, CNP, etc. Probably an opt-in
 per-call flag (`strict: true`) since validation costs CPU.
 
+- **Publish false-positive numbers when this lands.** Run the engine over a
+  public log corpus, measure precision/recall per pattern, and put the numbers
+  in the README/wiki. False positives are the #1 reason teams rip out redaction
+  tools, and nobody in this space publishes FP rates — with the existing
+  benchmark discipline this is a cheap credibility moat, and it feeds the paper
+  narrative too.
+
 - **Re-check the spaced-card vs Aadhaar collision after checksums land.** A
   space-grouped credit card `4111 1111 1111 1111` currently matches
   `indian_aadhaar` (national_id) on its first 12 digits, NOT `credit_card`
@@ -103,6 +110,41 @@ per-call flag (`strict: true`) since validation costs CPU.
   Verhoeff (Aadhaar) validation should disambiguate: the spaced form's 16 digits
   pass Luhn as a Visa card, and the 12-digit Aadhaar slice would fail Verhoeff.
   Verify this resolves once #7 is in; if not, may need ordering/anchoring work.
+
+### Rails Railtie — zero-config onboarding (adoption lever #1)
+Today every integration is a manual opt-in; Rails devs adopt what installs
+itself. Ship a Railtie that, on `require "data_redactor/railtie"` (or a separate
+`data_redactor-rails` gem to keep the zero-runtime-deps rule), automatically
+wires the Logger formatter and `filter_parameters`, configurable via an
+initializer. The pitch writes itself: *`filter_parameters` only redacts keys you
+name; data_redactor catches the card number inside an exception message — free
+text you can't enumerate.* Rails is where the buyers are (GDPR/PCI compliance
+teams); one Gemfile line to value is the single biggest adoption gap.
+
+### CLI executable (`exe/data_redactor`)
+Read stdin, write redacted stdout; flags mirroring `only:`/`except:`/
+`placeholder:`, plus `--scan` for audit JSON. Makes the gem demoable to people
+who never write Ruby — `kubectl logs … | data_redactor`, CI log scrubbing, a
+pre-push hook — and turns every promotion post's demo into one shell line. No
+new deps; an afternoon of work on the existing API.
+
+### Error-tracker and job-queue integrations
+Meet leaks where they hurt most, on the existing soft-require pattern (~50
+lines each):
+- **Sentry / Honeybadger / Rollbar** — a `before_send` scrubber that deep-redacts
+  the event payload before it leaves the process.
+- **Sidekiq** — client/server middleware redacting job arguments before they hit
+  Redis and the Sidekiq Web UI.
+Each one is also a searchable article title ("Stop leaking PII to Sentry"), so
+each integration brings its own audience. Positioning note for the README while
+these land: lead with one concrete leak story (a JWT in an exception message, a
+card number in a support transcript), not the architecture.
+
+### Path to 1.0
+0.x scares exactly the compliance-minded teams the gem targets. Define what 1.0
+requires (checksum validation, chunk-boundary fix, the adoption integrations
+above, stable API commitment), state it in the README, and cut 1.0 when the
+list is done rather than drifting through 0.x forever.
 
 ### Streaming API (#8)
 `DataRedactor.redact_stream(input_io, output_io)`. Chunk boundaries can split a
@@ -373,23 +415,53 @@ shippable one. Cites Hyperscan (NSDI 2019), BLARE (PACMMOD 2023). HybridSA (OOPS
 
 ---
 
-## Promotion (post-publish visibility)
+## Promotion & adoption
 
-- Submit to [The Ruby Toolbox](https://www.ruby-toolbox.com).
-- Post to r/ruby and r/rails — ask for feedback, don't just sell it.
-- Write a short DEV/Medium article: "Why I built a C-extension PII redactor for
-  Ruby" (the C vs pure-Ruby angle is the hook).
-- **If/when the RubyLLM integration ships** (see "RubyLLM integration" under
-  Features): write a LinkedIn post **and** a Medium article on it — angle:
-  "auto-redact secrets & PII before they reach any LLM provider, in one require."
-  RubyLLM's traction makes this a timely hook; lead with the one-line opt-in and
-  a before/after of a leaked prompt.
-- Announce on X / Mastodon with `#ruby` `#rails`.
+**Lesson (2026-07): the Medium article shipped and got essentially no readers.**
+Medium has no built-in Ruby audience — publishing there is publishing into the
+void. Distribution beats content: the article must go where Ruby readers already
+are, and it lands better when the gem has its adoption features in place. New
+strategy, in order:
+
+### Step 1 — land the adoption features first
+Do these before the next outreach push, so a visitor who clicks through finds a
+gem that installs itself and proves its claims (each has a full entry under
+Features):
+1. Rails Railtie (zero-config onboarding) — the biggest lever.
+2. CLI executable — makes every demo a one-liner.
+3. Checksum validation (#7) + published false-positive numbers.
+4. Error-tracker / Sidekiq integrations — each one brings its own audience.
+5. README positioning: lead with a concrete leak story and the
+   "`filter_parameters` only filters keys you name" pitch, not the architecture.
+6. State the path to 1.0.
+
+### Step 2 — coordinated outreach round (one week, all channels at once)
+- **Cross-post the Medium article to [dev.to](https://dev.to)** (set the
+  canonical URL to Medium) — dev.to's `#ruby` tag has organic readership Medium
+  lacks. Same for future posts: dev.to first, Medium second.
+- Post to [RubyFlow](https://rubyflow.com) — the community link blog newsletters
+  trawl for content.
 - Submit to [Ruby Weekly](https://rubyweekly.com) and
-  [Short Ruby Newsletter](https://newsletter.shortruby.com).
-- Offer a 5-minute lightning talk at a local/virtual Ruby meetup.
-- **Ongoing:** keep CHANGELOG current; respond to issues/PRs promptly; track
-  RubyGems download stats.
+  [Short Ruby Newsletter](https://newsletter.shortruby.com) — a newsletter
+  mention is worth more than a month of Medium.
+- Submit to [The Ruby Toolbox](https://www.ruby-toolbox.com) and PR the gem into
+  [awesome-ruby](https://github.com/markets/awesome-ruby).
+- **Get listed in RubyLLM's ecosystem/docs** — a PR or issue proposing
+  data_redactor in their README/docs as the redaction companion. Their users are
+  the exact audience, and the #765 thread is already a warm contact.
+- Post to r/ruby and r/rails — ask for pattern feedback, don't just sell it.
+- Show HN — the C-extension performance work + the paper is a strong
+  "Show HN: I replaced a regex engine and wrote a paper about it" story.
+- Pitch podcasts: Remote Ruby, The Bike Shed, Ruby Rogues — the engine-replacement
+  story is guest material, not just a plug.
+- Answer Stack Overflow / Reddit questions on log scrubbing, `filter_parameters`
+  gaps, and PII in LLM prompts where the gem is genuinely the answer.
+- Offer a 5-minute lightning talk at a local/virtual Ruby meetup; consider a
+  RubyConf / EuRuKo CFP with the paper's story.
+- Announce on X / Mastodon (ruby.social) with `#ruby` `#rails`.
+
+**Ongoing:** keep CHANGELOG current; respond to issues/PRs promptly; track
+RubyGems download stats after each channel to learn which ones convert.
 
 ---
 
