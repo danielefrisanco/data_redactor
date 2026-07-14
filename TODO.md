@@ -396,12 +396,36 @@ can't run Ruby inline but can call MCP tools. Defer until that workflow is real.
 Scrub `PATH_INFO` / `QUERY_STRING` for downstream access loggers. Deferred — needs
 to wrap the upstream logger rather than mutate env, which has blocked the design.
 
-### Possible Erlang / Elixir port
-The C core is portable; the Ruby-specific layer is thin. Two shapes: a NIF
-(`erl_nif.h`) wrapping the same engine as a Hex package `data_redactor_ex`, or pure
-Elixir over `:re` (PCRE). Defer until the Ruby gem has real adoption and someone
-asks. Cost: maintenance doubles, NIF segfaults crash the whole BEAM VM, separate CI
-+ Hex publishing. Documented so the option isn't forgotten.
+### Possible Erlang / Elixir port (and the standalone C library that gates it)
+The C core is portable; the Ruby-specific layer is thin. **Verdict unchanged:
+defer until the Ruby gem has real adoption and someone asks** — a second ecosystem
+doubles maintenance (separate CI, Hex publishing, NIF safety story) while the
+distribution problem repeats there identically. Researched detail (2026-07) so the
+option isn't re-investigated:
+
+- **Registry / tooling:** [Hex](https://hex.pm) is the RubyGems of both Erlang and
+  Elixir (`mix` ≈ bundler+rake; `rebar3` for Erlang); docs auto-hosted on
+  [hexdocs.pm](https://hexdocs.pm). Package name would be `data_redactor_ex`.
+- **Three shapes, in increasing order of preference:**
+  1. *Pure Elixir over `:re`* (Erlang's PCRE binding) — no C, no crash risk, least
+     work, but abandons the single-pass v19 engine, i.e. the differentiator.
+  2. *NIF (`erl_nif.h`)* — the BEAM's C extension. The engine is unusually ready:
+     NIFs run concurrently on many scheduler threads, so they require the per-call
+     re-entrancy shipped in 0.17.1, and long scans must run on **dirty schedulers**
+     (`ERL_NIF_DIRTY_JOB_CPU_BOUND`) — the exact analog of the GVL-release work.
+     Blast radius is worse than Ruby: a NIF segfault kills the whole BEAM VM, no
+     rescue — the ASan/fuzz CI gate is what makes this thinkable. Precompiled
+     distribution exists (`elixir_make` + checksummed prebuilt artifacts, analog of
+     the rake-compiler-dock native gems).
+  3. *Extract `libdataredactor` first (do this before any binding).* The engine
+     already compiles without Ruby — the alloc-gate and ASan CI jobs build
+     `matcher.c` standalone daily, so the seam is proven. A plain C library
+     (engine + pattern tables + a small `dr_redact()`/`dr_scan()` API) makes every
+     binding thin: Elixir NIF, Python cffi, Node N-API, the CLI.
+- **Market note:** Elixir has almost no redaction tooling (thin competition, small
+  audience); Python already has Microsoft Presidio (huge audience, entrenched
+  competitor). Elixir-via-NIF is the more winnable port; the
+  standalone-C-library-first ordering serves both.
 
 ---
 
