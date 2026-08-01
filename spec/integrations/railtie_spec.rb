@@ -15,11 +15,14 @@ RSpec.describe DataRedactor::Railtie do
 
     # `root` points at a temp dir so booting these apps doesn't create a `log/`
     # directory in the repo.
+    # No `config.load_defaults`: on Rails 7.0 it calls `remove_method(:name)` on
+    # TimeWithZone's singleton, which only succeeds once per process and so
+    # breaks the second app booted in these specs. The Railtie doesn't depend on
+    # any framework default, so booting without them is faithful enough.
     root = Dir.mktmpdir("data_redactor-railtie-spec")
     app_class = Class.new(::Rails::Application) do
       config.eager_load = false
       config.logger = logger
-      config.active_support.to_time_preserves_timezone = :zone
       config.root = root
     end
     app_class.configure(&configure) if configure
