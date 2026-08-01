@@ -17,7 +17,7 @@ jobs:
         ruby: ['3.1', '3.2', '3.3', '3.4']
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -42,7 +42,7 @@ jobs:
     name: Zero-allocation hot-path gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       # No Ruby needed: the gate compiles the matcher engine standalone and
       # asserts the steady-state hot path allocates nothing. Deterministic, so
@@ -54,7 +54,7 @@ jobs:
     name: ASan/UBSan memory-safety gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       # No Ruby needed: builds the matcher engine standalone under
       # -fsanitize=address,undefined and drives it over an adversarial corpus +
@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -108,7 +108,7 @@ jobs:
       pull-requests: write   # gh pr comment posts the trend to the PR thread
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -193,7 +193,7 @@ jobs:
     # The full 6-platform build still runs only on release-binaries.yml.
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -240,7 +240,7 @@ jobs:
     # interval exceeded POSIX RE_DUP_MAX (255), which musl's regcomp rejects at
     # module init but glibc accepts). This job runs the same regcomp path on musl.
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - name: Install build toolchain
         run: apk add --no-cache build-base
@@ -316,7 +316,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: ruby/setup-ruby@v1
         with:
