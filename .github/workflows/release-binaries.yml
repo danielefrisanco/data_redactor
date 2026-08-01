@@ -75,10 +75,13 @@ jobs:
       # Use the same rake-compiler-dock code path that `rake gem:all` uses
       # locally and that the ci.yml smoke test exercises on every PR.
       # Images come from ghcr.io/rake-compiler/* (no Docker Hub rate limit).
+      # BUNDLE_WITHOUT=rails inside the container: the native build only needs the
+      # C toolchain, but railties pulls in actionpack -> nokogiri, whose supported
+      # Ruby range excludes the Ruby shipped in the rake-compiler-dock image.
       - name: Build native gem for ${{ matrix.platform }}
         run: |
           bundle exec ruby -r rake_compiler_dock -e \
-            'RakeCompilerDock.sh("bundle install --jobs $(nproc) && bundle exec rake native:data_redactor:${{ matrix.platform }} gem", platform: "${{ matrix.platform }}")'
+            'RakeCompilerDock.sh("BUNDLE_WITHOUT=rails bundle install --jobs $(nproc) && BUNDLE_WITHOUT=rails bundle exec rake native:data_redactor:${{ matrix.platform }} gem", platform: "${{ matrix.platform }}")'
 
       - name: Verify native gem contents
         run: |
