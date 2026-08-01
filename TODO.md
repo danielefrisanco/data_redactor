@@ -142,16 +142,6 @@ per-call flag (`strict: true`) since validation costs CPU.
   pass Luhn as a Visa card, and the 12-digit Aadhaar slice would fail Verhoeff.
   Verify this resolves once #7 is in; if not, may need ordering/anchoring work.
 
-### Rails Railtie — zero-config onboarding (adoption lever #1)
-Today every integration is a manual opt-in; Rails devs adopt what installs
-itself. Ship a Railtie that, on `require "data_redactor/railtie"` (or a separate
-`data_redactor-rails` gem to keep the zero-runtime-deps rule), automatically
-wires the Logger formatter and `filter_parameters`, configurable via an
-initializer. The pitch writes itself: *`filter_parameters` only redacts keys you
-name; data_redactor catches the card number inside an exception message — free
-text you can't enumerate.* Rails is where the buyers are (GDPR/PCI compliance
-teams); one Gemfile line to value is the single biggest adoption gap.
-
 ### CLI executable (`exe/data_redactor`)
 Read stdin, write redacted stdout; flags mirroring `only:`/`except:`/
 `placeholder:`, plus `--scan` for audit JSON. Makes the gem demoable to people
@@ -486,13 +476,13 @@ strategy, in order:
 Do these before the next outreach push, so a visitor who clicks through finds a
 gem that installs itself and proves its claims (each has a full entry under
 Features):
-1. Rails Railtie (zero-config onboarding) — the biggest lever.
-2. CLI executable — makes every demo a one-liner.
-3. Checksum validation (#7) + published false-positive numbers.
-4. Error-tracker / Sidekiq integrations — each one brings its own audience.
-5. README positioning: lead with a concrete leak story and the
+(The Rails Railtie, the biggest lever, has shipped — see DONE.md.)
+1. CLI executable — makes every demo a one-liner.
+2. Checksum validation (#7) + published false-positive numbers.
+3. Error-tracker / Sidekiq integrations — each one brings its own audience.
+4. README positioning: lead with a concrete leak story and the
    "`filter_parameters` only filters keys you name" pitch, not the architecture.
-6. State the path to 1.0.
+5. State the path to 1.0.
 
 ### Step 2 — coordinated outreach round (one week, all channels at once)
 - **Cross-post the Medium article to [dev.to](https://dev.to)** (set the

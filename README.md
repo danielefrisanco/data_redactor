@@ -33,8 +33,9 @@ Rack. You can also register your own patterns — at boot or at runtime from any
 
 - **Log scrubbing** — drop the `Logger` formatter in so no secret or PII ever
   reaches disk or your log aggregator.
-- **Rails parameter filtering** — feed `filter_parameters` a redactor-backed proc
-  to keep request params out of logs and error reports.
+- **Rails, zero-config** — one Gemfile line wires both the log formatter and
+  `filter_parameters`; unlike `filter_parameters` alone, it also catches secrets
+  in free text you can't enumerate by key.
 - **HTTP request/response sanitising** — Rack middleware scrubs response bodies
   and sensitive headers in flight.
 - **Scrubbing prompts before an LLM** — with [RubyLLM](#rubyllm--redact-before-it-reaches-the-model), redact every
@@ -310,6 +311,39 @@ DataRedactor.name_pattern("Mario", "Rossi", middle: "Luigi")
 
 Optional adapters for Logger, Rails, and Rack. None are loaded automatically — `require` only what you use, and the gem adds zero runtime dependencies in the gemspec.
 
+### Rails (zero-config)
+
+One Gemfile line wires both Rails surfaces — the log formatter and `filter_parameters`:
+
+```ruby
+# Gemfile
+gem "data_redactor", require: "data_redactor/railtie"
+```
+
+That's the whole setup. `filter_parameters` on its own only redacts the keys you name; data_redactor also catches the card number sitting inside an exception message or a free-text field you can't enumerate in advance.
+
+Tune it from an initializer:
+
+```ruby
+# config/initializers/data_redactor.rb
+Rails.application.configure do
+  config.data_redactor.only        = [:credentials, :financial]
+  config.data_redactor.placeholder = :tagged
+  config.data_redactor.logger      = false   # leave the logger alone
+end
+```
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `logger` | `true` | Wrap the Rails logger's formatter |
+| `filter_parameters` | `true` | Append a redacting `filter_parameters` entry |
+| `only` / `except` | `nil` | Forwarded to `DataRedactor.redact` |
+| `placeholder` | `"[REDACTED]"` | Forwarded to `DataRedactor.redact` |
+
+The logger initializer runs after Rails' own, so it **wraps** whatever formatter your app ended up with (lograge, a JSON formatter) rather than replacing it, and it descends into `ActiveSupport::BroadcastLogger` to wrap each sink. Rails stays a development dependency — the Railtie file is only loaded when you require it.
+
+Prefer wiring the two surfaces by hand? Both are documented below.
+
 ### Logger formatter
 
 Drop-in `Logger::Formatter` replacement that scrubs every emitted line:
@@ -484,6 +518,7 @@ redactor/
 │   └── data_redactor/
 │       ├── version.rb
 │       ├── name_pattern.rb        # name_pattern helper — generates a name regex for add_pattern
+│       ├── railtie.rb             # opt-in Rails Railtie — wires logger + filter_parameters
 │       └── integrations/          # soft-required Logger / Rails / Rack adapters
 ├── ext/
 │   └── data_redactor/

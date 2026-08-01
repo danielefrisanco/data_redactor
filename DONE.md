@@ -210,6 +210,26 @@ rewrite needed.
   URL-referenced files aren't redacted (encoded/remote — patterns can't see them).
   Form A (per-call `DataRedactor.redact`) stays the recommended default; this is the
   transparent fallback until #765 lands.
+- **Rails Railtie — zero-config onboarding (unreleased)** — `require
+  "data_redactor/railtie"` wires both Rails surfaces on boot: the Logger formatter
+  and a `filter_parameters` entry, tunable from an initializer via
+  `config.data_redactor.*`. **Why in-gem and opt-in rather than a separate
+  `data_redactor-rails` gem:** the Railtie is a wiring layer over the two
+  integrations that already existed, so a second gem to version, release, and
+  document was overhead for ~60 lines; requiring the file explicitly keeps Rails a
+  dev dependency and preserves the zero-runtime-deps rule, matching the soft-require
+  pattern every other integration follows. **Why wrap rather than replace the
+  formatter:** apps that use lograge or a JSON formatter would otherwise silently
+  lose it, so the initializer runs `after: :initialize_logger` and nests the app's
+  formatter inside ours. **BroadcastLogger:** on Rails 7.1+ `Rails.logger` is
+  routinely an `ActiveSupport::BroadcastLogger`, which writes to each sink directly
+  — a formatter assigned to the broadcast never runs, so the Railtie descends and
+  wraps each sink. Found by a spec asserting redacted bytes actually reach the IO
+  rather than only asserting formatter class. Two Rails-specific gotchas are
+  encoded in the specs: `config.data_redactor.only`/`except` must be read with
+  `[]` (both are Enumerable methods, so `OrderedOptions`' reader returns a method
+  result instead of nil), and the Railtie's `config.data_redactor` is one object
+  shared by every app booted in a process, so multi-boot specs reset it in place.
 - **Distribution / QoL** — published to RubyGems (0.5.0, 2026-05-08); CI matrix
   Ruby 3.1–3.4 on Linux glibc + musl; OIDC trusted publisher; 100% YARD docs +
   GitHub Pages deploy; README thread-safety note + Shields.io badges; precompiled

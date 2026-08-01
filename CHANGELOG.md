@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Rails Railtie — zero-config onboarding.** `require "data_redactor/railtie"`
+  (e.g. `gem "data_redactor", require: "data_redactor/railtie"`) now wires both
+  Rails surfaces automatically: the redacting Logger formatter and a
+  `config.filter_parameters` entry. Everything is tunable from an initializer via
+  `config.data_redactor.{logger,filter_parameters,only,except,placeholder}`, and
+  either surface can be switched off. The logger initializer runs *after*
+  `initialize_logger` and **wraps** the app's existing formatter rather than
+  replacing it, so lograge/JSON formatters keep working; it descends into
+  `ActiveSupport::BroadcastLogger` and wraps each sink, since a formatter set on
+  the broadcast itself never runs. Already-wrapped formatters are left alone.
+  Rails is a development dependency only — the gem keeps zero runtime deps, and
+  the file is loaded only when the app requires it.
 - **Project wiki.** Set up the GitHub wiki as the home for deep material so the
   README stays a focused entry point: pattern catalogue (grouped by tag/country),
   C engine internals (NFA → bytecode → lazy DFA, the v19 story), integration
