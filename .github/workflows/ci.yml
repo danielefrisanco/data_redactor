@@ -38,6 +38,56 @@ jobs:
           name: data-redactor-gem
           path: pkg/
 
+  rails-matrix:
+    name: Railtie (Rails ${{ matrix.rails }}, Ruby ${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    needs: test
+
+    # The `test` job resolves whatever Rails is current, so the Railtie was only
+    # ever exercised against one version — but its behaviour is version-dependent:
+    # `Rails.logger` is a plain Logger on 7.0 and an ActiveSupport::BroadcastLogger
+    # on 7.1+. A BroadcastLogger writes to each sink directly, so a formatter set
+    # on the broadcast itself never runs; the Railtie descends and wraps each sink
+    # instead. That bug redacted nothing while every class-based assertion still
+    # passed, so this job pins a Rails version per entry and runs the Railtie specs
+    # against each. Rails 8.0 requires Ruby >= 3.2, hence the per-entry ruby pin.
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rails: '7.0', ruby: '3.1' }
+          - { rails: '7.1', ruby: '3.1' }
+          - { rails: '7.2', ruby: '3.3' }
+          - { rails: '8.0', ruby: '3.4' }
+
+    env:
+      RAILS_VERSION: ${{ matrix.rails }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          # No bundler-cache: RAILS_VERSION changes the resolution, and the
+          # committed lockfile pins a single Rails. Resolve fresh per entry.
+          bundler-cache: false
+
+      - name: Install dependencies for Rails ${{ matrix.rails }}
+        run: |
+          bundle lock --update=railties
+          bundle install --jobs 4
+
+      - name: Report resolved versions
+        run: bundle exec ruby -e 'require "rails"; puts "Rails #{Rails::VERSION::STRING} on Ruby #{RUBY_VERSION}"'
+
+      - name: Compile C extension
+        run: bundle exec rake compile
+
+      - name: Run Railtie specs
+        run: bundle exec rspec spec/integrations/railtie_spec.rb
+
   alloc-gate:
     name: Zero-allocation hot-path gate
     runs-on: ubuntu-latest
