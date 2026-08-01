@@ -80,7 +80,8 @@ jobs:
           bundle install --jobs 4
 
       - name: Report resolved versions
-        run: bundle exec ruby -e 'require "rails"; puts "Rails #{Rails::VERSION::STRING} on Ruby #{RUBY_VERSION}"'
+        run: |
+          bundle exec ruby -e 'require "rails"; puts "Rails #{Rails::VERSION::STRING} on Ruby #{RUBY_VERSION}"'
 
       - name: Compile C extension
         run: bundle exec rake compile
@@ -250,10 +251,13 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
 
+      # BUNDLE_WITHOUT=rails inside the container: this job only builds the C
+      # extension, but railties pulls in actionpack -> nokogiri, whose supported
+      # Ruby range excludes the Ruby shipped in the rake-compiler-dock image.
       - name: Build native gem for x86_64-linux
         run: |
           bundle exec ruby -r rake_compiler_dock -e \
-            'RakeCompilerDock.sh("bundle install --jobs $(nproc) && bundle exec rake native:data_redactor:x86_64-linux gem", platform: "x86_64-linux")'
+            'RakeCompilerDock.sh("BUNDLE_WITHOUT=rails bundle install --jobs $(nproc) && BUNDLE_WITHOUT=rails bundle exec rake native:data_redactor:x86_64-linux gem", platform: "x86_64-linux")'
 
       - name: Verify native gem contents
         run: |

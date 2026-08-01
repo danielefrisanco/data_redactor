@@ -6,4 +6,12 @@ gemspec
 # per matrix entry via RAILS_VERSION to prove the Railtie works across the Rails
 # versions the gem supports — `Rails.logger` is a plain Logger on 7.0 and an
 # ActiveSupport::BroadcastLogger on 7.1+, which the Railtie handles differently.
-gem "railties", ENV["RAILS_VERSION"] ? "~> #{ENV['RAILS_VERSION']}.0" : ">= 6.0"
+#
+# Grouped so the cross-compile container can exclude it with
+# `BUNDLE_WITHOUT=rails`: that job only builds the C extension, but railties
+# pulls in actionpack -> nokogiri, whose supported Ruby range excludes the Ruby
+# that ships in the rake-compiler-dock image. Not an optional group — the specs
+# need Rails by default everywhere else.
+group :rails do
+  gem "railties", ENV["RAILS_VERSION"] ? "~> #{ENV['RAILS_VERSION']}.0" : ">= 6.0"
+end
