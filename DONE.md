@@ -327,9 +327,19 @@ ships December 2026", which reality had already overtaken: the next Ruby shipped
 as **4.0**, and 4.0.6 was current while the matrix still stopped at 3.4. So the
 gem's *ceiling* was as untested as its floor had been, for the opposite reason.
 
-4.0 was green as-is — verified in a `ruby:4.0` container against the committed
-lockfile (Rails 7.2.3.2, Bundler 2.6.9), 344/344 — so it joined `test` as a plain
-supported release rather than an experimental entry.
+4.0 needed no source changes — 344/344 in a `ruby:4.0` container — so it joined
+`test` as a plain supported release rather than an experimental entry. But the
+first CI run failed anyway, on a gap the container test could not see: the
+committed lockfile pins nokogiri 1.18.10 (via railties → actionpack), whose
+`required_ruby_version` caps at `< 3.5.dev`, and `bundler-cache: true` installs
+with `deployment true`, which forbids re-resolving. The local `bundle install`
+had no such constraint, so it silently re-resolved and looked like a pass. **A
+lockfile can only serve the Rubies inside its narrowest dependency's
+`required_ruby_version` window** — 3.1–3.4 sit inside nokogiri 1.18's window,
+4.0 does not — so the 4.0 entry resolves its own set (nokogiri 1.19, Rails 8.1,
+Railtie specs included) while the rest keep the cache. Verifying a
+`bundler-cache` entry locally means reproducing `deployment true`, not just
+running `bundle install`.
 
 The head job (`ruby-next`) is deliberately not a `test` matrix entry with
 `continue-on-error`: it needs a different dependency set. Rails is excluded,

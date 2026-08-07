@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which pins a Rails that requires Ruby >= 3.1. No source changes were needed:
   both Rubies were already green.
 - **CI: Ruby 4.0 is tested, and `ruby-head` is watched.** 4.0 joins the `test`
-  matrix as a supported release (green as-is, no source changes), and a new
+  matrix as a supported release (green as-is, no source changes) — resolving its
+  own dependency set, since the committed lockfile's nokogiri caps at
+  `< 3.5.dev` and `bundler-cache` installs frozen — and a new
   allow-failure `ruby-next` job compiles the extension and runs the specs
   against `ruby-head` so C-API or stdlib breakage surfaces months before a
   release week rather than during one. `ruby-next` excludes Rails: nokogiri has

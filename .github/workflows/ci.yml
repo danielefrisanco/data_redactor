@@ -11,10 +11,22 @@ jobs:
     name: Test (Ruby ${{ matrix.ruby }})
     runs-on: ubuntu-latest
 
+    # The committed lockfile can only serve the Rubies inside its narrowest
+    # dependency's `required_ruby_version` window, and `bundler-cache: true`
+    # installs with `deployment true`, which forbids re-resolving. railties ->
+    # actionpack pulls nokogiri, whose requirement caps at `< 3.5.dev`, so 4.0
+    # cannot use the lockfile at all — it resolves its own set instead (landing
+    # on nokogiri 1.19 / Rails 8.1). 3.1-3.4 sit inside the window and keep the
+    # cache. Whenever the lockfile's window moves, this flag moves with it.
     strategy:
       fail-fast: false
       matrix:
-        ruby: ['3.1', '3.2', '3.3', '3.4', '4.0']
+        include:
+          - { ruby: '3.1' }
+          - { ruby: '3.2' }
+          - { ruby: '3.3' }
+          - { ruby: '3.4' }
+          - { ruby: '4.0', resolve: fresh }
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -22,7 +34,13 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
-          bundler-cache: true
+          bundler-cache: ${{ matrix.resolve != 'fresh' }}
+
+      - name: Resolve dependencies without the committed lockfile
+        if: matrix.resolve == 'fresh'
+        run: |
+          rm -f Gemfile.lock
+          bundle install --jobs 4
 
       - name: Compile C extension and run specs
         run: bundle exec rake
