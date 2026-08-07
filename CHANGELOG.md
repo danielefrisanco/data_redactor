@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the broadcast itself never runs. Already-wrapped formatters are left alone.
   Rails is a development dependency only — the gem keeps zero runtime deps, and
   the file is loaded only when the app requires it.
+- **CI: the Ruby 2.7 floor is now tested, not just claimed.** New `ruby-floor`
+  job compiles the C extension and runs the full suite on Ruby 2.7 and 3.0 — the
+  bottom of the `required_ruby_version >= 2.7` range, which the 3.1–3.4 `test`
+  matrix never covered. It pins `ubuntu-24.04` (ruby-builder has no 2.7/3.0
+  binaries for 26.04) and resolves dependencies without the committed lockfile,
+  which pins a Rails that requires Ruby >= 3.1. No source changes were needed:
+  both Rubies were already green.
 - **Project wiki.** Set up the GitHub wiki as the home for deep material so the
   README stays a focused entry point: pattern catalogue (grouped by tag/country),
   C engine internals (NFA → bytecode → lazy DFA, the v19 story), integration

@@ -291,6 +291,36 @@ runs compare against the baseline without polluting it. (5) A **>10% drop** make
 the comparator exit non-zero (pipefail propagates it through the `tee`), failing
 the job.
 
+### Ruby 2.7/3.0 floor backed by CI (`ci/ruby-floor-matrix`, 2026-08-07)
+The gemspec has promised `required_ruby_version >= 2.7` since 0.1.0 while CI
+tested 3.1–3.4 — the floor was an untested claim, and the open question was
+whether to back it or raise it to 3.1. Backed it: both Rubies turned out to be
+green as-is, no source changes. Verified before writing any workflow by running
+the real suite in `ruby:2.7` and `ruby:3.0` containers (344/344 each), and by
+parse-checking every `.rb` under Ruby **2.6** — nothing in `lib/` or `spec/` uses
+3.x syntax, and the C extension only touches long-stable API
+(`rb_ary_new_capa`, `rb_thread_call_without_gvl`). Keeping the floor is
+deliberate: legacy Rails apps stuck on old Rubies are prime redaction candidates,
+and they are the ones that most need it.
+
+Three findings shaped the job, and all three are why it is separate from `test`
+rather than two more matrix entries:
+
+1. **`ubuntu-latest` cannot be used.** ruby/ruby-builder publishes 2.7/3.0
+   binaries for `ubuntu-22.04` and `ubuntu-24.04` only; the 26.04 assets start at
+   3.2. The alias advancing would break exactly these entries, so the job pins
+   `ubuntu-24.04`. Those tarballs bundle their own OpenSSL 1.1.1w (checked by
+   unpacking them into a bare `ubuntu:24.04` container), so TLS to rubygems.org
+   works despite 24.04 shipping OpenSSL 3.
+2. **The committed lockfile is unusable at the floor** — it pins Rails 7.2, which
+   requires Ruby >= 3.1. The job deletes it and resolves fresh; both Rubies land
+   on Rails 7.1, the last release supporting 2.7, so the Railtie specs run too.
+3. **Bundler must be pinned per entry.** setup-ruby's `bundler: Gemfile.lock`
+   default reads `BUNDLED WITH` (2.6.9) and only caps that value when the input
+   was `latest`/`default` — so it would try to install a Bundler needing Ruby
+   >= 3.1 and fail before `bundle install` ever ran. Pinned to the last release
+   supporting each Ruby: 2.4 on 2.7, 2.5 on 3.0.
+
 ---
 
 ## C extension refactor

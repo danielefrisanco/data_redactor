@@ -85,14 +85,6 @@ boundary problem in general form.
   matrix would catch a musl regcomp divergence that is Ruby-version specific.
   Nice-to-have, not blocking.
 
-- **Back the Ruby 2.7 floor with CI** — the gemspec claims `>= 2.7` but the
-  matrix only tests 3.1–3.4, so the floor is an untested promise (2.7 users get
-  the source gem; precompiled binaries are 3.1+ only). Add `2.7` and `3.0` to the
-  test matrix. Keeping the floor is deliberate: legacy Rails apps stuck on old
-  Rubies are prime candidates for log redaction. If the old rubies can't be kept
-  green cheaply (dev-dep resolution, C-API drift), raise the floor to 3.1 instead
-  — either way the claim and the matrix must agree.
-
 - **ruby-head / 3.5-preview CI job (allow-failure)** — Ruby 3.5 ships December
   2026 and the native-gem matrix must support it on day one. An allow-failure
   `ruby-head` entry in the test matrix gives months of warning on C-API or
