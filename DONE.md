@@ -351,6 +351,15 @@ skipped there and stays covered by `test` and `rails-matrix` on every released
 Ruby. `bundler: default` uses the Bundler head ships, since the committed
 lockfile's pins are all older than head's world.
 
+The head job paid for itself on its first run: it caught `integrations/logger.rb`
+raising `LoadError`, because Ruby 4.0 demoted `logger` from a default gem to a
+bundled one and this gem declares no runtime dependencies. Every other job missed
+it — they all have railties, and activesupport declares `logger`. Fixed by
+soft-requiring it rather than taking a runtime dependency (a caller assigning the
+formatter necessarily holds a `::Logger`, so their own require defines the
+constant), with a subprocess spec that stubs `Kernel#require` to fail for
+`"logger"`, since the gem is already loaded in the spec process.
+
 Left open, and now unblocked: native gems still cover 3.1–3.4, so 4.0 users get
 the source gem. `rake-compiler-dock` 1.12.0 (already locked) cross-compiles 4.0 —
 tracked in TODO.md to land with a release.

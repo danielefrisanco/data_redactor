@@ -53,4 +53,26 @@ RSpec.describe DataRedactor::Integrations::Logger do
     expect(io.string).to include("***")
     expect(io.string).not_to include("[REDACTED]")
   end
+
+  # Ruby 4.0 unbundled logger, so `require "logger"` raises for anyone who has
+  # not declared it — and this gem declares no runtime dependencies. A subprocess
+  # is the only honest way to test it: logger is already loaded in this process.
+  it "loads when the logger gem is unavailable" do
+    script = <<~RUBY
+      module Kernel
+        alias_method :require_without_logger_block, :require
+        def require(name)
+          raise LoadError, "cannot load such file -- logger" if name == "logger"
+
+          require_without_logger_block(name)
+        end
+      end
+
+      require "data_redactor/integrations/logger"
+      print DataRedactor::Integrations::Logger.instance_method(:call) ? "loaded" : "missing"
+    RUBY
+
+    out = IO.popen([RbConfig.ruby, "-Ilib", "-e", script], err: %i[child out], &:read)
+    expect(out).to eq("loaded")
+  end
 end

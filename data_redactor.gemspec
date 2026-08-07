@@ -30,6 +30,9 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "rspec", "~> 3.12"
   spec.add_development_dependency "yard", "~> 0.9"
   spec.add_development_dependency "rack", ">= 2.0"
+  # Ruby 4.0 unbundled logger; the specs require it directly to build real
+  # ::Logger instances. The gem itself soft-requires it and stays dependency-free.
+  spec.add_development_dependency "logger", ">= 1.5"
   spec.add_development_dependency "benchmark-ips", "~> 2.13"
   spec.add_development_dependency "benchmark-memory", "~> 0.2"
 end

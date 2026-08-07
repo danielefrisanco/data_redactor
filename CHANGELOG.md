@@ -57,6 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GVL-released digit/IBAN load.
 
 ### Fixed
+- **Logger integration no longer raises `LoadError` on Ruby 4.0.** Ruby 4.0
+  demoted `logger` from a default gem to a bundled one, so `require "logger"`
+  only resolves when something declares it — and this gem declares no runtime
+  dependencies. `integrations/logger.rb` now soft-requires it: anyone assigning
+  the redacting formatter already holds a `::Logger`, so their own require
+  defines the constant. Rails apps were never affected (activesupport declares
+  `logger`); plain Ruby 4.0 apps hit it the moment they loaded the integration.
+  The gem stays dependency-free. Found by the new `ruby-next` job on its first
+  run. **If you use the Logger integration on Ruby 4.0 without Rails, add
+  `gem "logger"` to your Gemfile** — Ruby 4.0 requires that of every caller,
+  not just this gem.
 - Gemspec description said "85 sensitive patterns" while the engine ships 89.
   The description no longer hardcodes a count, so it can't drift again.
 

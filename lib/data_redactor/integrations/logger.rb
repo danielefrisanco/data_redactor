@@ -1,4 +1,14 @@
-require "logger"
+# Ruby 4.0 demoted logger from a default gem to a bundled one: it still ships
+# with Ruby, but under Bundler it only resolves when something declares it, and
+# this gem declares no runtime dependencies. Swallowing the LoadError costs
+# nothing — anyone assigning this formatter holds a ::Logger instance already,
+# so their own require has defined the constant this file needs.
+begin
+  require "logger"
+rescue LoadError
+  nil
+end
+
 require "data_redactor"
 
 module DataRedactor
