@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby: ['3.1', '3.2', '3.3', '3.4']
+        ruby: ['3.1', '3.2', '3.3', '3.4', '4.0']
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -88,6 +88,52 @@ jobs:
 
       - name: Compile C extension and run specs
         run: bundle exec rake
+
+  ruby-next:
+    name: Ruby head (early warning, allow-failure)
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+
+    # Early warning, never a gate: a C-API or stdlib change in the next Ruby
+    # otherwise surfaces the week the native-gem matrix has to support it. A red
+    # run here means triage, not a blocked merge — ruby-head is a moving target
+    # and some failures are head's, not ours.
+    #
+    # Rails is excluded on purpose. railties pulls in actionpack -> nokogiri,
+    # which has no precompiled gem for head and regularly fails to build against
+    # it (the cross-compile job drops Rails for the same reason). Letting that
+    # kill the job would destroy the signal it exists for — whether *our* C
+    # extension still compiles and *our* specs still pass — so the Railtie spec,
+    # the one file that requires Rails, is skipped here. It is covered on every
+    # released Ruby by `test` and `rails-matrix`.
+    #
+    # `bundler: default` uses the Bundler head itself ships, which is what a head
+    # user actually has; the committed lockfile is discarded because its pins
+    # (and its `BUNDLED WITH`) are all older than head's world.
+
+    env:
+      BUNDLE_WITHOUT: rails
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: head
+          bundler: default
+          bundler-cache: false
+
+      - name: Resolve dependencies without Rails or the committed lockfile
+        run: |
+          rm -f Gemfile.lock
+          bundle install --jobs 4
+
+      - name: Compile C extension
+        run: bundle exec rake compile
+
+      - name: Run specs (Railtie spec needs Rails, excluded above)
+        run: bundle exec rspec --exclude-pattern "spec/integrations/railtie_spec.rb"
 
   rails-matrix:
     name: Railtie (Rails ${{ matrix.rails }}, Ruby ${{ matrix.ruby }})

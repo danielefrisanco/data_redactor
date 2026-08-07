@@ -321,6 +321,30 @@ rather than two more matrix entries:
    >= 3.1 and fail before `bundle install` ever ran. Pinned to the last release
    supporting each Ruby: 2.4 on 2.7, 2.5 on 3.0.
 
+### Ruby 4.0 in the matrix + `ruby-head` early warning (`ci/ruby-floor-matrix`, 2026-08-07)
+The TODO item behind this was written as "ruby-head / 3.5-preview job — Ruby 3.5
+ships December 2026", which reality had already overtaken: the next Ruby shipped
+as **4.0**, and 4.0.6 was current while the matrix still stopped at 3.4. So the
+gem's *ceiling* was as untested as its floor had been, for the opposite reason.
+
+4.0 was green as-is — verified in a `ruby:4.0` container against the committed
+lockfile (Rails 7.2.3.2, Bundler 2.6.9), 344/344 — so it joined `test` as a plain
+supported release rather than an experimental entry.
+
+The head job (`ruby-next`) is deliberately not a `test` matrix entry with
+`continue-on-error`: it needs a different dependency set. Rails is excluded,
+because railties pulls actionpack → nokogiri, which has no precompiled gem for
+head and routinely fails to build against it — a failure there would abort the
+job before the C extension was ever compiled, destroying the only signal the job
+exists for. The Railtie spec (the one file with a bare `require "rails"`) is
+skipped there and stays covered by `test` and `rails-matrix` on every released
+Ruby. `bundler: default` uses the Bundler head ships, since the committed
+lockfile's pins are all older than head's world.
+
+Left open, and now unblocked: native gems still cover 3.1–3.4, so 4.0 users get
+the source gem. `rake-compiler-dock` 1.12.0 (already locked) cross-compiles 4.0 —
+tracked in TODO.md to land with a release.
+
 ---
 
 ## C extension refactor

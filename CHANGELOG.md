@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binaries for 26.04) and resolves dependencies without the committed lockfile,
   which pins a Rails that requires Ruby >= 3.1. No source changes were needed:
   both Rubies were already green.
+- **CI: Ruby 4.0 is tested, and `ruby-head` is watched.** 4.0 joins the `test`
+  matrix as a supported release (green as-is, no source changes), and a new
+  allow-failure `ruby-next` job compiles the extension and runs the specs
+  against `ruby-head` so C-API or stdlib breakage surfaces months before a
+  release week rather than during one. `ruby-next` excludes Rails: nokogiri has
+  no precompiled gem for head, and letting it fail there would mask the signal
+  the job exists for. Precompiled binaries still cover 3.1–3.4 only, so Ruby 4.0
+  installs the source gem for now.
 - **Project wiki.** Set up the GitHub wiki as the home for deep material so the
   README stays a focused entry point: pattern catalogue (grouped by tag/country),
   C engine internals (NFA → bytecode → lazy DFA, the v19 story), integration
