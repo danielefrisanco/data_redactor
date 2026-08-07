@@ -291,6 +291,79 @@ runs compare against the baseline without polluting it. (5) A **>10% drop** make
 the comparator exit non-zero (pipefail propagates it through the `tee`), failing
 the job.
 
+### Ruby 2.7/3.0 floor backed by CI (`ci/ruby-floor-matrix`, 2026-08-07)
+The gemspec has promised `required_ruby_version >= 2.7` since 0.1.0 while CI
+tested 3.1–3.4 — the floor was an untested claim, and the open question was
+whether to back it or raise it to 3.1. Backed it: both Rubies turned out to be
+green as-is, no source changes. Verified before writing any workflow by running
+the real suite in `ruby:2.7` and `ruby:3.0` containers (344/344 each), and by
+parse-checking every `.rb` under Ruby **2.6** — nothing in `lib/` or `spec/` uses
+3.x syntax, and the C extension only touches long-stable API
+(`rb_ary_new_capa`, `rb_thread_call_without_gvl`). Keeping the floor is
+deliberate: legacy Rails apps stuck on old Rubies are prime redaction candidates,
+and they are the ones that most need it.
+
+Three findings shaped the job, and all three are why it is separate from `test`
+rather than two more matrix entries:
+
+1. **`ubuntu-latest` cannot be used.** ruby/ruby-builder publishes 2.7/3.0
+   binaries for `ubuntu-22.04` and `ubuntu-24.04` only; the 26.04 assets start at
+   3.2. The alias advancing would break exactly these entries, so the job pins
+   `ubuntu-24.04`. Those tarballs bundle their own OpenSSL 1.1.1w (checked by
+   unpacking them into a bare `ubuntu:24.04` container), so TLS to rubygems.org
+   works despite 24.04 shipping OpenSSL 3.
+2. **The committed lockfile is unusable at the floor** — it pins Rails 7.2, which
+   requires Ruby >= 3.1. The job deletes it and resolves fresh; both Rubies land
+   on Rails 7.1, the last release supporting 2.7, so the Railtie specs run too.
+3. **Bundler must be pinned per entry.** setup-ruby's `bundler: Gemfile.lock`
+   default reads `BUNDLED WITH` (2.6.9) and only caps that value when the input
+   was `latest`/`default` — so it would try to install a Bundler needing Ruby
+   >= 3.1 and fail before `bundle install` ever ran. Pinned to the last release
+   supporting each Ruby: 2.4 on 2.7, 2.5 on 3.0.
+
+### Ruby 4.0 in the matrix + `ruby-head` early warning (`ci/ruby-floor-matrix`, 2026-08-07)
+The TODO item behind this was written as "ruby-head / 3.5-preview job — Ruby 3.5
+ships December 2026", which reality had already overtaken: the next Ruby shipped
+as **4.0**, and 4.0.6 was current while the matrix still stopped at 3.4. So the
+gem's *ceiling* was as untested as its floor had been, for the opposite reason.
+
+4.0 needed no source changes — 344/344 in a `ruby:4.0` container — so it joined
+`test` as a plain supported release rather than an experimental entry. But the
+first CI run failed anyway, on a gap the container test could not see: the
+committed lockfile pins nokogiri 1.18.10 (via railties → actionpack), whose
+`required_ruby_version` caps at `< 3.5.dev`, and `bundler-cache: true` installs
+with `deployment true`, which forbids re-resolving. The local `bundle install`
+had no such constraint, so it silently re-resolved and looked like a pass. **A
+lockfile can only serve the Rubies inside its narrowest dependency's
+`required_ruby_version` window** — 3.1–3.4 sit inside nokogiri 1.18's window,
+4.0 does not — so the 4.0 entry resolves its own set (nokogiri 1.19, Rails 8.1,
+Railtie specs included) while the rest keep the cache. Verifying a
+`bundler-cache` entry locally means reproducing `deployment true`, not just
+running `bundle install`.
+
+The head job (`ruby-next`) is deliberately not a `test` matrix entry with
+`continue-on-error`: it needs a different dependency set. Rails is excluded,
+because railties pulls actionpack → nokogiri, which has no precompiled gem for
+head and routinely fails to build against it — a failure there would abort the
+job before the C extension was ever compiled, destroying the only signal the job
+exists for. The Railtie spec (the one file with a bare `require "rails"`) is
+skipped there and stays covered by `test` and `rails-matrix` on every released
+Ruby. `bundler: default` uses the Bundler head ships, since the committed
+lockfile's pins are all older than head's world.
+
+The head job paid for itself on its first run: it caught `integrations/logger.rb`
+raising `LoadError`, because Ruby 4.0 demoted `logger` from a default gem to a
+bundled one and this gem declares no runtime dependencies. Every other job missed
+it — they all have railties, and activesupport declares `logger`. Fixed by
+soft-requiring it rather than taking a runtime dependency (a caller assigning the
+formatter necessarily holds a `::Logger`, so their own require defines the
+constant), with a subprocess spec that stubs `Kernel#require` to fail for
+`"logger"`, since the gem is already loaded in the spec process.
+
+Left open, and now unblocked: native gems still cover 3.1–3.4, so 4.0 users get
+the source gem. `rake-compiler-dock` 1.12.0 (already locked) cross-compiles 4.0 —
+tracked in TODO.md to land with a release.
+
 ---
 
 ## C extension refactor

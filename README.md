@@ -359,6 +359,8 @@ logger.info("Auth failed for alice@example.com")
 
 Wraps an inner formatter (defaults to `Logger::Formatter`), so it composes with structured loggers. Forwards `only:`, `except:`, `placeholder:` to `DataRedactor.redact`. Exception messages and arbitrary objects are scrubbed too — the wrapped object is passed unchanged to the inner formatter so the exception cause chain is preserved; only the rendered string is redacted.
 
+> **Ruby 4.0:** `logger` became a bundled gem rather than a default one, so `require "logger"` resolves only when your Gemfile declares it. Add `gem "logger"` if you use this integration outside Rails — Ruby 4.0 asks that of every caller, not just this gem. Rails apps already have it via `activesupport`.
+
 ### Rails `filter_parameters` adapter
 
 ```ruby
@@ -557,7 +559,7 @@ redactor/
 
 ## Requirements
 
-- Ruby >= 2.7
+- Ruby >= 2.7 — CI runs the full suite on 2.7 and 3.0 as well as 3.1–3.4 and 4.0
 - A C compiler (`gcc` or `clang`) — only required when installing the source gem
 - POSIX `regex.h` — only required when installing the source gem (standard on Linux and macOS)
 
@@ -581,7 +583,7 @@ That's it — there is nothing extra to configure for precompiled binaries. Bund
 
 ### Supported precompiled targets
 
-Each precompiled gem ships compiled binaries for Ruby 3.1, 3.2, 3.3, and 3.4.
+Each precompiled gem ships compiled binaries for Ruby 3.1, 3.2, 3.3, and 3.4. Ruby 2.7 and 3.0 are supported and tested, but fall back to the source gem — bundler compiles the extension on install, so those need a C compiler.
 
 | Platform | Targets |
 |---|---|

@@ -143,6 +143,7 @@ DEPENDENCIES
   benchmark-ips (~> 2.13)
   benchmark-memory (~> 0.2)
   data_redactor!
+  logger (>= 1.5)
   rack (>= 2.0)
   railties (>= 6.0)
   rake-compiler (~> 1.2)

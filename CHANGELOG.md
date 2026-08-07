@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the broadcast itself never runs. Already-wrapped formatters are left alone.
   Rails is a development dependency only — the gem keeps zero runtime deps, and
   the file is loaded only when the app requires it.
+- **CI: the Ruby 2.7 floor is now tested, not just claimed.** New `ruby-floor`
+  job compiles the C extension and runs the full suite on Ruby 2.7 and 3.0 — the
+  bottom of the `required_ruby_version >= 2.7` range, which the 3.1–3.4 `test`
+  matrix never covered. It pins `ubuntu-24.04` (ruby-builder has no 2.7/3.0
+  binaries for 26.04) and resolves dependencies without the committed lockfile,
+  which pins a Rails that requires Ruby >= 3.1. No source changes were needed:
+  both Rubies were already green.
+- **CI: Ruby 4.0 is tested, and `ruby-head` is watched.** 4.0 joins the `test`
+  matrix as a supported release (green as-is, no source changes) — resolving its
+  own dependency set, since the committed lockfile's nokogiri caps at
+  `< 3.5.dev` and `bundler-cache` installs frozen — and a new
+  allow-failure `ruby-next` job compiles the extension and runs the specs
+  against `ruby-head` so C-API or stdlib breakage surfaces months before a
+  release week rather than during one. `ruby-next` excludes Rails: nokogiri has
+  no precompiled gem for head, and letting it fail there would mask the signal
+  the job exists for. Precompiled binaries still cover 3.1–3.4 only, so Ruby 4.0
+  installs the source gem for now.
 - **Project wiki.** Set up the GitHub wiki as the home for deep material so the
   README stays a focused entry point: pattern catalogue (grouped by tag/country),
   C engine internals (NFA → bytecode → lazy DFA, the v19 story), integration
@@ -40,6 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GVL-released digit/IBAN load.
 
 ### Fixed
+- **Logger integration no longer raises `LoadError` on Ruby 4.0.** Ruby 4.0
+  demoted `logger` from a default gem to a bundled one, so `require "logger"`
+  only resolves when something declares it — and this gem declares no runtime
+  dependencies. `integrations/logger.rb` now soft-requires it: anyone assigning
+  the redacting formatter already holds a `::Logger`, so their own require
+  defines the constant. Rails apps were never affected (activesupport declares
+  `logger`); plain Ruby 4.0 apps hit it the moment they loaded the integration.
+  The gem stays dependency-free. Found by the new `ruby-next` job on its first
+  run. **If you use the Logger integration on Ruby 4.0 without Rails, add
+  `gem "logger"` to your Gemfile** — Ruby 4.0 requires that of every caller,
+  not just this gem.
 - Gemspec description said "85 sensitive patterns" while the engine ships 89.
   The description no longer hardcodes a count, so it can't drift again.
 
