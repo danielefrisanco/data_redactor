@@ -86,7 +86,15 @@ Project-specific rules for Claude Code. These override Claude's defaults.
 
 ## Testing
 
-- Test file: `spec/data_redactor_spec.rb`. All tests in one file for now.
+- Specs are split by concern: `patterns_spec.rb`, `filtering_spec.rb`,
+  `placeholders_spec.rb`, `custom_patterns_spec.rb`, `scan_spec.rb`,
+  `deep_walk_spec.rb`, `name_pattern_spec.rb`, `chunking_spec.rb`,
+  `thread_safety_spec.rb`. Integrations live in `spec/integrations/`.
+  A new pattern's tests go in `patterns_spec.rb`.
+- `spec/spec_helper.rb` is auto-required via `.rspec`, so spec files need no
+  `require` of their own unless they pull in an opt-in integration.
+- Shared helpers go in `spec/support/` as modules included from `spec_helper.rb`
+  — not as `def`s inside a `describe`, which only the defining group can see.
 - Every new pattern gets:
   - At least one positive match test (token in context, e.g. `"key=#{token} end"`).
   - At least one negative test (below minimum length, wrong prefix, etc.) where false-positive risk is non-trivial.
