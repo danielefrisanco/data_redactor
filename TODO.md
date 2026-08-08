@@ -9,6 +9,67 @@ section at the bottom (kept here, not in DONE.md — it's reference, not a task)
 
 ## Engine & correctness
 
+### 🔴 BUG — chunk boundaries leak secrets in the clear (scope, then fix)
+**Reproduced 2026-08-08 against 0.17.1. Not a "documented limitation" — a
+redaction gem emitting an unredacted AWS key is a correctness bug, and it is the
+one open item that silently produces wrong, unsafe output.** Both split paths in
+`_chunk_bytes` (`lib/data_redactor.rb`) leak; only the first was previously
+written up, and the second is the more dangerous of the two.
+
+**1. Newline-aligned split.** Patterns whose separator is `[[:space:]]*` — e.g.
+`keyname_anchored_secret`, `patterns.c:627` — match across a `\n`, because POSIX
+`[[:space:]]` includes newline. A key ending one chunk with its value opening the
+next is never seen as a pair:
+```
+chunk1 ends:   "x\npassword:\n"
+chunk2 starts: "   hunter2secret\ntai"     → "hunter2secret" emitted verbatim
+```
+This one is **not** limited to the no-newline fallback, which is what the earlier
+write-up assumed. The ordinary, newline-respecting split leaks too.
+
+**2. No-newline hard split (worse).** When a single line exceeds `CHUNK_SIZE`,
+the fallback cuts at exactly 65536 bytes, straight through whatever token sits
+there:
+```
+chunk1 tail: "xxx AKIAIO"
+chunk2:      "SFODNN7EXAMPLE end"
+output:      "xxxxx AKIAIOSFODNN7EXAMPLE end"   ← full key, in the clear
+```
+Minified single-line JSON logs are routinely well over 64 KB, and for those
+*every* chunk boundary is a blind mid-token cut — not a rare edge case.
+
+**Scope this before writing any fix — deliberately not started 2026-08-08.**
+The two repros above each produced exactly **two** chunks, so they demonstrate a
+leak at *a* boundary; they do **not** establish the blast radius. Answer these
+first, with tests, and record the answers here:
+- **Every boundary, or only some?** `_chunked_scan` loops over all chunks and
+  scans each in isolation with no overlap, so the mechanism suggests every
+  boundary is equally blind — but that is inference from reading the loop, not a
+  measured result. Build a ≥4-chunk input with a planted secret at every
+  boundary and count how many survive.
+- **Last chunk special?** The `remaining <= CHUNK_SIZE` early-exit takes a
+  different path from the windowed split. Check whether the final boundary
+  behaves like the others.
+- **Which patterns can actually span a cut?** Only some can. `[[:space:]]`-
+  separated ones provably do (case 1). Patterns using `[^[:space:]]` cannot span
+  a newline cut but *can* span a mid-line hard cut. An inventory of which of the
+  89 patterns are exposed, and by which cut type, sizes the real risk.
+- **How wide must the overlap be?** Needs the true longest possible match, which
+  interacts with the 255-char bounded tails from 0.14.1 — the bound may already
+  cap the window usefully.
+- **Does an overlap window double-count?** Dedupe by byte offset in
+  `_chunked_scan` (it already rebases `:start`) — verify against adjacent and
+  nested matches, not just isolated ones.
+
+**Likely fix once scoped:** re-scan an overlap window spanning **every**
+boundary, not just the no-newline fallback the earlier write-up assumed. Specs
+must cover both cut types plus the exact-boundary off-by-ones.
+
+**Interacts with:** the CLI (`exe/data_redactor`) below — piped `kubectl logs` /
+CI logs cross 64 KB on essentially every invocation, which would turn a latent
+library edge case into the CLI's normal path. Also the general form of the
+streaming API (#8).
+
 ### Bound greedy tails — remaining follow-ups
 - **Optional / per-tag "redaction-for-privacy" mode** (low priority). Let a caller
   or per-tag policy force unbounded matching so *every* byte of an over-long token
@@ -53,15 +114,6 @@ multibyte sequence inside `[...]` as one alternative is the gating task.
 `scan`'s event loop builds Ruby `VALUE` hashes throughout, so it can't release the
 GVL without first separating the C match-collection pass from the `VALUE`-building
 pass. Only if scan-heavy large inputs ever matter.
-
-### Close the chunk-boundary redaction miss
-`_chunk_bytes` falls back to a hard 64 KB split when a single line exceeds
-`CHUNK_SIZE`, so a token straddling that split escapes redaction. Documented as a
-limitation, but for a security tool a silent miss is the worst failure mode. Fix:
-at the no-newline fallback split only, re-scan an overlap window (longest-pattern
-length) spanning the boundary, or back the split off to the nearest non-token byte.
-Cheap, and a stepping stone to the streaming API (#8) which has the same
-boundary problem in general form.
 
 ### Other deferred engine work
 - **Custom patterns in selective merges** — pure-digit / IBAN-prefix customs won't
@@ -144,6 +196,60 @@ Read stdin, write redacted stdout; flags mirroring `only:`/`except:`/
 who never write Ruby — `kubectl logs … | data_redactor`, CI log scrubbing, a
 pre-push hook — and turns every promotion post's demo into one shell line. No
 new deps; an afternoon of work on the existing API.
+
+**Sequencing:** the chunk-boundary bug at the top of Engine & correctness lands
+first — piped log input crosses 64 KB constantly, so shipping the CLI ahead of
+it would make that leak the CLI's normal path rather than a latent edge case.
+
+**⚠️ `--scan` output contains the raw secrets.** `scan` returns `:value` per
+match (`lib/data_redactor.rb`), i.e. the unredacted token. A naive
+`--scan` dumping the hash to JSON turns the audit flag into an exfiltration
+path — `data_redactor --scan < app.log | tee audit.json` writes every secret to
+disk in the clear, from a tool whose whole purpose is preventing exactly that.
+Decide before implementing: omit `:value` by default and gate it behind an
+explicit `--unsafe-show-values`, or emit only `:tag`/`:name`/`:start`/`:length`.
+This is the single most important design call in the CLI.
+
+**Settled design decisions (2026-08-08):**
+- **Slurp stdin, don't stream.** Line-by-line reading misses
+  `[[:space:]]`-separated key/value pairs that span a newline — verified, it
+  leaks. Consequence: `kubectl logs -f | data_redactor` (follow mode) emits
+  nothing until EOF. Acceptable and documented until the streaming API (#8).
+- **`--scan` exits 0** by default; opt-in `--fail-on-match` for pre-push-hook /
+  CI gating so piping isn't surprised by a non-zero status.
+- **`CLI.run(argv, stdin:, stdout:, stderr:)` returning an exit code**, in
+  `lib/data_redactor/cli.rb`; `exe/data_redactor` is a shebang stub that
+  delegates. Keeps redaction logic out of the executable (Single Responsibility)
+  and lets specs run in-process — no subprocess spawning, no compiled-gem path
+  juggling in CI.
+
+**Mechanics already verified, so nobody re-derives them:**
+- **No `exe/` or `bin/` directory exists yet** — this is greenfield.
+- **`optparse` and `json` are stdlib**, so the zero-runtime-dependency rule
+  holds; `json` is already required by `lib/data_redactor.rb`.
+- **Gemspec** needs `spec.bindir = "exe"`, `spec.executables`, and `Dir["exe/*"]`
+  added to `spec.files` (currently `lib/**/*.rb` + `ext/**` + docs only).
+- **Native gems are safe.** The Rakefile's `cross_compiling` block rejects only
+  `ext/`-prefixed files, so executables survive into all six platform gems.
+- **`redact` is byte-safe on invalid UTF-8** (verified: `\xff\xfe` passes
+  through untouched, ASCII-8BIT and UTF-8-tagged alike). No encoding-sanitising
+  layer needed — important, since scrubbing real log output is the use case.
+- **`--list-patterns` / `--list-tags` are free** from `DataRedactor.pattern_names`
+  and `DataRedactor.tags`.
+- **Filter validation is free.** `only:`/`except:` already accept tag Symbols and
+  pattern-name Strings and raise `UnknownTagError` / `UnknownPatternError`, so
+  the CLI splits on commas and passes through. **Open ambiguity:** a bare CLI
+  token must be mapped to a Symbol (tag) or String (pattern name) — resolve tags
+  first, fall back to pattern name, and decide what happens if a future pattern
+  is ever named the same as a tag.
+- **`--placeholder` needs a mode/literal split.** `:tagged`, `:hash`, `:length`,
+  `:tagged_length` are Symbols; anything else is a literal String. So
+  `--placeholder tagged` is ambiguous with wanting the literal text "tagged".
+  Either document the reserved words or add a separate `--placeholder-mode`.
+- **Rescue `Errno::EPIPE`** so `data_redactor … | head` doesn't backtrace.
+- **Size:** ~200 lines implementation, ~150 spec. "An afternoon" holds.
+- **Release:** new public surface ⇒ minor bump (0.18.0), with CHANGELOG, a README
+  CLI section, and this entry moved to DONE.md in the shipping commit.
 
 ### Error-tracker and job-queue integrations
 Meet leaks where they hurt most, on the existing soft-require pattern (~50
