@@ -364,6 +364,28 @@ Left open, and now unblocked: native gems still cover 3.1–3.4, so 4.0 users ge
 the source gem. `rake-compiler-dock` 1.12.0 (already locked) cross-compiles 4.0 —
 tracked in TODO.md to land with a release.
 
+### Spec split by concern (2026-08-08, `refactor/split-spec`)
+`spec/data_redactor_spec.rb` had reached 1,830 lines and 13 top-level `describe`
+blocks. Split along those existing seams into nine files (patterns, filtering,
+placeholders, custom patterns, scan, deep-walk, name-pattern, chunking, thread
+safety); 345 examples before and after, byte-identical bodies, verified by a
+split script asserting no line was dropped or duplicated.
+
+The bootstrap was the part worth writing down. The project had no `spec_helper.rb`
+at all, and `.rspec` was **gitignored** — so the conventional
+`--require spec_helper` bootstrap would have been untracked, green locally and
+broken in CI, with the failure landing on whoever next cloned the repo rather
+than on the commit that caused it. Moved to the standard bundler layout instead:
+`.rspec` committed, `.rspec_status` ignored in its place.
+
+The one real coupling was the `redacted?` helper, `def`d inside the `.redact`
+group and therefore invisible to siblings — fine in one file, a silent
+`NoMethodError` the moment the group moves. It now lives in
+`spec/support/redaction_helpers.rb` as a module included from `spec_helper.rb`,
+which is also what makes CLAUDE.md's "use the `redacted?` helper" rule true
+project-wide rather than only inside the block that happened to define it.
+`name_redacted?` stayed local to `name_pattern_spec.rb`, its only consumer.
+
 ---
 
 ## C extension refactor

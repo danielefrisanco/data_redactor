@@ -146,11 +146,6 @@ pass. Only if scan-heavy large inputs ever matter.
   more `.so` and only reaches users on a release, so land it *with* a release
   rather than between them.
 
-- **Split `spec/data_redactor_spec.rb`** — 1,800+ lines in one file. Integration
-  specs already live in `spec/integrations/`; split the main file by concern
-  (patterns / filtering / placeholders / deep-walk / custom patterns / chunking)
-  and update the CLAUDE.md testing note when done.
-
 - **Coverage tracking (SimpleCov)** — nice-to-have only; the per-pattern
   positive/negative test discipline already does the real work. Consider only if
   contributors arrive.
