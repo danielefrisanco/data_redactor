@@ -330,10 +330,14 @@ opt-in real-gem spec catches this class of bug** — keep it.
 4. Decide whether `install!` keeps raising for another release or is deleted.
 5. Then: DONE.md entry, wiki RubyLLM-Integration page, version bump, merge.
 
-**Open upstream:** `Agent` does not delegate `before_request` (`agent.rb`
-`def_delegators` lists every other callback). `attach!` works around it via
-`agent.chat`; a one-word PR would fix it for everyone. No issue or PR exists for
-it upstream (searched 2026-08-13).
+**Open upstream — crmne/ruby_llm#872** (filed 2026-08-13, awaiting a reply):
+`Agent` does not delegate `before_request` (`agent.rb` `def_delegators` lists
+every other callback). Nothing depends on it: `attach!` reaches `agent.chat`, and
+the tidier spelling is to hand the agent an already-redacted chat
+(`SupportAgent.new(chat: ...)`), which needs no upstream change at all. A patch is
+ready — one word in `agent.rb` plus an extension of their existing
+`'delegates callback hooks to the underlying chat'` example — to offer if they
+want it. If they decline, nothing here changes.
 
 ### MCP server (`data_redactor-mcp`)
 Expose redaction as a [Model Context Protocol](https://modelcontextprotocol.io)
