@@ -5,7 +5,7 @@ require "data_redactor"
 # integration only patches the constant inside install!, so requiring it here is
 # inert until we ask for it.
 module RubyLLM
-  VERSION = "1.16.0"
+  VERSION = "2.0.0"
 
   # Mimics ruby_llm's real Protocol#render: returns the fully-rendered,
   # provider-shaped request Hash that #complete would post.
@@ -102,15 +102,22 @@ RSpec.describe DataRedactor::Integrations::RubyLLM do
       expect(out).to include("require \"ruby_llm\" before")
     end
 
-    it "raises on an unsupported ruby_llm version" do
-      setup = 'module RubyLLM; VERSION = "2.0.0"; class Protocol; def render; end; end; end'
+    it "raises on a released 1.x, which has no protocol layer to hook" do
+      setup = 'module RubyLLM; VERSION = "1.16.0"; end'
       out = run(setup)
       expect(out).to include("supports ruby_llm")
-      expect(out).to include("2.0.0")
+      expect(out).to include("1.16.0")
+      expect(out).to include("redact per call")
+    end
+
+    it "raises when Protocol is missing entirely (upstream refactor)" do
+      setup = 'module RubyLLM; VERSION = "2.0.0"; end'
+      out = run(setup)
+      expect(out).to include("RubyLLM::Protocol not found")
     end
 
     it "raises when Protocol#render is missing (upstream refactor)" do
-      setup = 'module RubyLLM; VERSION = "1.16.0"; class Protocol; end; end'
+      setup = 'module RubyLLM; VERSION = "2.0.0"; class Protocol; end; end'
       out = run(setup)
       expect(out).to include("RubyLLM::Protocol#render not found")
     end

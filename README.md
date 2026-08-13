@@ -85,6 +85,8 @@ Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.re
 
 If you'd rather redact **every** outbound request automatically — including the system prompt, tool definitions, and any file contents or shell-command output an agent feeds back as a tool result — opt into the monkeypatch:
 
+> **Requires `ruby_llm` 2.0 or newer**, which is still unreleased. The per-provider protocol layer this hooks does not exist in the released 1.x line, so `install!` raises there; on 1.x use the per-call `DataRedactor.redact` form above.
+
 ```ruby
 require "ruby_llm"
 require "data_redactor/integrations/ruby_llm"
@@ -99,7 +101,7 @@ chat.ask("my card is 4111111111111111")        # sent as "my card is [REDACTED]"
 
 Two caveats, by design:
 
-- **It's a monkeypatch on RubyLLM internals**, pinned to a supported version range. Prefer per-call `DataRedactor.redact` (above) unless you specifically need transparency. RubyLLM does not yet expose a public request hook ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765) tracks the connection-middleware hook that would let us drop the patch).
+- **It's a monkeypatch on RubyLLM internals**, pinned to a supported version range. Prefer per-call `DataRedactor.redact` (above) unless you specifically need transparency. The connection-middleware hook we asked for ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765)) was declined, but RubyLLM 2.0 adds a public `chat.before_request { |payload| ... }` hook that lets the patch go away entirely — that's the path once 2.0 ships.
 - **Base64 attachments** (PDFs, images, audio sent inline) and **URL-referenced files** are not redacted — the sensitive bytes are encoded or remote, so patterns cannot see them.
 
 ### Filtering by tag or pattern name
