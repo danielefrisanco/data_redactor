@@ -213,6 +213,42 @@ module DataRedactor
     _walk(data, only: only, except: except, placeholder: placeholder, seen: Set.new)
   end
 
+  # Redact every String value in a nested Hash/Array structure **in place**.
+  #
+  # The in-place sibling of {redact_deep}: same traversal and the same
+  # filtering, but the containers you pass in are mutated and returned instead
+  # of copied. Written for callers that hand a structure to something which
+  # ignores return values — a `ruby_llm` +before_request+ hook, a middleware
+  # that must edit the params Hash it was given — where {redact_deep} would
+  # force a full copy only to overwrite the original with it.
+  #
+  # Only container contents change: Hash values and Array elements are replaced
+  # with redacted Strings. Hash keys are never modified, and the String objects
+  # themselves are not mutated (frozen leaves are fine — the container's
+  # reference is repointed at a new String).
+  #
+  # @param data [Hash, Array] the structure to redact in place.
+  # @param only [Symbol, String, Array, nil] forwarded to {redact}.
+  # @param except [Symbol, String, Array, nil] forwarded to {redact}.
+  # @param placeholder [String, :tagged, :hash, :length, :tagged_length] forwarded to {redact}.
+  # @return [Hash, Array] +data+ itself, redacted.
+  # @raise [ArgumentError] if +data+ is not a Hash or an Array, or if the
+  #   structure contains a circular reference.
+  #
+  # @example A hook that must mutate what it is given
+  #   chat.before_request { |payload| DataRedactor.redact_deep!(payload) }
+  #
+  # @example Scrubbing a params Hash in place
+  #   DataRedactor.redact_deep!(params, only: :credentials)
+  def redact_deep!(data, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
+    unless data.is_a?(Hash) || data.is_a?(Array)
+      raise ArgumentError, "redact_deep!: expected a Hash or Array to mutate, got #{data.class}. " \
+                           "Use redact or redact_deep for other types."
+    end
+
+    _walk!(data, only: only, except: except, placeholder: placeholder, seen: Set.new)
+  end
+
   # Parse +json_string+, redact every String value in the resulting structure,
   # and return valid JSON.
   #
@@ -395,6 +431,27 @@ module DataRedactor
   # Depth-first recursive walker for {redact_deep}.
   # +seen+ is a Set of object_ids already on the current traversal stack,
   # used to detect circular references.
+  def _walk!(node, only:, except:, placeholder:, seen:)
+    case node
+    when String
+      redact(node, only: only, except: except, placeholder: placeholder)
+    when Hash
+      raise ArgumentError, "redact_deep!: circular reference detected" if seen.include?(node.object_id)
+      seen.add(node.object_id)
+      node.each_pair { |k, v| node[k] = _walk!(v, only: only, except: except, placeholder: placeholder, seen: seen) }
+      seen.delete(node.object_id)
+      node
+    when Array
+      raise ArgumentError, "redact_deep!: circular reference detected" if seen.include?(node.object_id)
+      seen.add(node.object_id)
+      node.each_index { |i| node[i] = _walk!(node[i], only: only, except: except, placeholder: placeholder, seen: seen) }
+      seen.delete(node.object_id)
+      node
+    else
+      node
+    end
+  end
+
   def _walk(node, only:, except:, placeholder:, seen:)
     case node
     when String
