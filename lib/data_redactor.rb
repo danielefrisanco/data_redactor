@@ -200,6 +200,11 @@ module DataRedactor
   # @param only [Symbol, String, Array, nil] forwarded to {redact}.
   # @param except [Symbol, String, Array, nil] forwarded to {redact}.
   # @param placeholder [String, :tagged, :hash, :length, :tagged_length] forwarded to {redact}.
+  # @param skip_keys [Symbol, String, Array, nil] hash keys whose values are left
+  #   alone, matched at any depth and by name, so Symbol and String keys are
+  #   equivalent. A skipped key's whole subtree is untouched. Use it for
+  #   structural fields that must survive verbatim — an identifier a downstream
+  #   API validates, say — not as a filter (that is what +only+/+except+ are).
   # @return [Hash, Array, String, Object] a new structure of the same shape
   #   with all String leaves redacted.
   # @raise [ArgumentError] if the structure contains a circular reference.
@@ -209,8 +214,12 @@ module DataRedactor
   #
   # @example Mixed filter
   #   DataRedactor.redact_deep(payload, only: :credentials, placeholder: :tagged)
-  def redact_deep(data, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
-    _walk(data, only: only, except: except, placeholder: placeholder, seen: Set.new)
+  #
+  # @example Keep a structural field intact
+  #   DataRedactor.redact_deep(request, skip_keys: [:model])
+  def redact_deep(data, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT, skip_keys: nil)
+    _walk(data, only: only, except: except, placeholder: placeholder,
+                skip: _skip_set(skip_keys), seen: Set.new)
   end
 
   # Redact every String value in a nested Hash/Array structure **in place**.
@@ -231,6 +240,8 @@ module DataRedactor
   # @param only [Symbol, String, Array, nil] forwarded to {redact}.
   # @param except [Symbol, String, Array, nil] forwarded to {redact}.
   # @param placeholder [String, :tagged, :hash, :length, :tagged_length] forwarded to {redact}.
+  # @param skip_keys [Symbol, String, Array, nil] hash keys to leave alone, as
+  #   in {redact_deep}.
   # @return [Hash, Array] +data+ itself, redacted.
   # @raise [ArgumentError] if +data+ is not a Hash or an Array, or if the
   #   structure contains a circular reference.
@@ -240,13 +251,14 @@ module DataRedactor
   #
   # @example Scrubbing a params Hash in place
   #   DataRedactor.redact_deep!(params, only: :credentials)
-  def redact_deep!(data, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
+  def redact_deep!(data, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT, skip_keys: nil)
     unless data.is_a?(Hash) || data.is_a?(Array)
       raise ArgumentError, "redact_deep!: expected a Hash or Array to mutate, got #{data.class}. " \
                            "Use redact or redact_deep for other types."
     end
 
-    _walk!(data, only: only, except: except, placeholder: placeholder, seen: Set.new)
+    _walk!(data, only: only, except: except, placeholder: placeholder,
+                 skip: _skip_set(skip_keys), seen: Set.new)
   end
 
   # Parse +json_string+, redact every String value in the resulting structure,
@@ -259,15 +271,16 @@ module DataRedactor
   # @param only [Symbol, String, Array, nil] forwarded to {redact}.
   # @param except [Symbol, String, Array, nil] forwarded to {redact}.
   # @param placeholder [String, :tagged, :hash, :length, :tagged_length] forwarded to {redact}.
+  # @param skip_keys [Symbol, String, Array, nil] forwarded to {redact_deep}.
   # @return [String] a JSON string with all String values redacted.
   # @raise [JSON::ParserError] if +json_string+ is not valid JSON.
   #
   # @example
   #   DataRedactor.redact_json('{"email":"alice@example.com","count":3}')
   #   # => '{"email":"[REDACTED]","count":3}'
-  def redact_json(json_string, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT)
+  def redact_json(json_string, only: nil, except: nil, placeholder: PLACEHOLDER_DEFAULT, skip_keys: nil)
     parsed = JSON.parse(json_string)
-    redacted = redact_deep(parsed, only: only, except: except, placeholder: placeholder)
+    redacted = redact_deep(parsed, only: only, except: except, placeholder: placeholder, skip_keys: skip_keys)
     JSON.generate(redacted)
   end
 
@@ -431,20 +444,35 @@ module DataRedactor
   # Depth-first recursive walker for {redact_deep}.
   # +seen+ is a Set of object_ids already on the current traversal stack,
   # used to detect circular references.
-  def _walk!(node, only:, except:, placeholder:, seen:)
+  EMPTY_SKIP = Set.new.freeze
+  private_constant :EMPTY_SKIP
+
+  def _skip_set(keys)
+    return EMPTY_SKIP if keys.nil?
+
+    Set.new(Array(keys).map(&:to_s))
+  end
+
+  def _walk!(node, only:, except:, placeholder:, skip:, seen:)
     case node
     when String
       redact(node, only: only, except: except, placeholder: placeholder)
     when Hash
       raise ArgumentError, "redact_deep!: circular reference detected" if seen.include?(node.object_id)
       seen.add(node.object_id)
-      node.each_pair { |k, v| node[k] = _walk!(v, only: only, except: except, placeholder: placeholder, seen: seen) }
+      node.each_pair do |k, v|
+        next if skip.include?(k.to_s)
+
+        node[k] = _walk!(v, only: only, except: except, placeholder: placeholder, skip: skip, seen: seen)
+      end
       seen.delete(node.object_id)
       node
     when Array
       raise ArgumentError, "redact_deep!: circular reference detected" if seen.include?(node.object_id)
       seen.add(node.object_id)
-      node.each_index { |i| node[i] = _walk!(node[i], only: only, except: except, placeholder: placeholder, seen: seen) }
+      node.each_index do |i|
+        node[i] = _walk!(node[i], only: only, except: except, placeholder: placeholder, skip: skip, seen: seen)
+      end
       seen.delete(node.object_id)
       node
     else
@@ -452,24 +480,40 @@ module DataRedactor
     end
   end
 
-  def _walk(node, only:, except:, placeholder:, seen:)
+  def _walk(node, only:, except:, placeholder:, skip:, seen:)
     case node
     when String
       redact(node, only: only, except: except, placeholder: placeholder)
     when Hash
       raise ArgumentError, "redact_deep: circular reference detected" if seen.include?(node.object_id)
       seen.add(node.object_id)
-      result = node.transform_values { |v| _walk(v, only: only, except: except, placeholder: placeholder, seen: seen) }
+      result = _walk_hash(node, only: only, except: except, placeholder: placeholder, skip: skip, seen: seen)
       seen.delete(node.object_id)
       result
     when Array
       raise ArgumentError, "redact_deep: circular reference detected" if seen.include?(node.object_id)
       seen.add(node.object_id)
-      result = node.map { |v| _walk(v, only: only, except: except, placeholder: placeholder, seen: seen) }
+      result = node.map { |v| _walk(v, only: only, except: except, placeholder: placeholder, skip: skip, seen: seen) }
       seen.delete(node.object_id)
       result
     else
       node
+    end
+  end
+
+  # transform_values is the fast path and cannot see keys, so it stays in use
+  # whenever nothing is being skipped — which is every call that predates skip_keys.
+  def _walk_hash(node, only:, except:, placeholder:, skip:, seen:)
+    if skip.empty?
+      node.transform_values { |v| _walk(v, only: only, except: except, placeholder: placeholder, skip: skip, seen: seen) }
+    else
+      node.each_with_object({}) do |(k, v), acc|
+        acc[k] = if skip.include?(k.to_s)
+                   v
+                 else
+                   _walk(v, only: only, except: except, placeholder: placeholder, skip: skip, seen: seen)
+                 end
+      end
     end
   end
 

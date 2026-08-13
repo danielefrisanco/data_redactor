@@ -65,6 +65,27 @@ RSpec.describe DataRedactor do
       expect(DataRedactor.redact_deep(nil)).to be_nil
     end
 
+    it "leaves values under skip_keys alone" do
+      result = DataRedactor.redact_deep({ "model" => "claude-haiku-4-5-20251001", "prompt" => email },
+                                        skip_keys: [:model])
+      expect(result["model"]).to eq("claude-haiku-4-5-20251001")
+      expect(result["prompt"]).to eq("[REDACTED]")
+    end
+
+    it "matches skip_keys by name, so Symbol and String keys are equivalent" do
+      result = DataRedactor.redact_deep({ model: "claude-haiku-4-5-20251001" }, skip_keys: "model")
+      expect(result[:model]).to eq("claude-haiku-4-5-20251001")
+    end
+
+    it "skips a key's whole subtree, at any depth" do
+      input = { "req" => { "meta" => { "user" => email, "list" => [email] }, "prompt" => email } }
+      result = DataRedactor.redact_deep(input, skip_keys: :meta)
+
+      expect(result["req"]["meta"]["user"]).to eq(email)
+      expect(result["req"]["meta"]["list"]).to eq([email])
+      expect(result["req"]["prompt"]).to eq("[REDACTED]")
+    end
+
     it "raises on circular references in hashes" do
       h = {}
       h["self"] = h
@@ -136,6 +157,16 @@ RSpec.describe DataRedactor do
       DataRedactor.redact_deep!(original, only: :credentials, placeholder: :tagged)
       expect(original["email"]).to eq(email)
       expect(original["key"]).to eq("[REDACTED:CREDENTIALS]")
+    end
+
+    it "leaves values under skip_keys alone, at any depth" do
+      original = { "model" => "claude-haiku-4-5-20251001", "req" => { "meta" => { "user" => email } },
+                   "prompt" => email }
+      DataRedactor.redact_deep!(original, skip_keys: [:model, "meta"])
+
+      expect(original["model"]).to eq("claude-haiku-4-5-20251001")
+      expect(original["req"]["meta"]["user"]).to eq(email)
+      expect(original["prompt"]).to eq("[REDACTED]")
     end
 
     it "raises on input it cannot mutate" do

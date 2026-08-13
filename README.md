@@ -40,7 +40,7 @@ Rack. You can also register your own patterns — at boot or at runtime from any
   and sensitive headers in flight.
 - **Scrubbing prompts before an LLM** — with [RubyLLM](#rubyllm--redact-before-it-reaches-the-model), redact every
   prompt, system instruction, and tool result before it reaches the model —
-  per-call, or transparently across every request. Also `redact_deep` /
+  per-call, or on every request through RubyLLM's own request hook. Also `redact_deep` /
   `redact_json` over any params hash or JSON body before it leaves the process.
 - **Compliance & auditing** — `scan` reports every match with byte offsets, tag,
   and pattern name without changing the text, for false-positive tuning.
@@ -81,28 +81,41 @@ chat.ask(DataRedactor.redact(user_input))
 
 Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.redact` before passing it to `ask`. This is a per-call step you opt into, and it's the recommended approach.
 
-#### Transparent mode (every request, no per-call wrapping)
+#### Every request, no per-call wrapping
 
-If you'd rather redact **every** outbound request automatically — including the system prompt, tool definitions, and any file contents or shell-command output an agent feeds back as a tool result — opt into the monkeypatch:
+To redact **every** outbound request — including the system prompt, the whole history, tool definitions, and any file contents or shell-command output an agent feeds back as a tool result — build the chat through the integration:
 
-> **Requires `ruby_llm` 2.0 or newer**, which is still unreleased. The per-provider protocol layer this hooks does not exist in the released 1.x line, so `install!` raises there; on 1.x use the per-call `DataRedactor.redact` form above.
+> **Requires `ruby_llm` 2.0 or newer**, which is still unreleased. 1.x has no request hook at all; on 1.x use the per-call `DataRedactor.redact` form above.
 
 ```ruby
 require "ruby_llm"
 require "data_redactor/integrations/ruby_llm"
 
-DataRedactor::Integrations::RubyLLM.install!   # once, at boot
-
-chat = RubyLLM.chat(model: "claude-opus-4-8")
+chat = DataRedactor::Integrations::RubyLLM.chat(model: "claude-opus-4-8")
 chat.ask("my card is 4111111111111111")        # sent as "my card is [REDACTED]"
 ```
 
-`install!` prepends a patch onto `RubyLLM::Protocol#render` — the one point where every provider (Anthropic, OpenAI, Gemini, Bedrock, Responses) has assembled its final request — and deep-redacts the payload before it's posted. It forwards `only:`/`except:`/`placeholder:`, is idempotent, and **fails fast** at `install!` if an unsupported `ruby_llm` version is loaded or the internal API has moved (so it never silently leaks).
+`chat` is a drop-in for `RubyLLM.chat` — every argument is forwarded and you get a real chat back, so the fluent API keeps working. It registers RubyLLM's public [`before_request`](https://rubyllm.com) hook, which receives the fully rendered payload just before it's posted and lets a callback edit it in place. **Nothing is monkeypatched.**
 
-Two caveats, by design:
+Already holding a chat, an [`Agent`](https://rubyllm.com), or an `acts_as_chat` record? Attach to it — `attach!` finds the chat inside whichever you pass and returns your object:
 
-- **It's a monkeypatch on RubyLLM internals**, pinned to a supported version range. Prefer per-call `DataRedactor.redact` (above) unless you specifically need transparency. The connection-middleware hook we asked for ([crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765)) was declined, but RubyLLM 2.0 adds a public `chat.before_request { |payload| ... }` hook that lets the patch go away entirely — that's the path once 2.0 ships.
+```ruby
+DataRedactor::Integrations::RubyLLM.attach!(agent, only: [:financial])
+
+# or register the callback yourself
+chat.before_request(&DataRedactor::Integrations::RubyLLM.hook)
+```
+
+This is the only way to scrub **tool results** — the file an agent read or the command it ran gets inlined into the *next* request, and the user never typed it, so per-call redaction can't reach it.
+
+Four things to know:
+
+- **It's per chat.** RubyLLM has no global callback registry, so a chat you neither built with `.chat` nor passed to `attach!` is not redacted.
+- **Chat only.** Embeddings, moderation, image generation and transcription don't run request hooks.
+- **The `model` key is skipped by default** (`skip_keys:`). Dated model ids like `claude-haiku-4-5-20251001` end in eight digits, which the national-ID patterns match, and a provider rejects a redacted model id. Pass `skip_keys: [:model, :metadata]` to protect more; pass `skip_keys: []` to redact everything.
 - **Base64 attachments** (PDFs, images, audio sent inline) and **URL-referenced files** are not redacted — the sensitive bytes are encoded or remote, so patterns cannot see them.
+
+Redaction applies to the rendered payload and nothing is persisted, so your stored conversation keeps its original text — this scrubs the wire, per request. (We asked for a connection-middleware hook in [crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765); it was declined in favour of the instrumentation surface, but `before_request` gives us what we needed.)
 
 ### Filtering by tag or pattern name
 
@@ -229,6 +242,15 @@ DataRedactor.redact_deep!(payload, only: :credentials)
 ```
 
 Only the containers change: hash keys are untouched and string leaves are *replaced*, never mutated, so frozen strings are safe.
+
+Some fields must survive verbatim — an identifier the receiving API validates, for instance. `skip_keys:` leaves them alone, matched by name at any depth (Symbol and String keys are equivalent), skipping the key's whole subtree:
+
+```ruby
+DataRedactor.redact_deep(request, skip_keys: [:model])
+# "claude-haiku-4-5-20251001" survives; everything else is still redacted
+```
+
+It's a denylist, not a filter: anything you don't list is still redacted, so a field you've never seen can't slip through. Use `only:`/`except:` to choose *what* counts as sensitive.
 
 ```ruby
 # JSON string — parse → redact_deep → re-serialise
@@ -434,7 +456,7 @@ client.chat(parameters: { model: "gpt-4o", messages: safe_messages })
 safe_response = DataRedactor::Integrations::OpenAI.redact_response(response)
 ```
 
-`content` may be a plain String or an array of content blocks/parts (`{ type: "text", text: "..." }`) — only the `text` of `text` blocks is redacted; image and other block types pass through untouched. For Claude, a top-level `system:` String is also redacted; for OpenAI, a `{ role: "system" }` message in the array is redacted like any other. Pass a bare `messages` array or the whole request Hash (with a `messages` key) — either works. For [RubyLLM](#rubyllm--redact-before-it-reaches-the-model) — a unified client across every provider — see the dedicated section above, including transparent `install!` mode.
+`content` may be a plain String or an array of content blocks/parts (`{ type: "text", text: "..." }`) — only the `text` of `text` blocks is redacted; image and other block types pass through untouched. For Claude, a top-level `system:` String is also redacted; for OpenAI, a `{ role: "system" }` message in the array is redacted like any other. Pass a bare `messages` array or the whole request Hash (with a `messages` key) — either works. For [RubyLLM](#rubyllm--redact-before-it-reaches-the-model) — a unified client across every provider — see the dedicated section above, including whole-request redaction through its `before_request` hook.
 
 ## Detected patterns (89 total)
 
