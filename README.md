@@ -217,6 +217,19 @@ DataRedactor.redact_deep(params, only: :credentials)
 DataRedactor.redact_deep(payload, except: :network, placeholder: :tagged)
 ```
 
+Need the original scrubbed rather than a copy? `redact_deep!` is the in-place sibling — it mutates the Hash or Array you hand it and returns that same object. Use it when the caller ignores your return value, such as a hook or a middleware that must edit the structure it was given:
+
+```ruby
+params = { "user" => { "email" => "alice@example.com" } }
+DataRedactor.redact_deep!(params)
+params  # => { "user" => { "email" => "[REDACTED]" } }
+
+# Same filters; raises ArgumentError on anything that isn't a Hash or Array
+DataRedactor.redact_deep!(payload, only: :credentials)
+```
+
+Only the containers change: hash keys are untouched and string leaves are *replaced*, never mutated, so frozen strings are safe.
+
 ```ruby
 # JSON string — parse → redact_deep → re-serialise
 safe_json = DataRedactor.redact_json('{"email":"alice@example.com","count":3}')

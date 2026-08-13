@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`DataRedactor.redact_deep!` — in-place deep redaction.** The sibling of
+  `redact_deep` for callers that must scrub the structure they were handed rather
+  than return a copy: hooks and middleware whose return value is discarded (a
+  `ruby_llm` `before_request` hook is the motivating case). Mutates and returns the
+  same Hash/Array; only container contents change — hash keys are untouched and
+  String leaves are replaced rather than mutated, so frozen leaves are safe. Raises
+  `ArgumentError` on anything that is not a Hash or Array, pointing at `redact` /
+  `redact_deep`. The copy-returning methods are unchanged.
 - **Rails Railtie — zero-config onboarding.** `require "data_redactor/railtie"`
   (e.g. `gem "data_redactor", require: "data_redactor/railtie"`) now wires both
   Rails surfaces automatically: the redacting Logger formatter and a
