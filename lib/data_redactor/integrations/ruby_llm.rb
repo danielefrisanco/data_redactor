@@ -43,6 +43,14 @@ module DataRedactor
     # @example Redact a chat, agent, or acts_as_chat record you were handed
     #   DataRedactor::Integrations::RubyLLM.attach!(agent, only: [:financial])
     #
+    # @example Redact an agent by handing it a chat that is already redacted
+    #   chat = DataRedactor::Integrations::RubyLLM.chat(model: "claude-opus-4-8")
+    #   agent = SupportAgent.new(chat: chat)   # the agent keeps that chat
+    #
+    #   # Every request of the agent's tool loop is redacted, tool results
+    #   # included. Reaches nothing internal, so it is the tidiest spelling
+    #   # for agents.
+    #
     # @example Register the callback yourself
     #   chat.before_request(&DataRedactor::Integrations::RubyLLM.hook)
     module RubyLLM

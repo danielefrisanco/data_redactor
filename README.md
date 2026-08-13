@@ -106,6 +106,15 @@ DataRedactor::Integrations::RubyLLM.attach!(agent, only: [:financial])
 chat.before_request(&DataRedactor::Integrations::RubyLLM.hook)
 ```
 
+For an **agent**, the tidiest spelling is to hand it a chat that's already redacted — an agent keeps the chat you pass and layers its own configuration on top:
+
+```ruby
+chat  = DataRedactor::Integrations::RubyLLM.chat(model: "claude-opus-4-8")
+agent = SupportAgent.new(chat: chat)
+```
+
+Every request in the agent's tool loop is then redacted — and an agent issues one per turn, since `Chat#complete` steps until the loop settles.
+
 This is the only way to scrub **tool results** — the file an agent read or the command it ran gets inlined into the *next* request, and the user never typed it, so per-call redaction can't reach it.
 
 Four things to know:
