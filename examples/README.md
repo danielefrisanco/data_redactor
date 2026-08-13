@@ -33,4 +33,4 @@ the gem installed system-wide (`gem install data_redactor`) you can run a bare
 | `llm_payload.rb`     | Claude / OpenAI message + response redaction before calling the API or logging. |
 | `refinements.rb`     | Opt-in `#redact` on String/Hash/Array via `using DataRedactor::Refinements`. |
 | `ruby_llm.rb`        | Scrub prompts + the system instruction before passing them to a RubyLLM `chat.ask`. |
-| `ruby_llm_transparent.rb` | Transparent mode: `Integrations::RubyLLM.install!` redacts *every* outbound RubyLLM request automatically (prompt, system, tool results). |
+| `ruby_llm_hook.rb`   | `Integrations::RubyLLM.chat` / `attach!` redact every outbound RubyLLM request through the public `before_request` hook (prompt, system, tool results). |

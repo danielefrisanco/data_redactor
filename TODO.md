@@ -283,171 +283,57 @@ Flat `key: value` YAML already ships. Not yet handled:
 - Flow mappings: `{ password: secret, ... }` (terminator is `,`/`}`).
 - `=>` (hashrocket) separator — only `=` and `:` shipped. Add if requested.
 
-### RubyLLM integration (auto-interception)
-RubyLLM (`ruby_llm`, crmne) is a unified, Faraday-based client across every LLM
-provider, with strong traction. It has lifecycle hooks (`on_new_message`,
-`before_tool_call`, `with_params`) but **no redaction of its own** — scrubbing is
-left to the caller. The shipped `Claude`/`OpenAI` adapters already redact LLM
-payloads, but **passively**: the caller must remember to wrap each request. The
-value RubyLLM adds is hooking *once* to cover every provider automatically.
+### RubyLLM integration — built, parked until 2.0 ships
+Branch `feat/ruby-llm-before-request`. Implementation is complete and green; it
+cannot merge until `ruby_llm` 2.0 is released (RubyGems is still on 1.16.0, and
+their `docs/_reference/upgrading.md` says "2.0 is currently in development").
 
-New opt-in file `lib/data_redactor/integrations/ruby_llm.rb`
-(`require "data_redactor/integrations/ruby_llm"`), soft-require pattern, no
-gemspec dependency on `ruby_llm`. **Outbound only** (scrub what we send TO the
-provider; do not touch responses). Reuse `LLMSupport` (`deep_copy`, `fetch`/`put`,
-`redact_text_blocks`) and forward `only:`/`except:`/`placeholder:`.
+**What it is.** `Integrations::RubyLLM.chat(...)` (drop-in for `RubyLLM.chat`),
+`attach!(target)` (chat / `Agent` / `acts_as_chat` record), and `hook(...)`, all
+built on `Chat#before_request` — RubyLLM 2.0's public request hook, which receives
+the fully rendered payload as the last step of `Protocol#render` and discards the
+callback's return value, so hooks edit the payload in place. Redaction runs through
+`DataRedactor.redact_deep!`, added for exactly this contract. **No monkeypatching.**
 
-**No dependency on the streaming items above.** Streaming concerns the *inbound*
-response arriving in chunks; the request body is sent as one buffered JSON payload
-even when the response streams, so an outbound hook always sees the full body — no
-chunk-boundary problem. The `redact_stream` / `mm_scan_chunk` work is only needed
-if inbound (streamed-response) redaction is ever added, which is out of scope here.
+**Why the old approach is gone.** 0.17.0 prepended `RubyLLM::Protocol#render`
+because no public seam existed. Two things settled that:
+- **crmne/ruby_llm#765 was closed 2026-08-12** as "superseded by RubyLLM 2.0's
+  first-class instrumentation surface". That surface is observe-only —
+  `Connection#instrument_request` publishes `{provider:, method:, url:, status:}`
+  and the body is not in the event — so it does *not* solve payload rewriting, and
+  the `config.faraday_middleware` option will never land. No point pushing further.
+- **2.0 shipped the seam under another name** (`before_request`), which is strictly
+  better than middleware for us: a mutable Hash, after all provider formatting.
 
-**On ship: write up the integration** as a LinkedIn + Medium post (see the
-Promotion section). RubyLLM has momentum; "auto-redact secrets/PII before they
-reach any LLM provider, in one require" is a strong, timely hook.
+**Bug the rewrite exposed** (worth remembering): a blanket walk of the payload
+corrupts `model`. Dated ids like `claude-haiku-4-5-20251001` end in eight digits,
+which `dutch_bsn` matches, and the provider then rejects the request. Hence
+`skip_keys:` on the deep methods and a `[:model]` default in the hook. The old
+`Protocol#render` patch had the same flaw; the fake payload in its spec used
+`claude-opus-4-8`, which has no digit run, so it never surfaced. **Only the
+opt-in real-gem spec catches this class of bug** — keep it.
 
-**Investigated 2026-06-20 — no public Faraday-middleware hook exists.** RubyLLM
-builds its connection entirely inside `Connection#initialize`
-(`Faraday.new { ... setup_middleware(faraday) ... }`, `lib/ruby_llm/connection.rb`)
-with no yield/block or config option to inject external middleware.
-v1.14.0 added *self-registered config options* (providers declare
-`<slug>_<option>` keys — a good precedent for our own config key) and a
-*configurable Faraday adapter* (`config.faraday_adapter`), but neither lets a
-third party add a middleware. So hook #1 below is NOT a clean ~30-line job today;
-the realistic plan inverts the original priority.
+**Before merging, when 2.0 releases:**
+1. Install real 2.0; run `bundle exec rspec spec/integrations/ruby_llm_spec.rb`
+   with no `RUBY_LLM_PATH` (the opt-in example un-skips itself once the installed
+   gem has `before_request`).
+2. Re-read `Protocol#render` / `apply_before_request_hooks`: hooks still last, return
+   values still discarded, payload still a mutable Hash (not pre-serialized JSON).
+3. Exercise **tool-call arguments** — the one shape never seen end to end, since they
+   are model-generated mid-loop and need a live response. Tool *definitions* were
+   verified against real 2.0: `name` and every schema field (`type`, `required`,
+   `additionalProperties`, `strict`) survive, and only the human-readable
+   `description`s are redacted, which is intended. Residual risk to watch: a tool
+   named with an eight-digit run would be redacted and break the call. `:name` is
+   deliberately not in the default skip list — it is a common PII key elsewhere, and
+   skipping it would leak real names.
+4. Decide whether `install!` keeps raising for another release or is deleted.
+5. Then: DONE.md entry, wiki RubyLLM-Integration page, version bump, merge.
 
-**Most non-prompt content IS reachable today without patching RubyLLM** (verified
-2026-06-20 against current `Chat`). The public API exposes more than the prompt:
-- `attr_reader :messages` — the full message array, *including the system message*
-  (`with_instructions` stores it as a `Message`); readable and mutable.
-- `with_instructions(text, append:)` — wrap to redact the system prompt at set time.
-- **CORRECTION (verified 2026-06-20 against `ruby_llm 1.16.0` source): the
-  `before_*`/`after_*` callbacks CANNOT do outbound redaction.** In
-  `chat.rb#complete_once`, `before_message` fires *after* `provider_completion`
-  (request already sent) AND receives **no message argument**; `run_callbacks`
-  discards return values, so all callbacks are **observe-only**. They concern the
-  *response/agentic loop*, not the outbound request. There is **no public callback
-  that exposes the outbound request body before send.**
-- `render` builds the full payload (`@provider.render(messages, tools:, params:,
-  schema:, ...)`) but is read-only from outside — there's no public seam to mutate
-  its *result* before the connection. That seam is exactly what #765/middleware adds.
-
-So the ONLY reliable public outbound mechanism today is **redact `chat.messages` +
-the system message BEFORE calling `ask`/`complete`** — a manual pre-send helper,
-not an auto-hook. (`messages` is a public, mutable accessor; `render` reads from it.)
-
-The message-layer ↔ middleware gap, restated honestly:
-- Reachable now (pre-send, manual): user prompt, **system prompt**, conversation
-  history. Tool-call *arguments* are model-generated mid-loop, so they're only
-  scrubbable outbound via the middleware.
-- Genuinely needs #765/middleware: transparent auto-interception of the *final
-  assembled wire body* (incl. tool args + provider-injected fields) in ONE
-  chokepoint, with no manual call.
-- Mutating `chat.messages` in place **alters the stored conversation** — the redacted
-  text becomes the history for all future turns. Desirable for outbound safety, but
-  it's a semantic choice (scrubbing the record), so the helper should default to a
-  copy and offer an in-place `!` variant.
-
-**FULL SEND-PATH TRACE (verified 2026-06-20 against `ruby_llm 1.16.0`, line by
-line — do not re-investigate).** `ask` → `complete` → `instrument_completion` →
-`complete_once` → `provider_completion` → `@provider.complete(messages, ...)`
-where `payload = Utils.deep_merge(render_payload(messages, ...), params)` is built
-and handed straight to `sync_response`/`stream_response` → `connection.post(url,
-payload)` → Faraday (`request :json`). Findings after checking EVERY method on
-`Chat`/`Provider`/`Connection`:
-- **No public mutation seam between body-build and send.** `render_payload` runs
-  inside the provider and `post` follows immediately; intercepting means
-  subclassing `provider.complete`/`connection.post` = monkeypatch (ruled out).
-- `instrument_completion` exposes `input_messages` but as a `.dup`, observe-only
-  (ActiveSupport-notifications instrumentation, not mutation).
-- `with_params(**)` deep-merges INTO the final body — real, but **add/override
-  only**; can't read-and-rewrite existing message text. Dead end for redaction.
-- Callbacks: observe-only (established above).
-- **Conclusion: the only outbound seam anyone can add is at Faraday = #765.** Until
-  then, scrub `chat.messages` + system BEFORE `ask` is the sole public path.
-
-**ARCHITECTURE DECISION (2026-06-20): ONE integration, two modes — not two files.**
-Both modes share the redaction core + payload shape-walking; they differ only in
-*where* the data is grabbed (messages array vs Faraday body). Build one file
-`lib/data_redactor/integrations/ruby_llm.rb`:
-- **Now (message mode):** `RubyLLM.redact_messages(messages, ...)` and
-  `RubyLLM.redact_chat(chat, ...)` (returns a scrubbed copy; `redact_chat!` mutates
-  in place). Manual pre-send call. Works on `ruby_llm` 1.15+ today, public API only.
-- **Later, additive (middleware mode), when #765 lands:** add
-  `RubyLLM.middleware`/`RubyLLM.install!(config)` to the SAME module, reusing the
-  SAME private payload-walker. New methods, no breaking change (Open/Closed). Do
-  NOT make a second integration file — that would duplicate the body walker.
-
-Two hook points:
-1. **Message-layer pre-send helper (ship NOW — public, stable).** `redact_messages`
-   / `redact_chat` scrub the messages array + system prompt before `ask`. Manual
-   call (callbacks can't auto-intercept outbound — see correction above). Won't
-   break on RubyLLM internals. Covers prompt + system + history; NOT tool args /
-   wire body.
-2. **Faraday request middleware (needs an upstream unlock — preferred path).**
-   Insert a `request` middleware that redacts the JSON request body on the wire —
-   catches user prompts, the `system` prompt, AND tool-call arguments for *every*
-   provider. But `setup_middleware` is private and there's no public injection
-   point, so this is gated on upstream adding one (#765). Build the middleware on
-   the existing `Claude`/`OpenAI` shape walkers (`deep_copy` → walk →
-   `redact_text_blocks` → re-serialise). **Caveat from the #765 body:** their
-   design runs user middleware "after JSON encoding, just before the adapter" — so
-   on the request path we'd get the **already-serialized JSON string**, not the
-   Hash (parse → redact → re-serialise; workable but less clean). Our #765 comment
-   asks them to guarantee pre-`request :json` (Hash) ordering instead.
-3. **Monkeypatch (SHIPPED 0.17.0 — `Integrations::RubyLLM.install!`).** Prepends
-   `RubyLLM::Protocol#render` and deep-redacts the rendered payload before it's
-   posted; covers all providers + tool results, version-pinned + fail-fast. See
-   DONE.md for the rationale (why `Protocol#render`, the base64 limitation, why it's
-   opt-in). This is the transparent fallback until #765 lands; once it does, hook #2
-   replaces it. Reference — how the three observability gems patch (verified
-   2026-06-21): sinaptia aliases `Chat#complete`, thoughtbot prepends
-   `Chat`/`Embedding`, llm_cost_tracker prepends `Provider`. All observe-only; none
-   rewrite the payload, so none were a usable template — we patch `Protocol#render`
-   (lower, post-render) instead.
-
-   **Upstream issue: crmne/ruby_llm#765** ("[FEATURE] Expose
-   `config.faraday_middleware` so observability gems can stop monkey-patching",
-   opened 2026-05-09). The reporter (sergey-homenko) posted a complete
-   implementation on 2026-05-11 — `option :faraday_middleware, -> { [] }` in
-   `configuration.rb` + a private `apply_user_middleware(faraday)` in
-   `connection.rb` called after `setup_middleware`, with specs. He's "happy to ship
-   on your OK." One naming question raised: `faraday_middleware` (honest, locks API
-   to Faraday) vs `connection_middleware` (neutral). For us the name is irrelevant —
-   we run on the *request* side, not his response-side `:llm_errors` concern.
-   **Status (verified 2026-06-21): NOT in `main`, issue reopened.** On 2026-06-20
-   crmne commented "It's already implemented in main", closed #765 as completed,
-   then **reopened it one minute later** — so the "completed" is walked back. Reading
-   `crmne/ruby_llm@main` directly: `connection.rb`'s `setup_middleware` is still
-   **hardcoded and private** (no `apply_user_middleware`, no loop over user
-   middleware); `configuration.rb` has **no `faraday_middleware`/`connection_middleware`
-   option**. What *is* in main and probably prompted "already implemented" is the
-   read-only **`instrumenter` hook** (`option :instrumenter` + `RubyLLM.instrument(
-   'request.ruby_llm', …)` wrapping every `post`/`get`). That's an
-   ActiveSupport-notifications-style observability seam — it covers the *observability*
-   gems' reading use-case but is **observe-only: it cannot rewrite the outbound
-   payload**, which is exactly ours. The mismatch is the likely reason for the reopen.
-   **What we still need from #765 specifically: request-side ordering.** Faraday
-   middleware is bidirectional (outer = first on request, last on response). Our
-   request-phase middleware must see the payload *before* `request :json` serializes
-   it (ideally as the Hash). The `instrumenter` hook does not give that; only the
-   `faraday_middleware` option (run ahead of the JSON encoder) does.
-   **Commented on #765 (2026-06-20)** — framed as a payload-rewrite use-case (no
-   redaction/gem disclosure), asked for the request-side ordering guarantee, and
-   asked whether a branch/PR exists. crmne replied + reopened (above); next: a short
-   follow-up clarifying that `instrument` is observe-only so the payload-mutation
-   gap remains, offer to PR the `faraday_middleware` shape. Drop the gem link later
-   as a natural second bump once the integration ships.
-   **Do NOT block the integration on it.** Hook #2 ships first regardless; once #765
-   lands, hook #1 is a thin middleware on the existing shape walkers.
-
-Specs: a fake Faraday stack (or recorded RubyLLM request body) asserting prompts,
-system prompt, and tool args are scrubbed outbound and responses are untouched;
-plus a negative test that a clean payload round-trips byte-identical. Open
-question to resolve at build time: exact RubyLLM version that stabilised the
-middleware/config-registration API (pin the minimum in the integration's doc
-comment, not the gemspec).
+**Open upstream:** `Agent` does not delegate `before_request` (`agent.rb`
+`def_delegators` lists every other callback). `attach!` works around it via
+`agent.chat`; a one-word PR would fix it for everyone. No issue or PR exists for
+it upstream (searched 2026-08-13).
 
 ### MCP server (`data_redactor-mcp`)
 Expose redaction as a [Model Context Protocol](https://modelcontextprotocol.io)
