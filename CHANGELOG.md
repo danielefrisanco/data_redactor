@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request we were tracking for this, [crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765),
   was closed on 2026-08-12 as superseded by 2.0's instrumentation surface — which is
   observe-only and does not solve payload rewriting, but `before_request` does.
+  Removing a shipped public method would normally force a major bump; this one
+  lands in a minor because `RubyLLM::Protocol` exists in no released `ruby_llm`
+  version, so `install!` never worked for anyone and there is nothing to migrate.
 
 ### Changed
 - **Engine re-entrancy: selective-merge cursors are now per-call, not per-thread.**
