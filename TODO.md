@@ -330,14 +330,18 @@ opt-in real-gem spec catches this class of bug** — keep it.
 4. Decide whether `install!` keeps raising for another release or is deleted.
 5. Then: DONE.md entry, wiki RubyLLM-Integration page, version bump, merge.
 
-**Open upstream — crmne/ruby_llm#872** (filed 2026-08-13, awaiting a reply):
-`Agent` does not delegate `before_request` (`agent.rb` `def_delegators` lists
-every other callback). Nothing depends on it: `attach!` reaches `agent.chat`, and
-the tidier spelling is to hand the agent an already-redacted chat
-(`SupportAgent.new(chat: ...)`), which needs no upstream change at all. A patch is
-ready — one word in `agent.rb` plus an extension of their existing
-`'delegates callback hooks to the underlying chat'` example — to offer if they
-want it. If they decline, nothing here changes.
+**Upstream, resolved — crmne/ruby_llm#872** (filed 2026-08-13, fixed by someone
+else in PR #876, merged 2026-08-17): `Agent` now delegates `before_request` like
+its six sibling callbacks. Our patch was never pushed and is obsolete.
+
+That fix has a sharp edge worth remembering, since it is why `resolve` hops
+before it checks. `Agent#chat` is "the wrapped Chat, **or the chat record in Rails
+mode**", and the delegation is unconditional — so a Rails-mode agent answers
+`respond_to?(:before_request)` with true while the call forwards to a record that
+has no such method (`ActiveRecord::ChatMethods` defines none). Resolving to the
+real chat first (`chat` hop, then `to_llm`) sidesteps the delegator. Trusting
+`respond_to?` first would have raised `NoMethodError` for Rails-mode agents from
+2.0 onward, on a path that worked before the upstream fix.
 
 ### MCP server (`data_redactor-mcp`)
 Expose redaction as a [Model Context Protocol](https://modelcontextprotocol.io)
