@@ -65,6 +65,27 @@ RSpec.describe DataRedactor do
       expect(DataRedactor.redact_deep(nil)).to be_nil
     end
 
+    it "leaves values under skip_keys alone" do
+      result = DataRedactor.redact_deep({ "model" => "claude-haiku-4-5-20251001", "prompt" => email },
+                                        skip_keys: [:model])
+      expect(result["model"]).to eq("claude-haiku-4-5-20251001")
+      expect(result["prompt"]).to eq("[REDACTED]")
+    end
+
+    it "matches skip_keys by name, so Symbol and String keys are equivalent" do
+      result = DataRedactor.redact_deep({ model: "claude-haiku-4-5-20251001" }, skip_keys: "model")
+      expect(result[:model]).to eq("claude-haiku-4-5-20251001")
+    end
+
+    it "skips a key's whole subtree, at any depth" do
+      input = { "req" => { "meta" => { "user" => email, "list" => [email] }, "prompt" => email } }
+      result = DataRedactor.redact_deep(input, skip_keys: :meta)
+
+      expect(result["req"]["meta"]["user"]).to eq(email)
+      expect(result["req"]["meta"]["list"]).to eq([email])
+      expect(result["req"]["prompt"]).to eq("[REDACTED]")
+    end
+
     it "raises on circular references in hashes" do
       h = {}
       h["self"] = h
@@ -75,6 +96,96 @@ RSpec.describe DataRedactor do
       a = []
       a << a
       expect { DataRedactor.redact_deep(a) }.to raise_error(ArgumentError, /circular reference/)
+    end
+  end
+
+  describe ".redact_deep!" do
+    let(:email) { "alice@example.com" }
+    let(:key)   { "AKIAIOSFODNN7EXAMPLE" }
+
+    it "mutates the hash it is given and returns that same object" do
+      original = { "email" => email }
+      result = DataRedactor.redact_deep!(original)
+      expect(original["email"]).to eq("[REDACTED]")
+      expect(result).to equal(original)
+    end
+
+    it "mutates nested hashes and arrays in place" do
+      original = { "user" => { "email" => email }, "keys" => [key, "safe"] }
+      inner = original["user"]
+      list  = original["keys"]
+
+      DataRedactor.redact_deep!(original)
+
+      expect(inner["email"]).to eq("[REDACTED]")
+      expect(list[0]).to eq("[REDACTED]")
+      expect(list[1]).to eq("safe")
+      expect(original["user"]).to equal(inner)
+      expect(original["keys"]).to equal(list)
+    end
+
+    it "mutates a top-level array in place" do
+      original = [email, 42, nil]
+      DataRedactor.redact_deep!(original)
+      expect(original).to eq(["[REDACTED]", 42, nil])
+    end
+
+    it "replaces frozen string leaves instead of mutating them" do
+      frozen = email.dup.freeze
+      original = { "email" => frozen }
+
+      expect { DataRedactor.redact_deep!(original) }.not_to raise_error
+
+      expect(original["email"]).to eq("[REDACTED]")
+      expect(frozen).to eq(email)
+    end
+
+    it "does not redact hash keys" do
+      original = { email => "value" }
+      DataRedactor.redact_deep!(original)
+      expect(original.keys).to include(email)
+    end
+
+    it "leaves non-string scalars unchanged" do
+      original = { "n" => 1, "f" => 3.14, "nil" => nil, "bool" => true }
+      DataRedactor.redact_deep!(original)
+      expect(original).to eq({ "n" => 1, "f" => 3.14, "nil" => nil, "bool" => true })
+    end
+
+    it "passes only:/except:/placeholder: through to redact" do
+      original = { "email" => email, "key" => key }
+      DataRedactor.redact_deep!(original, only: :credentials, placeholder: :tagged)
+      expect(original["email"]).to eq(email)
+      expect(original["key"]).to eq("[REDACTED:CREDENTIALS]")
+    end
+
+    it "leaves values under skip_keys alone, at any depth" do
+      original = { "model" => "claude-haiku-4-5-20251001", "req" => { "meta" => { "user" => email } },
+                   "prompt" => email }
+      DataRedactor.redact_deep!(original, skip_keys: [:model, "meta"])
+
+      expect(original["model"]).to eq("claude-haiku-4-5-20251001")
+      expect(original["req"]["meta"]["user"]).to eq(email)
+      expect(original["prompt"]).to eq("[REDACTED]")
+    end
+
+    it "raises on input it cannot mutate" do
+      expect { DataRedactor.redact_deep!(email) }
+        .to raise_error(ArgumentError, /expected a Hash or Array/)
+      expect { DataRedactor.redact_deep!(42) }
+        .to raise_error(ArgumentError, /expected a Hash or Array/)
+    end
+
+    it "raises on circular references in hashes" do
+      h = {}
+      h["self"] = h
+      expect { DataRedactor.redact_deep!(h) }.to raise_error(ArgumentError, /circular reference/)
+    end
+
+    it "raises on circular references in arrays" do
+      a = []
+      a << a
+      expect { DataRedactor.redact_deep!(a) }.to raise_error(ArgumentError, /circular reference/)
     end
   end
 
