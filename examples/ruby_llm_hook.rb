@@ -90,6 +90,24 @@ DataRedactor::Integrations::RubyLLM.attach!(handed_to_you, only: [:contact])
 pp handed_to_you.render[:system]
 # => "You are a support agent for ACME Corp. Escalate to [REDACTED]."
 
+# Or take the callback itself and register it the way RubyLLM documents. This is
+# all the two calls above do; use it when you want the hook alongside your own,
+# or on anything else that grows a before_request.
+own_chat = RubyLLM.chat(model: "claude-haiku-4-5")
+own_chat.before_request(&DataRedactor::Integrations::RubyLLM.hook(only: [:financial]))
+own_chat.before_request { |payload| payload[:metadata] = { tenant: "acme" } }
+pp own_chat.render.slice(:messages, :metadata)
+# => {:messages=>
+#      [{:role=>"user", :content=>"My card is [REDACTED]"},
+#       {:role=>"tool",
+#        :content=>"file contents: db password is hunter2; ssn 123-45-6789"}],
+#     :metadata=>{:tenant=>"acme"}}
+#
+# Hooks run in registration order and RubyLLM ignores what they return, so ours
+# redacts the payload in place and yours still sees (and edits) the same Hash.
+# The SSN survives here because only: [:financial] was asked for — it is tagged
+# :national_id.
+
 # In a real project, drop the stand-in above and use the gem:
 #
 #   require "ruby_llm"
