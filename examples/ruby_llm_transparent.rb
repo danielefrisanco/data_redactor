@@ -11,13 +11,14 @@
 # This script runs for real WITHOUT the `ruby_llm` gem by defining a tiny
 # stand-in `RubyLLM::Protocol` that mirrors the real chokepoint, so you can see
 # the patch redact a realistic payload. In a real project you just
-# `require "ruby_llm"` instead (see the commented block at the bottom).
+# `require "ruby_llm"` instead (see the commented block at the bottom) — the
+# protocol layer this hooks needs ruby_llm 2.0 or newer.
 #
 #   bundle exec ruby examples/ruby_llm_transparent.rb
 
 # --- stand-in for the real ruby_llm gem (so this file runs anywhere) ----------
 module RubyLLM
-  VERSION = "1.16.0"
+  VERSION = "2.0.0"
 
   # Mirrors RubyLLM::Protocol#render: returns the fully-rendered request Hash
   # that #complete would post to the provider.

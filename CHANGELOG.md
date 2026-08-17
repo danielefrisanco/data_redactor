@@ -57,6 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GVL-released digit/IBAN load.
 
 ### Fixed
+- **`Integrations::RubyLLM.install!` now states the version it actually needs.**
+  It declared `~> 1.16`, but `RubyLLM::Protocol` — the chokepoint it prepends —
+  only exists in the unreleased 2.0 line; released 1.x assembles the request
+  inside `Provider#complete`. On a real `ruby_llm` 1.16.0 the version check
+  passed and the next line died with `NameError: uninitialized constant
+  RubyLLM::Protocol`. The pin is now `>= 2.0.0.pre`, so 1.x users get a clear
+  message pointing at per-call `DataRedactor.redact`, and a missing `Protocol`
+  constant raises the same fail-fast error as a missing `Protocol#render`.
+  Redaction was never affected — the integration failed loudly at `install!`
+  rather than leaking — but it worked on no released `ruby_llm` version.
 - **Logger integration no longer raises `LoadError` on Ruby 4.0.** Ruby 4.0
   demoted `logger` from a default gem to a bundled one, so `require "logger"`
   only resolves when something declares it — and this gem declares no runtime

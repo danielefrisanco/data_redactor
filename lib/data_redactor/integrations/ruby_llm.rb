@@ -17,6 +17,11 @@ module DataRedactor
     # output that an agent fed back in as a tool result, since those are already
     # inlined as strings in `messages` by the time `render` runs.
     #
+    # **Requires `ruby_llm` 2.0 or newer** ({SUPPORTED_VERSION}): the protocol
+    # layer this hooks does not exist in the released 1.x line, which assembles
+    # its payload inside `Provider#complete`. On 1.x, redact per call with
+    # {DataRedactor.redact} before `chat.ask` instead.
+    #
     # This is a monkeypatch (a `prepend` onto a private internal class). It is
     # opt-in and pinned: {install!} raises unless a supported `ruby_llm` version
     # is loaded and `RubyLLM::Protocol#render` still exists, so an upstream
@@ -44,7 +49,11 @@ module DataRedactor
 
       # ruby_llm versions whose `Protocol#render` chokepoint this integration
       # has been verified against. Bump (and re-verify) on each ruby_llm release.
-      SUPPORTED_VERSION = "~> 1.16"
+      #
+      # The per-provider protocol layer landed in the 2.0 line: released 1.x has
+      # no `RubyLLM::Protocol` at all (1.x assembles the payload in
+      # `Provider#complete`), so there is nothing here to hook on those versions.
+      SUPPORTED_VERSION = ">= 2.0.0.pre"
 
       # Prepend the redaction patch onto `RubyLLM::Protocol`. Idempotent: a
       # second call with the patch already installed is a no-op (the filter
@@ -59,7 +68,7 @@ module DataRedactor
       # @return [void]
       # @raise [RuntimeError] if `ruby_llm` is not loaded, the loaded version is
       #   outside {SUPPORTED_VERSION}, or `RubyLLM::Protocol#render` is missing
-      #   (i.e. an upstream refactor moved the chokepoint).
+      #   (i.e. an upstream refactor moved or removed the chokepoint).
       def install!(only: nil, except: nil, placeholder: DataRedactor::PLACEHOLDER_DEFAULT)
         ensure_compatible!
 
@@ -90,7 +99,13 @@ module DataRedactor
 
         unless Gem::Requirement.new(SUPPORTED_VERSION).satisfied_by?(Gem::Version.new(::RubyLLM::VERSION))
           raise "data_redactor ruby_llm integration supports ruby_llm #{SUPPORTED_VERSION}, " \
-                "got #{::RubyLLM::VERSION}. Check for a newer data_redactor or pin ruby_llm."
+                "got #{::RubyLLM::VERSION}. On ruby_llm 1.x there is no request chokepoint to " \
+                "hook — redact per call with DataRedactor.redact before chat.ask."
+        end
+
+        unless defined?(::RubyLLM::Protocol)
+          raise "data_redactor ruby_llm integration: RubyLLM::Protocol not found — " \
+                "the upstream request-rendering API changed. This integration needs an update."
         end
 
         unless ::RubyLLM::Protocol.method_defined?(:render) || ::RubyLLM::Protocol.private_method_defined?(:render)
