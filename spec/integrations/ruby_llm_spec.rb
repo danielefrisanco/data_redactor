@@ -8,8 +8,9 @@ require "data_redactor"
 #     return values — hooks are expected to mutate the payload in place
 #     (protocol.rb#apply_before_request_hooks).
 #   - Chat#render returns the hook-applied payload without sending it.
-#   - Agent wraps a chat behind attr_reader :chat and does NOT delegate
-#     before_request (agent.rb#def_delegators).
+#   - Agent wraps a chat behind attr_reader :chat — or a chat *record* in Rails
+#     mode — and delegates before_request to it (agent.rb#def_delegators, since
+#     crmne/ruby_llm#876).
 #   - acts_as_chat records expose a memoized #to_llm chat (chat_methods.rb).
 #
 # Defined before requiring the integration: the integration touches RubyLLM only
@@ -49,12 +50,19 @@ module RubyLLM
     end
   end
 
-  # Mirrors Agent: delegates the Chat API but not before_request.
+  # Mirrors Agent: wraps a chat — or, in Rails mode, a chat *record* — and
+  # delegates the Chat API to it, `before_request` included (crmne/ruby_llm#876).
+  # The delegation is unconditional, so a Rails-mode agent answers respond_to?
+  # with true while the call lands on a record that has no such method.
   class Agent
     attr_reader :chat
 
     def initialize(chat = Chat.new)
       @chat = chat
+    end
+
+    def before_request(&block)
+      @chat.before_request(&block)
     end
   end
 
@@ -129,7 +137,7 @@ RSpec.describe DataRedactor::Integrations::RubyLLM do
       expect(chat.render[:messages][0][:content]).to eq("my card is [REDACTED]")
     end
 
-    it "registers on an agent's wrapped chat, since Agent does not delegate the hook" do
+    it "registers on an agent's wrapped chat" do
       agent = RubyLLM::Agent.new
 
       expect(described_class.attach!(agent)).to equal(agent)
@@ -152,6 +160,19 @@ RSpec.describe DataRedactor::Integrations::RubyLLM do
       described_class.attach!(agent)
 
       expect(record.to_llm.hooks.size).to eq(1)
+    end
+
+    it "does not route a Rails-mode agent through its own delegator" do
+      # Agent delegates before_request to whatever it wraps, so respond_to? is
+      # true even when that is a record without the method. Trusting the
+      # delegator here would raise NoMethodError instead of redacting.
+      record = RubyLLM::Record.new
+      agent = RubyLLM::Agent.new(record)
+
+      expect(agent).to respond_to(:before_request)
+      expect(record).not_to respond_to(:before_request)
+      expect { described_class.attach!(agent) }.not_to raise_error
+      expect(record.to_llm.render[:messages][0][:content]).to eq("my card is [REDACTED]")
     end
 
     it "raises when no before_request hook is reachable (ruby_llm 1.x)" do

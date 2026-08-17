@@ -94,10 +94,11 @@ module DataRedactor
       # Register {hook} on a chat you did not build.
       #
       # Accepts whatever holds the chat, so callers need not know which object
-      # carries the hook: a `RubyLLM::Chat`, a `RubyLLM::Agent` (2.0 does not
-      # delegate `before_request`, so the wrapped `#chat` is used), or an
-      # `acts_as_chat` record (its `#to_llm` chat is memoized, so one call
-      # covers the record).
+      # carries the hook: a `RubyLLM::Chat`, a `RubyLLM::Agent`, or an
+      # `acts_as_chat` record (its `#to_llm` chat is memoized, so one call covers
+      # the record). The agent's wrapped `#chat` is always used rather than its
+      # delegated `before_request`, because in Rails mode that delegator forwards
+      # to a record which has no such method.
       #
       # @param target [Object] a chat, agent, or `acts_as_chat` record.
       # @param only [Symbol, String, Array, nil] forwarded to {hook}.
@@ -155,13 +156,18 @@ module DataRedactor
       end
 
       # @!visibility private
-      # Finds the object carrying `before_request`: a chat directly, an agent's
-      # wrapped chat, or a record's `to_llm` chat (an agent in Rails mode wraps
-      # the record, hence two hops).
+      # Walks to the `RubyLLM::Chat` that actually holds the hook: an agent's
+      # wrapped chat, then a record's `to_llm` chat (an agent in Rails mode wraps
+      # the record, hence two hops), then the chat itself.
+      #
+      # The hops come first on purpose. `Agent` delegates `before_request` to
+      # whatever it wraps, so a Rails-mode agent answers `respond_to?` with true
+      # while the call forwards to a record that has no such method. Resolving to
+      # the real chat sidesteps the delegator instead of trusting it.
       def resolve(target)
         candidate = target
-        candidate = candidate.chat if !candidate.respond_to?(:before_request) && candidate.respond_to?(:chat)
-        candidate = candidate.to_llm if !candidate.respond_to?(:before_request) && candidate.respond_to?(:to_llm)
+        candidate = candidate.chat if candidate.respond_to?(:chat)
+        candidate = candidate.to_llm if candidate.respond_to?(:to_llm)
         return candidate if candidate.respond_to?(:before_request)
 
         raise ArgumentError, "data_redactor ruby_llm integration: no #before_request hook reachable from " \
