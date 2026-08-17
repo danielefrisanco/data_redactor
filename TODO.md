@@ -475,6 +475,23 @@ Features):
    "`filter_parameters` only filters keys you name" pitch, not the architecture.
 5. State the path to 1.0.
 
+### RubyLLM post — write it when 0.18.0 ships
+The rebuilt RubyLLM integration deserves its own post, and it has a story the
+generic "stop leaking secrets" pitch does not: **tool results**. An agent reads a
+file or runs a command, the output is inlined into the *next* request, and the
+user never typed it — so per-call redaction cannot reach it, and only a request
+hook can. That is a concrete leak most RubyLLM users have not thought about.
+
+Angle notes for the draft:
+- Lead with the agent tool-result leak, not the API.
+- The blanket-redaction bug is a good, honest detail: redacting the whole payload
+  corrupts dated model ids (`claude-haiku-4-5-20251001` → the eight-digit suffix
+  matches a national-ID pattern), which is why `skip_keys:` exists.
+- Timing matters: the post only makes sense once `ruby_llm` 2.0 is released and
+  0.18.0 is out, since the integration needs the 2.0 `before_request` hook.
+- Cross-post per the Step 2 channel order below; drafts live in
+  `drafts/outreach.md` (gitignored).
+
 ### Step 2 — coordinated outreach round (one week, all channels at once)
 - **Cross-post the Medium article to [dev.to](https://dev.to)** (set the
   canonical URL to Medium) — dev.to's `#ruby` tag has organic readership Medium
