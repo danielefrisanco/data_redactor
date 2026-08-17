@@ -35,9 +35,10 @@ puts safe_input
 #   chat.with_instructions(DataRedactor.redact(system_prompt))
 #   response = chat.ask(DataRedactor.redact(user_input))
 #
-# Redaction is a per-call step you opt into. RubyLLM does not yet expose a
-# request hook for automatic, transparent redaction of every outbound call —
-# crmne/ruby_llm#765 tracks the connection-middleware hook that would enable it.
+# Redaction is a per-call step you opt into. To redact every outbound request
+# instead — system prompt and tool results included — build the chat through
+# the integration, which registers RubyLLM's public `before_request` hook
+# (ruby_llm 2.0+). See examples/ruby_llm_hook.rb.
 
 # redact forwards only:/except:/placeholder:, so you can scope or relabel:
 puts DataRedactor.redact(user_input, only: [:financial])
