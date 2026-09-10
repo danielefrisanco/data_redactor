@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    data_redactor (0.17.1)
+    data_redactor (0.18.0)
 
 GEM
   remote: https://rubygems.org/
