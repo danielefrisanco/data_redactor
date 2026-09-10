@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **RubyLLM integration rebuilt on the public request hook.**
+  `Integrations::RubyLLM.chat(...)` is a drop-in for `RubyLLM.chat` that returns a
+  chat whose every request is redacted; `attach!(target)` does the same for a chat,
+  an `Agent`, or an `acts_as_chat` record you were handed (it finds the chat inside
+  whichever you pass); `hook(...)` returns the callback itself. All three sit on
+  `Chat#before_request` (ruby_llm 2.0+), which receives the fully rendered payload
+  and lets a callback edit it in place — **no monkeypatching**. This is the only way
+  to scrub tool results, which an agent inlines into the next request and the user
+  never typed. Redaction is per chat and applies to the rendered payload only, so
+  the stored conversation is untouched. RubyLLM runs the hooks on conversation
+  **compaction** requests too (`Protocol#compact`), so the history a summarisation
+  call sends is redacted as well.
+- **`skip_keys:` on `redact_deep`, `redact_deep!` and `redact_json`.** Hash keys
+  whose values are left verbatim, matched by name at any depth (Symbol and String
+  keys are equivalent) and skipping the key's whole subtree. For structural fields
+  a receiving API validates. It is a denylist, not a filter — anything unlisted is
+  still redacted, so an unfamiliar field cannot slip through. The RubyLLM hook
+  defaults to `skip_keys: [:model]`: dated model ids such as
+  `claude-haiku-4-5-20251001` end in eight digits, which the national-ID patterns
+  match, and a provider rejects a redacted model id.
+- **`DataRedactor.redact_deep!` — in-place deep redaction.** The sibling of
+  `redact_deep` for callers that must scrub the structure they were handed rather
+  than return a copy: hooks and middleware whose return value is discarded (a
+  `ruby_llm` `before_request` hook is the motivating case). Mutates and returns the
+  same Hash/Array; only container contents change — hash keys are untouched and
+  String leaves are replaced rather than mutated, so frozen leaves are safe. Raises
+  `ArgumentError` on anything that is not a Hash or Array, pointing at `redact` /
+  `redact_deep`. The copy-returning methods are unchanged.
 - **Rails Railtie — zero-config onboarding.** `require "data_redactor/railtie"`
   (e.g. `gem "data_redactor", require: "data_redactor/railtie"`) now wires both
   Rails surfaces automatically: the redacting Logger formatter and a
@@ -44,6 +72,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name-pattern cookbook, benchmark methodology, and FAQ. README now links to it
   and promotes RubyLLM higher in Usage and in the use-case list.
 
+### Removed
+- **`Integrations::RubyLLM.install!` (transparent mode).** It prepended
+  `RubyLLM::Protocol#render`, an internal that only ever existed in ruby_llm 2.0
+  pre-release, and its whole justification was that RubyLLM exposed no public seam
+  to rewrite an outbound request. 2.0 exposes one (`Chat#before_request`), so the
+  monkeypatch is gone. `install!` still exists for one release and raises a message
+  naming `chat` / `attach!`; it will be deleted in the next minor. The upstream
+  request we were tracking for this, [crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765),
+  was closed on 2026-08-12 as superseded by 2.0's instrumentation surface — which is
+  observe-only and does not solve payload rewriting, but `before_request` does.
+  Removing a shipped public method would normally force a major bump; this one
+  lands in a minor because `RubyLLM::Protocol` exists in no *stable* `ruby_llm`
+  release. The only versions carrying it are the 2.0 release candidates published
+  days before this change, so `install!` worked for nobody on 1.x and for almost
+  nobody on 2.0 — and `attach!` covers the same ground on the same versions.
+
 ### Changed
 - **Engine re-entrancy: selective-merge cursors are now per-call, not per-thread.**
   The digit-run and IBAN-union passes kept their non-overlap cursors in the
@@ -59,7 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **`Integrations::RubyLLM.install!` now states the version it actually needs.**
   It declared `~> 1.16`, but `RubyLLM::Protocol` — the chokepoint it prepends —
-  only exists in the unreleased 2.0 line; released 1.x assembles the request
+  exists only in the 2.0 line; the 1.x series assembles the request
   inside `Provider#complete`. On a real `ruby_llm` 1.16.0 the version check
   passed and the next line died with `NameError: uninitialized constant
   RubyLLM::Protocol`. The pin is now `>= 2.0.0.pre`, so 1.x users get a clear

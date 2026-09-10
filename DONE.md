@@ -321,6 +321,58 @@ rather than two more matrix entries:
    >= 3.1 and fail before `bundle install` ever ran. Pinned to the last release
    supporting each Ruby: 2.4 on 2.7, 2.5 on 3.0.
 
+### RubyLLM integration rebuilt on the public request hook (0.18.0, `feat/ruby-llm-before-request`)
+0.17.0 shipped transparent redaction as a `prepend` onto `RubyLLM::Protocol#render`,
+chosen only because RubyLLM exposed no public seam to rewrite an outbound request.
+We tracked [crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765) as the
+fix that would let the patch go. It was closed 2026-08-12 as superseded by 2.0's
+instrumentation surface — which is observe-only; `Connection#instrument_request`
+publishes provider/method/url/status and not the body, so it cannot rewrite a
+payload. The middleware hook was never coming.
+
+2.0 shipped the seam under another name. `Chat#before_request` receives the fully
+rendered payload as the **last** step of `Protocol#render` — after formatting, the
+`provider_options` deep-merge and server tools — and discards the callback's return
+value, so hooks mutate in place. That is strictly better than middleware for us: a
+mutable Hash, after all provider formatting, with no patch. The integration is now
+`chat(...)` (a drop-in for `RubyLLM.chat`), `attach!(target)` (chat, `Agent`, or
+`acts_as_chat` record) and `hook(...)` (the callback itself). Nothing is
+monkeypatched, and the cost is that coverage is per chat: RubyLLM has no global
+callback registry, so the app-wide guarantee of `install!` is gone by choice.
+
+The hook contract drove two core additions. `before_request` ignores return values,
+so `redact_deep` — which copies — would have meant building a parallel structure
+just to overwrite the original; hence `redact_deep!`. And running it against a real
+2.0 checkout exposed a bug **the old fake could never show**: a blanket walk redacts
+the model id, because dated ids like `claude-haiku-4-5-20251001` end in eight digits
+and `dutch_bsn` matches them, so every request would have been rejected by the
+provider. The 0.17.0 patch had the same flaw and its spec used `claude-opus-4-8`,
+which has no digit run. That produced `skip_keys:`, deliberately a denylist —
+anything unlisted is still redacted, so an unfamiliar provider field cannot leak
+silently — defaulting to `[:model]` here.
+
+A side quest paid off twice. `Agent` delegated every Chat callback except
+`before_request`, which we reported as
+[crmne/ruby_llm#872](https://github.com/crmne/ruby_llm/issues/872); an outside
+contributor fixed it in #876 rather than us pushing a patch. That fix then set a
+trap: `Agent#chat` is "the wrapped Chat, **or the chat record in Rails mode**", and
+the new delegation is unconditional, so a Rails-mode agent answers
+`respond_to?(:before_request)` with true while the call forwards to a record that
+defines no such method. Checking `respond_to?` first would have raised
+`NoMethodError` from 2.0 onward on a path that worked before the upstream fix, so
+`resolve` hops `chat` → `to_llm` first and only then trusts the hook.
+
+Verified against the published `ruby_llm` 2.0.0.rc2 gem, not a checkout: hooks still
+run last and still discard return values, the payload is still an unfrozen Hash, and
+all four entry points redact. The shape never exercised before — **tool-call
+arguments** — behaves correctly: arguments and tool results are scrubbed while `id`,
+`name` and `tool_use_id` survive, which matters because the provider validates that
+correlation. Known limitation recorded there: a numeric-only tool id
+(`toolu_012345678`) would match a national-ID pattern, since `_` is a boundary; real
+Anthropic and OpenAI ids are mixed alphanumeric and unaffected, and `skip_keys:` is
+the escape hatch. The opt-in real-gem spec, written to skip until 2.0 existed,
+un-skipped itself on release day and passed — the whole point of writing it.
+
 ### Ruby 4.0 in the matrix + `ruby-head` early warning (`ci/ruby-floor-matrix`, 2026-08-07)
 The TODO item behind this was written as "ruby-head / 3.5-preview job — Ruby 3.5
 ships December 2026", which reality had already overtaken: the next Ruby shipped
