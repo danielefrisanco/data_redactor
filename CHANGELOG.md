@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and lets a callback edit it in place — **no monkeypatching**. This is the only way
   to scrub tool results, which an agent inlines into the next request and the user
   never typed. Redaction is per chat and applies to the rendered payload only, so
-  the stored conversation is untouched.
+  the stored conversation is untouched. RubyLLM runs the hooks on conversation
+  **compaction** requests too (`Protocol#compact`), so the history a summarisation
+  call sends is redacted as well.
 - **`skip_keys:` on `redact_deep`, `redact_deep!` and `redact_json`.** Hash keys
   whose values are left verbatim, matched by name at any depth (Symbol and String
   keys are equivalent) and skipping the key's whole subtree. For structural fields
@@ -81,8 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was closed on 2026-08-12 as superseded by 2.0's instrumentation surface — which is
   observe-only and does not solve payload rewriting, but `before_request` does.
   Removing a shipped public method would normally force a major bump; this one
-  lands in a minor because `RubyLLM::Protocol` exists in no released `ruby_llm`
-  version, so `install!` never worked for anyone and there is nothing to migrate.
+  lands in a minor because `RubyLLM::Protocol` exists in no *stable* `ruby_llm`
+  release. The only versions carrying it are the 2.0 release candidates published
+  days before this change, so `install!` worked for nobody on 1.x and for almost
+  nobody on 2.0 — and `attach!` covers the same ground on the same versions.
 
 ### Changed
 - **Engine re-entrancy: selective-merge cursors are now per-call, not per-thread.**
@@ -99,7 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **`Integrations::RubyLLM.install!` now states the version it actually needs.**
   It declared `~> 1.16`, but `RubyLLM::Protocol` — the chokepoint it prepends —
-  only exists in the unreleased 2.0 line; released 1.x assembles the request
+  exists only in the 2.0 line; the 1.x series assembles the request
   inside `Provider#complete`. On a real `ruby_llm` 1.16.0 the version check
   passed and the next line died with `NameError: uninitialized constant
   RubyLLM::Protocol`. The pin is now `>= 2.0.0.pre`, so 1.x users get a clear

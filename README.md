@@ -85,7 +85,7 @@ Wrap each prompt (and any `with_instructions` system prompt) in `DataRedactor.re
 
 To redact **every** outbound request — including the system prompt, the whole history, tool definitions, and any file contents or shell-command output an agent feeds back as a tool result — build the chat through the integration:
 
-> **Requires `ruby_llm` 2.0 or newer**, which is still unreleased. 1.x has no request hook at all; on 1.x use the per-call `DataRedactor.redact` form above.
+> **Requires `ruby_llm` 2.0 or newer** (verified against `2.0.0.rc2`). 1.x has no request hook at all; on 1.x use the per-call `DataRedactor.redact` form above.
 
 ```ruby
 require "ruby_llm"
