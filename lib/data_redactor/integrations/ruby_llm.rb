@@ -30,6 +30,11 @@ module DataRedactor
     # - **Base64 attachments** (PDFs, images, audio inlined as base64) and
     #   **URL-referenced files** are not redacted — the bytes are encoded or
     #   remote, so patterns cannot see into them.
+    # - **A digits-only tool-call id would be redacted**, breaking the
+    #   `tool_use_id` correlation a provider validates: `_` counts as a boundary,
+    #   so `toolu_012345678` matches a national-ID pattern. Real Anthropic and
+    #   OpenAI ids are mixed alphanumeric and unaffected; add `:id` to
+    #   `skip_keys:` if that ever changes.
     # - Redacting tool results can break an agent that needs a value a tool
     #   returned. Scope with `only:`/`except:` when that matters.
     #

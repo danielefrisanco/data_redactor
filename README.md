@@ -117,11 +117,12 @@ Every request in the agent's tool loop is then redacted — and an agent issues 
 
 This is the only way to scrub **tool results** — the file an agent read or the command it ran gets inlined into the *next* request, and the user never typed it, so per-call redaction can't reach it.
 
-Four things to know:
+Five things to know:
 
 - **It's per chat.** RubyLLM has no global callback registry, so a chat you neither built with `.chat` nor passed to `attach!` is not redacted.
 - **Chat only.** Embeddings, moderation, image generation and transcription don't run request hooks.
 - **The `model` key is skipped by default** (`skip_keys:`). Dated model ids like `claude-haiku-4-5-20251001` end in eight digits, which the national-ID patterns match, and a provider rejects a redacted model id. Pass `skip_keys: [:model, :metadata]` to protect more; pass `skip_keys: []` to redact everything.
+- **A digits-only tool-call id would be redacted.** `_` counts as a boundary, so an id like `toolu_012345678` matches a national-ID pattern and breaks the `tool_use_id` correlation the provider validates. Anthropic and OpenAI mint mixed alphanumeric ids (`toolu_01A09q…`, `call_abc123…`), which are untouched; if a provider ever changes that, add `:id` to `skip_keys:`.
 - **Base64 attachments** (PDFs, images, audio sent inline) and **URL-referenced files** are not redacted — the sensitive bytes are encoded or remote, so patterns cannot see them.
 
 Redaction applies to the rendered payload and nothing is persisted, so your stored conversation keeps its original text — this scrubs the wire, per request. (We asked for a connection-middleware hook in [crmne/ruby_llm#765](https://github.com/crmne/ruby_llm/issues/765); it was declined in favour of the instrumentation surface, but `before_request` gives us what we needed.)

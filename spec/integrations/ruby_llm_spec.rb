@@ -265,6 +265,36 @@ RSpec.describe DataRedactor::Integrations::RubyLLM do
     end
   end
 
+  describe "tool-call ids: a digits-only id would be redacted (documented limitation)" do
+    # `_` is not alphanumeric, so it counts as a boundary: a digits-only run after
+    # one is matchable by the boundary-wrapped national-ID patterns. Providers mint
+    # mixed alphanumeric ids, so this does not bite in practice — but a provider
+    # that ever minted digits-only ids would have its tool correlation broken, and
+    # `skip_keys:` is the escape hatch.
+    it "leaves realistic Anthropic and OpenAI tool ids untouched" do
+      %w[toolu_01A09q90qw90lq917835lq9 call_abc123def456 fc_1234567890abcdef].each do |id|
+        expect(DataRedactor.redact(id)).to eq(id)
+      end
+    end
+
+    it "redacts a digits-only id, which would break tool_use_id correlation" do
+      expect(DataRedactor.redact("toolu_012345678")).to eq("toolu_[REDACTED]")
+    end
+
+    it "skip_keys is the escape hatch for a payload carrying such an id" do
+      payload = { model: "claude-haiku-4-5-20251001",
+                  messages: [{ role: "assistant",
+                               content: [{ type: "tool_use", id: "toolu_012345678",
+                                           name: "lookup", input: { card: "4111111111111111" } }] }] }
+
+      described_class.hook(skip_keys: [:model, :id]).call(payload)
+
+      block = payload[:messages][0][:content][0]
+      expect(block[:id]).to eq("toolu_012345678")
+      expect(block[:input][:card]).to eq("[REDACTED]")
+    end
+  end
+
   describe "base64 attachments: the decoded secret is NOT redacted (documented limitation)" do
     it "does not catch a secret that only exists inside the decoded bytes" do
       # Patterns run against the base64 string, never the decoded content, so a
