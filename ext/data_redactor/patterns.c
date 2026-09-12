@@ -610,7 +610,7 @@ const char *pattern_strings[NUM_PATTERNS] = {
      * The key word may be surrounded by other key-name chars on either side
      * (unanchored left; [A-Za-z0-9_]* right) so compound names match both ways:
      * POSTGRES_DB_PASSWORD= (prefix) and PASSWORD_POSTGRES= (suffix).
-     * Separator is = or : with optional surrounding space. Value is either a
+     * Separator is =, => or : with optional surrounding space. Value is either a
      * quoted run ("..."/'...') or an unquoted token of >=6 chars that stops at
      * whitespace, quotes, ; , : =. The matcher strips key+sep (keyname_anchored)
      * so only the value is redacted, the full compound key name is kept. */
@@ -624,6 +624,6 @@ const char *pattern_strings[NUM_PATTERNS] = {
     "|[Tt][Oo][Kk][Ee][Nn]"
     "|[Pp][Ww][Dd])"
     "[A-Za-z0-9_]*"
-    "[[:space:]]*[=:][[:space:]]*"
+    "[[:space:]]*(=>?|:)[[:space:]]*"
     "(\"[^\"]+\"|'[^']+'|[^[:space:]\"';,:=]{6,})"
 };

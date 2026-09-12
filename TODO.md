@@ -281,7 +281,6 @@ Flat `key: value` YAML already ships. Not yet handled:
 - Block scalars: `password: |` / `password: >` with the value on following indented
   lines (our value grammar stops at newline).
 - Flow mappings: `{ password: secret, ... }` (terminator is `,`/`}`).
-- `=>` (hashrocket) separator — only `=` and `:` shipped. Add if requested.
 
 ### MCP server (`data_redactor-mcp`)
 Expose redaction as a [Model Context Protocol](https://modelcontextprotocol.io)
