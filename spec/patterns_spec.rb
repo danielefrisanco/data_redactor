@@ -632,6 +632,31 @@ RSpec.describe DataRedactor do
         .to eq("api_key: [REDACTED]")
     end
 
+    it "redacts a hashrocket-separated value and keeps the full => separator" do
+      expect(DataRedactor.redact(%q{{:password=>"hunter2horse"}}))
+        .to eq(%q{{:password=>"[REDACTED]"}})
+    end
+
+    it "redacts a spaced hashrocket value (Ruby 3.4 Hash#inspect style)" do
+      expect(DataRedactor.redact(%q{{:token => "hunter2horse"}}))
+        .to eq(%q{{:token => "[REDACTED]"}})
+    end
+
+    it "redacts an unquoted hashrocket value" do
+      expect(DataRedactor.redact("password=>hunter2horse next"))
+        .to eq("password=>[REDACTED] next")
+    end
+
+    it "does not treat a hashrocket elsewhere in the text as a separator" do
+      input = "a => b, x = y => z"
+      expect(DataRedactor.redact(input)).to eq(input)
+    end
+
+    it "does not match the key word followed by a doubled separator" do
+      input = "password ==> hunter2horse"
+      expect(DataRedactor.redact(input)).to eq(input)
+    end
+
     it "is case-insensitive on the key name" do
       expect(DataRedactor.redact("Secret=abcdef123456"))
         .to eq("Secret=[REDACTED]")

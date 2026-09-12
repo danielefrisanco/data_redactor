@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`=>` (hashrocket) separator for key-name-anchored secrets.** `{:password=>"…"}`
+  and Ruby 3.4's spaced `{:token => "…"}` (symbol-keyed `Hash#inspect`) now redact
+  the value like `=`/`:` do, keeping the full `=>` visible:
+  `{:password=>"[REDACTED]"}`. String keys (`{"password"=>"…"}`) are not matched.
+
 ## [0.18.0] - 2026-09-10
 
 ### Added

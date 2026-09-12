@@ -1035,11 +1035,15 @@ static size_t scan_one(int p, scan_state_t *state, const char *input, size_t len
                 /* The match is KEY<sep>VALUE (e.g. PASSWORD="hunter2"). We redact
                  * only VALUE and keep KEY<sep> so logs stay greppable. The value
                  * grammar forbids '=' and ':' unquoted, so the FIRST separator in
-                 * the span unambiguously ends the key. Advance past it, then past
-                 * surrounding whitespace and a single opening/closing quote. */
+                 * the span unambiguously ends the key. Advance past it (and the
+                 * '>' of a hashrocket), then past surrounding whitespace and a
+                 * single opening/closing quote. */
                 size_t s = core_so;
                 while (s < core_eo && input[s] != '=' && input[s] != ':') s++;
-                if (s < core_eo) s++;                       /* skip the separator */
+                if (s < core_eo) {                          /* skip the separator */
+                    char sep = input[s++];
+                    if (sep == '=' && s < core_eo && input[s] == '>') s++;
+                }
                 while (s < core_eo &&
                        (input[s] == ' ' || input[s] == '\t')) s++;
                 if (s < core_eo &&

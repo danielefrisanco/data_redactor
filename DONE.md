@@ -153,7 +153,8 @@ rewrite needed.
   the key (greppable logs) via a `keyname_anchored[]` tier + emit-block strip rule.
   Requires `=`/`:` so prose ("reset your password") never matches; unquoted values
   need ≥6 chars to cut FPs like `FLAG=true`. Out of scope: `*_URL=` (too generic),
-  `%PWD%` templates (references, not assignments), `=>` separator.
+  `%PWD%` templates (references, not assignments). The `=>` separator, originally
+  deferred, shipped in 0.18.1 (see below).
 
 ---
 
@@ -167,6 +168,13 @@ rewrite needed.
   execution after built-ins.
 - **Configurable placeholder (0.4.0)** — plain `"***"`, `:tagged`
   (`[REDACTED:CONTACT]`), `:hash` (`[CONTACT_a3f9]`, djb2).
+- **Hashrocket separator for key-name-anchored secrets (0.18.1)** — `=>` joins
+  `=`/`:`, so symbol-keyed `Hash#inspect` output (`{:password=>"…"}`, Ruby 3.4's
+  spaced `{:token => "…"}`) redacts like dotenv/YAML. The emit-block strip rule
+  now skips the `>` too, keeping the whole separator visible. Only the alternation
+  widened — `=` still matches — so no existing match changes. Not covered: string
+  keys (`{"password"=>"…"}`, JSON `"password":"…"`), where the closing quote sits
+  between the key word and the separator.
 - **Length-aware placeholder (0.15.1)** — `:length` (`[REDACTED:16]`) and
   `:tagged_length` (`[REDACTED:CONTACT:16]`), where the number is the byte length
   of the core match (boundary chars excluded, consistent with `:hash`). Two new

@@ -281,7 +281,15 @@ Flat `key: value` YAML already ships. Not yet handled:
 - Block scalars: `password: |` / `password: >` with the value on following indented
   lines (our value grammar stops at newline).
 - Flow mappings: `{ password: secret, ... }` (terminator is `,`/`}`).
-- `=>` (hashrocket) separator — only `=` and `:` shipped. Add if requested.
+- **Quoted keys**: `{"password"=>"…"}` (Rails `params.inspect`) and JSON
+  `{"password":"…"}` don't match — the closing quote sits between the key word and
+  the separator, so the key regex never reaches `=`/`:`. Fix is one optional
+  class after the key name, `[A-Za-z0-9_]*["']?`, covering both. Opens the JSON
+  form of an FP that already exists for YAML: `"input_tokens":1234567` would
+  redact, exactly as `input_tokens: 1234567` does today (suffix match on `token`),
+  so also weigh whether the LLM-usage keys (`input_tokens`, `output_tokens`,
+  `total_tokens`, `max_tokens`) need excluding first — the `skip_keys:` option on
+  `redact_deep` handles it for structured payloads, not for inspected strings.
 
 ### MCP server (`data_redactor-mcp`)
 Expose redaction as a [Model Context Protocol](https://modelcontextprotocol.io)
