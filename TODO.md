@@ -70,6 +70,74 @@ CI logs cross 64 KB on essentially every invocation, which would turn a latent
 library edge case into the CLI's normal path. Also the general form of the
 streaming API (#8).
 
+### 🔴 BUG — raise under the custom-pattern mutex deadlocks the process
+**Reproduced 2026-09-18 against 0.18.0** (C audit finding 1, see
+[docs/c_extension_audit_2026-09-18.md](docs/c_extension_audit_2026-09-18.md)).
+`redact.c` calls `NUM2INT`/`rb_ary_entry` and `scan.c` calls
+`rb_hash_new`/`rb_str_new`/`rb_ary_push` while holding the raw pthread mutex. A
+raise longjmps past the unlock, so the next `redact`/`scan` on any thread blocks in
+`pthread_mutex_lock` while holding the GVL and the whole process freezes. `Timeout`
+can't fire. Triggered by a non-integer in `_redact`'s `enable_bits`, and through the
+public API by `NoMemoryError` in `scan`.
+
+**Fix:** no Ruby API calls under the lock. Copy all of `enable_bits` into a C
+`int[]` before locking. In `scan`, collect custom matches into a C array under the
+lock and build the hashes after unlocking. Wrap the locked region in `rb_ensure` as
+a backstop. Spec: raise inside `_redact`, then check that a later `redact` returns.
+
+### 🔴 BUG — embedded NUL truncates the output
+**Reproduced 2026-09-18 against 0.18.0** (C audit finding 2).
+`redact("before\0after AKIAIOSFODNN7EXAMPLE tail")` returns `"before"`, which drops
+the key and everything after it. `redact_builtins` tracks the output length, but
+`rb_data_redactor_redact` builds the result with `rb_str_new_cstr`, and the custom
+stage uses `strlen`/`regexec`. `scan.c` has the same problem.
+
+**Fix:** `rb_str_new(working, work_len)`. For customs, use `REG_STARTEND`, which
+glibc, musl and macOS all support, or split on NUL and rejoin. Spec: NUL input
+round-trips with the same bytes outside the placeholders.
+
+### `mm_resolve` is O(n²) in raw events
+C audit finding 3. The greedy claim compares each event against every kept span:
+65k events take 1 s. Dense 64 KB chunks produce 9–13k raw events, so on those
+inputs resolve costs more than the scan (e.g. 19 ms resolve vs 3.5 ms scan for
+repeated `a@b.co `). Kept spans come out sorted and non-overlapping, so only the
+last kept end needs checking. That gives a ~10-line in-place O(n) loop with no
+second `qsort` or malloc (code in the audit doc). Patch-level.
+
+### C audit — hardening & cleanup (findings 4–12)
+Details and line references are in the audit doc. None of these change output on
+healthy input.
+- **`exit(1)` on malloc failure** in matcher.c's scan-time allocators (`dfa_*`,
+  `ensure_scratch`, `thread_state`, `mm_resolve`). This kills the Puma/Sidekiq
+  worker. Propagate NULL instead: `redact_builtins` already turns NULL into
+  `NoMemoryError`.
+- **Locale-dependent `isalnum`** in the boundary-strip and digit-group code.
+  Under an ISO-8859-1 locale a UTF-8 lead byte counts as alnum, which can split a
+  multibyte char. Use an ASCII-only helper that matches the `[^0-9A-Za-z]` wrapper.
+- **`scan` runs each custom pattern's `regexec` loop twice** (once to collect
+  matches, once in `replace_all_matches`). Fuse the two loops, which is the same
+  restructure as the mutex fix. `working_to_orig` can then walk `ev[]`
+  incrementally instead of O(n) per match.
+- **`compute_first_set` fixed 2048-entry stack**: it pushes before the `seen`
+  check, so the bound is `2n+1`, and `jwt` is 1518 insts. It's safe today only
+  because `jwt` starts with a literal. Check `seen` at push time, or heap-size the
+  stack.
+- **Unbounded lazy-DFA cache**: measured at <1 MB/thread under adversarial input,
+  so it's benign for the built-ins. Add an RE2-style flush cap if customs ever
+  move onto v19.
+- **Output over-allocation**: `in_len * (ph_max + 1)` means 2 MB per 64 KB chunk
+  in `:length` mode. The exact size is known after `mm_resolve`. Also, the
+  `builtin_enable_bits` malloc can live on the stack.
+- **Dead code**: the 89 glibc `regcomp`s into `compiled_patterns[]` at `Init`
+  (never read), and `mm_add`/`mm_remove`/`mm_clear_custom`/`mm_pattern_count` plus
+  the `g_pattern_gen` invalidation (never called). `matcher.h` also still says the
+  GVL isn't released.
+- **`rb_text` not locked across the GVL release** (4–64 KB direct path): another
+  thread mutating the string can cause a use-after-free. Wrap the call in
+  `rb_str_locktmp`/`rb_str_unlocktmp` inside `rb_ensure`.
+- **glibc backreferences in custom ERE** (`\1`) are exponential-time. Reject
+  `\\[1-9]` in `add_pattern`'s validation (fail fast).
+
 ### Bound greedy tails — remaining follow-ups
 - **Optional / per-tag "redaction-for-privacy" mode** (low priority). Let a caller
   or per-tag policy force unbounded matching so *every* byte of an over-long token
