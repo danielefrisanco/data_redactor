@@ -137,6 +137,25 @@ RSpec.describe DataRedactor do
       result = DataRedactor.scan(input)
       expect(result[:matches].map { |m| m[:name] }).to eq(["aws_access_key_id"])
     end
+
+    it "resolves a full chunk of dense short tokens, keeping every one in start order" do
+      # ~9k raw events in one chunk: the resolve pass must stay linear after the sort.
+      input = "a@b.co " * 9_362
+      expect(input.bytesize).to be <= DataRedactor::CHUNK_SIZE
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:start] }).to eq((0...9_362).map { |i| i * 7 })
+      expect(result[:redacted]).to eq("[REDACTED] " * 9_362)
+    end
+
+    it "drops the equal-length losers at every position of a dense chunk" do
+      # Each 9-digit run raises several equal-length events (czech_rodne_cislo,
+      # passport_9digits, dutch_bsn, ...); only the lowest index survives each.
+      input = "123456789  " * 5_957
+      expect(input.bytesize).to be <= DataRedactor::CHUNK_SIZE
+      result = DataRedactor.scan(input)
+      expect(result[:matches].map { |m| m[:name] }.uniq).to eq(["czech_rodne_cislo"])
+      expect(result[:matches].map { |m| m[:start] }).to eq((0...5_957).map { |i| i * 11 })
+    end
   end
 
   # Two sensitive tokens that ABUT with NO separator between them. The v19 engine

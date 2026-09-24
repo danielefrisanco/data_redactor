@@ -1301,13 +1301,6 @@ static int ev_cmp_resolve(const void *a, const void *b) {
     return x->pattern_id - y->pattern_id;
 }
 
-/* Order kept events for emission: ascending start. */
-static int ev_cmp_start(const void *a, const void *b) {
-    const mm_match_t *x = a, *y = b;
-    if (x->start != y->start) return x->start < y->start ? -1 : 1;
-    return x->pattern_id - y->pattern_id;
-}
-
 size_t mm_resolve(mm_match_t *ev, size_t n) {
     if (n == 0) return 0;
     qsort(ev, n, sizeof(mm_match_t), ev_cmp_resolve);
@@ -1315,23 +1308,22 @@ size_t mm_resolve(mm_match_t *ev, size_t n) {
     /* Greedy claim in (start, -length, pattern_id) order: the longest span at
      * each position is offered first and claims its region; any later (shorter,
      * or equal-length higher-id) event overlapping an already-kept span is
-     * dropped. An event is kept iff its span [start, start+length) does not
-     * overlap any already-kept span. Match counts are modest, so a linear
-     * overlap check against the kept set is used. */
-    mm_match_t *kept = mm_xmalloc(n * sizeof(mm_match_t));
-    size_t nk = 0;
+     * dropped. Kept spans are therefore ascending in start and non-overlapping,
+     * hence ascending in end too, so an event can only overlap the LAST kept
+     * span: one comparison against its end, O(n) after the sort (a scan over
+     * every kept span was O(n^2) and dominated dense 64 KB chunks). Compacts in
+     * place, already in emission order.
+     *
+     * Zero-length events are dropped: they redact nothing, and keeping one at
+     * the start of a kept span would put a smaller end last and break the
+     * last-span invariant. */
+    size_t nk = 0, last_end = 0;
     for (size_t i = 0; i < n; i++) {
-        size_t s = ev[i].start, e = s + ev[i].length;
-        int overlaps = 0;
-        for (size_t j = 0; j < nk; j++) {
-            size_t ks = kept[j].start, ke = ks + kept[j].length;
-            if (s < ke && ks < e) { overlaps = 1; break; }
-        }
-        if (!overlaps) kept[nk++] = ev[i];
+        if (ev[i].length == 0) continue;
+        if (ev[i].start < last_end) continue;
+        ev[nk++] = ev[i];
+        last_end = ev[i].start + ev[i].length;
     }
-    qsort(kept, nk, sizeof(mm_match_t), ev_cmp_start);
-    memcpy(ev, kept, nk * sizeof(mm_match_t));
-    free(kept);
     return nk;
 }
 

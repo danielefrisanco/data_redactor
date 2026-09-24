@@ -96,14 +96,6 @@ stage uses `strlen`/`regexec`. `scan.c` has the same problem.
 glibc, musl and macOS all support, or split on NUL and rejoin. Spec: NUL input
 round-trips with the same bytes outside the placeholders.
 
-### `mm_resolve` is O(n²) in raw events
-C audit finding 3. The greedy claim compares each event against every kept span:
-65k events take 1 s. Dense 64 KB chunks produce 9–13k raw events, so on those
-inputs resolve costs more than the scan (e.g. 19 ms resolve vs 3.5 ms scan for
-repeated `a@b.co `). Kept spans come out sorted and non-overlapping, so only the
-last kept end needs checking. That gives a ~10-line in-place O(n) loop with no
-second `qsort` or malloc (code in the audit doc). Patch-level.
-
 ### C audit — hardening & cleanup (findings 4–12)
 Details and line references are in the audit doc. None of these change output on
 healthy input.

@@ -65,7 +65,8 @@ size_t mm_scan(const char *input, size_t len,
  * longest-match-wins policy: process events in (start asc, length desc,
  * pattern_id asc) order and keep an event iff its CORE span does not overlap an
  * already-kept span. The longest match at each position wins; equal-length ties
- * go to the lower pattern_id. Sorts `ev` in place and returns the kept count
+ * go to the lower pattern_id. Zero-length events are dropped. O(n log n).
+ * Sorts `ev` in place and returns the kept count
  * (compacted to the front of `ev`), in ascending start order.
  */
 size_t mm_resolve(mm_match_t *ev, size_t n);
