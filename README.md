@@ -719,6 +719,11 @@ larger payload takes ~10× longer and MB/s holds steady. The old per-pattern
 `regexec` engine was O(N²) and fell off a cliff on large inputs (a 10 MB log took
 tens of seconds); v19 redacts the same 10 MB in ~1.4 s.
 
+Since 0.18.1 this also holds for text packed with short matches. Before that,
+overlap resolution was quadratic in the number of matches per 64 KB chunk, so a
+chunk full of short tokens (e.g. `a@b.co ` lines, ~9k matches) took ~6× as long
+as a chunk with none. It now costs ~1.1×.
+
 | Size   | Time     | MB/s    |
 |--------|----------|---------|
 | 1 KB   | 0.14 ms  | 7.1     |
@@ -736,7 +741,7 @@ machine-dependent, but the flat curve is not.
 
 1. At load time, `mm_init()` compiles every built-in pattern from a Thompson NFA into bytecode, lazily building each pattern's DFA on first use (interned and cached). Boundary-wrapped patterns are expanded with the word-boundary group before compilation.
 2. `DataRedactor.redact(text)` / `scan(text)` hand the input to the v19 engine, which scans it **once** and emits `(pattern_id, start, length)` events for every enabled pattern. Two selective-merge passes (a pure-digit group and an IBAN union) collapse the most common pattern classes into shared scans. The single pass over the original buffer is what makes the engine O(N).
-3. The raw events are resolved by `mm_resolve` under the **longest-match-wins** policy: overlapping spans are reduced to a non-overlapping set keeping the longest match at each position, with the lower pattern index breaking equal-length ties.
+3. The raw events are resolved by `mm_resolve` under the **longest-match-wins** policy: overlapping spans are reduced to a non-overlapping set keeping the longest match at each position, with the lower pattern index breaking equal-length ties. Events are sorted by position (longest first), so each one only needs checking against the last span kept: O(n log n) in the number of events.
 4. `redact` rewrites the surviving spans to placeholders in one buffer build (preserving the boundary characters of boundary-wrapped matches); `scan` returns the event list with byte offsets into the original string. Custom patterns (`add_pattern`) run on the glibc `regexec` path afterward — required for correct UTF-8 diacritic matching.
 
 ## Memory management
