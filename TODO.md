@@ -96,13 +96,39 @@ stage uses `strlen`/`regexec`. `scan.c` has the same problem.
 glibc, musl and macOS all support, or split on NUL and rejoin. Spec: NUL input
 round-trips with the same bytes outside the placeholders.
 
-### `mm_resolve` is O(n²) in raw events
-C audit finding 3. The greedy claim compares each event against every kept span:
-65k events take 1 s. Dense 64 KB chunks produce 9–13k raw events, so on those
-inputs resolve costs more than the scan (e.g. 19 ms resolve vs 3.5 ms scan for
-repeated `a@b.co `). Kept spans come out sorted and non-overlapping, so only the
-last kept end needs checking. That gives a ~10-line in-place O(n) loop with no
-second `qsort` or malloc (code in the audit doc). Patch-level.
+### 🔴 BUG — every second boundary-wrapped token leaks when one byte separates them
+**Reproduced 2026-09-24 against 0.18.0 and 0.18.1.** When two boundary-wrapped
+tokens share a single separator byte, the second one is not redacted:
+```
+"ids: 123456789,987654321"                → "ids: [REDACTED],987654321"
+"123-45-6789 123-45-6789"                 → "[REDACTED] 123-45-6789"
+"1234567890\n1234567890\n1234567890"      → "[REDACTED]\n1234567890\n[REDACTED]"
+```
+This is exactly how CSV columns and space-separated ID lists look. It affects
+9/10/11-digit national IDs and `us_ssn`. Prefixed and structured patterns are fine
+(emails, cards, IBANs and IPv4 all redact 3/3). Two separator bytes are fine.
+
+**Cause:** parity with `gsub`. The wrapper `(^|[^0-9A-Za-z])(...)([^0-9A-Za-z]|$)`
+consumes the trailing separator, so it can't also serve as the next token's leading
+boundary. Plain Ruby `gsub` with the wrapper gives the same output, so this
+predates v19. The engine reproduces it on purpose in two places:
+- `scan_digit_group` sets the per-pattern `digit_last_end` cursor to the full span
+  end. Its `input[rs-1] == '\n'` special case rescues newline-separated runs.
+- `scan_one` advances `pos` to `match_end`, past the trailing boundary byte. It has
+  no newline rescue, so `czech_rodne_cislo` (10 digits, and 9 via the optional `/`)
+  and `us_ssn` leak across `\n` too. For 9 digits the second run is caught by
+  `passport_9digits` instead, which gives it the wrong tag (`:travel`).
+
+The 2026-09-18 audit lists "adjacent tokens separated by one boundary byte" as
+fine, but it only checked cards and emails, which aren't boundary-wrapped.
+
+**Fix:** the engine already emits core coordinates, so advance both cursors to the
+end of the core token, not the full span. The boundary byte then works like a
+lookahead and can serve both neighbours. This deliberately breaks `gsub` parity,
+but only ever redacts more. Spec: for each boundary-wrapped shape, join three
+tokens with `" "`, `","` and `"\n"` and assert all three are redacted with the
+right tag. Patch-level. When it ships, remove the matching "Known limitations"
+bullet from README.md.
 
 ### C audit — hardening & cleanup (findings 4–12)
 Details and line references are in the audit doc. None of these change output on

@@ -54,6 +54,24 @@ pure-Ruby, ~11× over the old C, byte-for-byte equal to Ruby `gsub`**.
   log). Deliberate behaviour change: redacts *more* when uncertain (a 40-char AWS
   secret is redacted whole rather than leaking bytes past a shorter prefix),
   aligning with Onigmo/PCRE/RE2/Hyperscan.
+- **Linear `mm_resolve` (0.18.1, `fix/mm-resolve-linear`; C audit finding 3).**
+  The keep-rule checked each event against *every* kept span on the assumption
+  that match counts are modest, but dense 64 KB chunks raise 9–13k raw events, so
+  resolve cost more than the scan (21.5 ms vs ~3.5 ms per chunk of `a@b.co `).
+  Kept spans are ascending in start and non-overlapping, hence ascending in end,
+  so only the last kept span can overlap: one comparison, compacted in place,
+  no second `qsort` or malloc. Zero-length events (none of the built-ins emit one)
+  are now dropped. Keeping one at the start of a kept span, as the old rule did,
+  would break the last-span invariant. Differential-tested byte-identical to the
+  old resolver on 3,208 inputs (11.6 MB, ~218k matches, `redact` + `scan`). Dense
+  chunks 2–5.6× faster, sparse input unchanged. Two guards keep it that way. A
+  spec compares a dense chunk against a match-free one (ratio ~6.4 when
+  quadratic, ~1.1 when linear, fails above 3). The `resolve-gate` CI job
+  (`benchmark/ci_resolve_check.c`) checks `mm_resolve` against a brute-force
+  oracle over fixed and seeded-random event lists, including zero-length events
+  the Ruby API can't produce. Mutation-tested: dropping the zero-length guard,
+  going back to pattern-order processing, and an off-by-one in the overlap test
+  each fail it.
 - **Ship hygiene.** 256-example rspec suite green against the new engine;
   `extconf.rb` builds with no new dependency on glibc + musl/Alpine; end-to-end
   bench: 1 MB log **0.87 → 7.27 i/s** (~8.4× throughput; from 4× slower than pure
