@@ -127,7 +127,8 @@ end of the core token, not the full span. The boundary byte then works like a
 lookahead and can serve both neighbours. This deliberately breaks `gsub` parity,
 but only ever redacts more. Spec: for each boundary-wrapped shape, join three
 tokens with `" "`, `","` and `"\n"` and assert all three are redacted with the
-right tag. Patch-level.
+right tag. Patch-level. When it ships, remove the matching "Known limitations"
+bullet from README.md.
 
 ### C audit — hardening & cleanup (findings 4–12)
 Details and line references are in the audit doc. None of these change output on
