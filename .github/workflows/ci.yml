@@ -230,6 +230,19 @@ jobs:
       - name: Build and run the ASan/UBSan fuzz gate
         run: benchmark/run_asan_fuzz.sh
 
+  resolve-gate:
+    name: Overlap-resolution correctness gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # No Ruby needed: checks mm_resolve against a brute-force oracle over fixed
+      # cases and seeded random event lists, including zero-length events that no
+      # built-in pattern emits (so the Ruby specs can't reach them). The linear
+      # resolver relies on its sort order; this fails if that assumption breaks.
+      - name: Build and run the mm_resolve oracle check
+        run: benchmark/run_resolve_check.sh
+
   throughput-gate:
     name: Relative throughput regression gate
     runs-on: ubuntu-latest

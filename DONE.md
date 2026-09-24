@@ -64,7 +64,14 @@ pure-Ruby, ~11× over the old C, byte-for-byte equal to Ruby `gsub`**.
   are now dropped. Keeping one at the start of a kept span, as the old rule did,
   would break the last-span invariant. Differential-tested byte-identical to the
   old resolver on 3,208 inputs (11.6 MB, ~218k matches, `redact` + `scan`). Dense
-  chunks 2–5.6× faster, sparse input unchanged.
+  chunks 2–5.6× faster, sparse input unchanged. Two guards keep it that way. A
+  spec compares a dense chunk against a match-free one (ratio ~6.4 when
+  quadratic, ~1.1 when linear, fails above 3). The `resolve-gate` CI job
+  (`benchmark/ci_resolve_check.c`) checks `mm_resolve` against a brute-force
+  oracle over fixed and seeded-random event lists, including zero-length events
+  the Ruby API can't produce. Mutation-tested: dropping the zero-length guard,
+  going back to pattern-order processing, and an off-by-one in the overlap test
+  each fail it.
 - **Ship hygiene.** 256-example rspec suite green against the new engine;
   `extconf.rb` builds with no new dependency on glibc + musl/Alpine; end-to-end
   bench: 1 MB log **0.87 → 7.27 i/s** (~8.4× throughput; from 4× slower than pure
