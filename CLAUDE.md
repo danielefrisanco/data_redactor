@@ -124,3 +124,24 @@ Project-specific rules for Claude Code. These override Claude's defaults.
 - Do not read `.gitignore`d files.
 - Do not add `rescue`/fallbacks for impossible states inside the gem's own code (trust the C layer).
 - Do not create intermediate planning docs or analysis files — work from conversation and TODO.md.
+
+---
+
+## Harness
+
+This project uses the **harness** plugin for task-driven development.
+
+- Config: `harness.yaml` · rules: `.harness/rules/*.md` (read them before non-trivial work) · tasks: `tasks/`
+- Workflow: `/harness:create-task` → `/harness:refine-task` → `/harness:start-task` → work → `/harness:commit` → `/harness:complete-task`
+- Several tasks at once: each task's state lives on its own branch. `/harness:list-tasks` shows the board
+  across all branches and worktrees, and `/harness:switch-task <id>` commits the current work and moves
+  this checkout to another task (never stash). `/harness:run-task <id> --background` gives a started task
+  to the executor in its own git worktree, so you can keep working meanwhile.
+- Bigger or open-ended work: `/harness:audit [area]` → `/harness:plan <audit or goal>` → `/harness:plan-to-tasks <plan>`, then the usual task workflow.
+- New dependency? `/harness:add-dependency <pkg>` checks its license against policy first — see `.harness/rules/dependencies.md`.
+- Cutting a release: use the `rs-release` skill, **not** `/harness:release` (it can't update `version.rb`,
+  README or `Gemfile.lock`). The harness git guard blocks Claude's commits on `main`, so at rs-release's
+  commit step hand the user the exact `git commit` command to run with `!`, then continue with the tag.
+- Never read secrets or git-ignored files. Never push. Never commit on protected branches.
+- When something is unclear, ask with AskUserQuestion instead of guessing.
+- Before ending a session with work in progress, run `/harness:handoff`.
