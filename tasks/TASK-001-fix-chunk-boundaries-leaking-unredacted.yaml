@@ -1,0 +1,32 @@
+id: TASK-001
+title: Fix chunk boundaries leaking unredacted tokens
+type: fix
+status: todo
+priority: high
+created: '2026-10-06'
+updated: '2026-10-06'
+branch: null
+depends_on: []
+context: "TODO.md → Engine & correctness → \"\U0001F534 BUG — chunk boundaries leak secrets in the clear\"\
+  .\nReproduced 2026-08-08 against 0.17.1. Both split paths in `_chunk_bytes` (lib/data_redactor.rb) leak:\n\
+  1. Newline-aligned split: patterns with a `[[:space:]]*` separator (e.g. keyname_anchored_secret,\n\
+  \   patterns.c:627) match across `\\n`, so `password:\\n` ending one chunk and `   hunter2secret` opening\n\
+  \   the next is never seen as a pair.\n2. No-newline hard split (worse): a line over CHUNK_SIZE is cut\
+  \ at exactly 65536 bytes, mid-token,\n   e.g. `AKIAIO` | `SFODNN7EXAMPLE` → full key emitted. Minified\
+  \ single-line JSON logs hit this on\n   every boundary.\nScope before fixing (deliberately not started\
+  \ 2026-08-08): every boundary or only some; whether the\nlast chunk (`remaining <= CHUNK_SIZE` early\
+  \ exit) behaves differently; which of the 89 patterns can\nspan which cut type; how wide the overlap\
+  \ must be (interacts with the 255-char bounded tails from\n0.14.1); whether an overlap window double-counts\
+  \ in `_chunked_scan`.\nLikely fix once scoped: re-scan an overlap window spanning every boundary.\n\
+  Interacts with the CLI (piped logs cross 64 KB on nearly every call) and the streaming API (#8)."
+acceptance_criteria:
+- The five scoping questions are answered with specs, and the answers are recorded in the task notes before
+  the fix is written
+- An input of at least 4 chunks with a planted secret at every boundary comes out with no secret surviving
+- 'Both repros are redacted: newline-aligned `password:\n   hunter2secret`, and a hard split through `AKIAIOSFODNN7EXAMPLE`'
+- Specs cover both cut types (newline-aligned and no-newline hard split) plus the exact-boundary off-by-ones
+- '`scan` on chunked input reports each match once: no double counting in the overlap window, checked
+  with adjacent and nested matches'
+- CHANGELOG.md has a Fixed entry under [Unreleased], and the TODO.md item has moved to DONE.md
+plan: []
+notes: []

@@ -1,0 +1,35 @@
+id: TASK-003
+title: Fix embedded NUL truncating redact and scan output
+type: fix
+status: todo
+priority: high
+created: '2026-10-06'
+updated: '2026-10-06'
+branch: null
+depends_on: []
+context: 'TODO.md → Engine & correctness → "🔴 BUG — embedded NUL truncates the output".
+
+  Reproduced 2026-09-18 against 0.18.0 (C audit finding 2).
+
+  `redact("before\0after AKIAIOSFODNN7EXAMPLE tail")` returns "before", dropping the key and
+
+  everything after it. redact_builtins tracks the output length, but rb_data_redactor_redact builds
+
+  the result with rb_str_new_cstr, and the custom stage uses strlen/regexec. scan.c has the same
+
+  problem.
+
+  Fix: rb_str_new(working, work_len). For custom patterns use REG_STARTEND (glibc, musl and macOS all
+
+  support it) or split on NUL and rejoin.'
+acceptance_criteria:
+- '`redact("before\0after AKIAIOSFODNN7EXAMPLE tail")` redacts the key and keeps every byte outside the
+  placeholder, including the NUL and the text after it'
+- The redact result is built with an explicit length (rb_str_new(working, work_len)), not rb_str_new_cstr
+- Custom patterns also match text after an embedded NUL (REG_STARTEND, or split on NUL and rejoin)
+- '`scan` on input with an embedded NUL reports matches that come after the NUL'
+- 'Spec: NUL-containing input round-trips with identical bytes outside the placeholders, for built-in
+  and custom patterns'
+- CHANGELOG.md has a Fixed entry under [Unreleased], and the TODO.md item has moved to DONE.md
+plan: []
+notes: []

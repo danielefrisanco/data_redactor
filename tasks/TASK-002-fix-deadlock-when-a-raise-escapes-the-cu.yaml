@@ -1,0 +1,41 @@
+id: TASK-002
+title: Fix deadlock when a raise escapes the custom-pattern mutex
+type: fix
+status: todo
+priority: high
+created: '2026-10-06'
+updated: '2026-10-06'
+branch: null
+depends_on: []
+context: 'TODO.md → Engine & correctness → "🔴 BUG — raise under the custom-pattern mutex deadlocks the
+  process".
+
+  Reproduced 2026-09-18 against 0.18.0 (C audit finding 1, docs/c_extension_audit_2026-09-18.md).
+
+  redact.c calls NUM2INT/rb_ary_entry and scan.c calls rb_hash_new/rb_str_new/rb_ary_push while
+
+  holding the raw pthread mutex. A raise longjmps past the unlock, so the next redact/scan on any
+
+  thread blocks in pthread_mutex_lock while holding the GVL and the process freezes (Timeout can''t
+
+  fire). Triggered by a non-integer in `_redact`''s enable_bits, and via the public API by
+
+  NoMemoryError in `scan`.
+
+  Fix: no Ruby API calls under the lock. Copy enable_bits into a C int[] before locking; in scan,
+
+  collect custom matches into a C array under the lock and build the hashes after unlocking; wrap the
+
+  locked region in rb_ensure as a backstop.'
+acceptance_criteria:
+- No Ruby API call (NUM2INT, rb_ary_entry, rb_hash_new, rb_str_new, rb_ary_push, ...) runs while the custom-pattern
+  mutex is held, in either redact.c or scan.c
+- '`enable_bits` is copied into a C int[] before the lock is taken'
+- '`scan` collects custom matches into a C array under the lock and builds the Ruby hashes only after
+  unlocking'
+- The locked region is wrapped in rb_ensure as a backstop
+- 'Spec: a raise inside `_redact` (non-integer in enable_bits) is followed by a `redact` call that returns
+  instead of hanging'
+- CHANGELOG.md has a Fixed entry under [Unreleased], and the TODO.md item has moved to DONE.md
+plan: []
+notes: []

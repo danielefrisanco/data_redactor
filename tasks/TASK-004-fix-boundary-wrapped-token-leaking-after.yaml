@@ -1,0 +1,31 @@
+id: TASK-004
+title: Fix boundary-wrapped token leaking after a one-byte separator
+type: fix
+status: todo
+priority: high
+created: '2026-10-06'
+updated: '2026-10-06'
+branch: null
+depends_on: []
+context: "TODO.md → Engine & correctness → \"\U0001F534 BUG — every second boundary-wrapped token leaks\
+  \ when one byte\nseparates them\". Reproduced 2026-09-24 against 0.18.0 and 0.18.1.\n  \"ids: 123456789,987654321\"\
+  \            → \"ids: [REDACTED],987654321\"\n  \"123-45-6789 123-45-6789\"             → \"[REDACTED]\
+  \ 123-45-6789\"\n  \"1234567890\\n1234567890\\n1234567890\"  → \"[REDACTED]\\n1234567890\\n[REDACTED]\"\
+  \nAffects 9/10/11-digit national IDs and us_ssn; prefixed and structured patterns are fine.\nCause:\
+  \ gsub parity. The wrapper `(^|[^0-9A-Za-z])(...)([^0-9A-Za-z]|$)` consumes the trailing\nseparator,\
+  \ so it can't be the next token's leading boundary. scan_digit_group sets digit_last_end to\nthe full\
+  \ span end (its `input[rs-1] == '\\n'` special case rescues newline runs); scan_one advances\npos to\
+  \ match_end with no newline rescue, so czech_rodne_cislo and us_ssn leak across `\\n` too, and\n9-digit\
+  \ runs get caught by passport_9digits with the wrong tag (:travel).\nFix: advance both cursors to the\
+  \ end of the core token, not the full span, so the boundary byte\nacts as a lookahead. Deliberately\
+  \ breaks gsub parity, but only ever redacts more. Patch-level."
+acceptance_criteria:
+- '`scan_digit_group` and `scan_one` advance their cursors to the end of the core token, not the full
+  span'
+- All three repro strings in the context come out fully redacted
+- 'Spec: for each boundary-wrapped shape, three tokens joined with " ", "," and a newline are all redacted
+  with the correct tag (no :travel mis-tag from passport_9digits)'
+- The matching "Known limitations" bullet is removed from README.md
+- CHANGELOG.md has a Fixed entry under [Unreleased], and the TODO.md item has moved to DONE.md
+plan: []
+notes: []
