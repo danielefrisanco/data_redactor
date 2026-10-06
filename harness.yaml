@@ -1,0 +1,155 @@
+# Harness configuration. Copy to the root of your project as `harness.yaml`.
+# Every value here is a default; delete what you don't want to override.
+
+tasks:
+  dir: tasks                    # where TASK-*.yaml files live (tracked in git)
+  id_prefix: TASK
+  id_width: 3                   # TASK-001
+  wip_limit: 3                  # max tasks in_progress at once, counted across all branches and
+                                 # worktrees (0 = no limit). Leave room for one foreground + one
+                                 # background task if you use /harness:run-task --background.
+                                 # (Replaces `single_active`; an explicit `single_active: true` in an
+                                 # older harness.yaml still means a limit of 1 until you set this.)
+  commit_task_files: true       # commit task file changes automatically (create/start/complete)
+  require_acceptance_criteria: true   # /create-task asks for criteria if missing
+
+  # Hard gates on status transitions, enforced by scripts/guard_tasks.py (a PreToolUse hook on
+  # `task.py set <id> status=...`) — not a rule the agent is trusted to follow, a blocked command.
+  gates:
+    enforce_state_machine: true             # only the transitions below are permitted
+    allowed_transitions:
+      todo: [in_progress, blocked, cancelled]
+      # in_progress -> done is state-machine-legal (needed when behavior.review_required: false);
+      # when review *is* required, require_review_pass below still forces going through `review` first.
+      in_progress: [review, done, blocked, cancelled, todo]
+      review: [done, in_progress, blocked, cancelled]
+      blocked: [todo, in_progress, cancelled]
+      done: []                              # terminal; edit this list if you need to reopen tasks
+      cancelled: []                         # terminal
+    require_acceptance_criteria_before_start: true   # todo|blocked -> in_progress needs criteria
+    require_dependencies_done: true                   # -> in_progress needs every depends_on id status=done
+    require_review_pass: true                          # -> done needs a "REVIEW: PASS" note (see behavior.review_required)
+
+git:
+  base_branch: main             # branch tasks start from
+  protected_branches: [main, master]
+  branch_pattern: "{type}/{num}-{slug}"       # placeholders: {id} TASK-001, {id_lower}, {num} 001, {slug}, {type}
+  allow_commit_on_protected: false
+  allow_push: false             # agent never pushes unless true (you can still push yourself)
+  commit:
+    format: conventional        # conventional | free
+    types: [feat, fix, chore, docs, refactor, test, perf, ci, build, style, revert]
+    require_task_ref: true      # message must mention the task id (e.g. trailer "Task: TASK-001")
+    trailer: "Task: {id}"
+    max_subject_length: 72
+  blocked_commands:             # regexes matched against any Bash command; always blocked
+    - "git\\s+push\\s+.*(--force|-f)\\b"
+    - "git\\s+commit\\s+.*--no-verify"
+    - "git\\s+reset\\s+--hard"
+    - "git\\s+clean\\s+-[a-zA-Z]*f"
+    - "git\\s+branch\\s+-D"
+    - "git\\s+checkout\\s+--\\s+\\."
+    - "git\\s+restore\\s+\\."
+    - "rm\\s+-rf\\s+(/|~|\\$HOME)\\s*$"
+
+secrets:
+  deny_globs:                   # never read, grep, cat, edit or glob these
+    - ".env"
+    - ".env.*"
+    - "*.env"
+    - "**/secrets/**"
+    - "**/*secret*"
+    - "**/*credential*"
+    - "*.pem"
+    - "*.key"
+    - "*.p12"
+    - "*.pfx"
+    - "id_rsa*"
+    - "id_ed25519*"
+    - "**/.aws/**"
+    - "**/.ssh/**"
+    - "**/.netrc"
+    - "**/.npmrc"
+    - "**/.pypirc"
+  allow_globs:                  # exceptions to deny_globs (e.g. templates)
+    - ".env.example"
+    - ".env.sample"
+    - ".env.template"
+  respect_gitignore: true       # also block files ignored by git ...
+  gitignore_exceptions:         # ... except these (build output, deps)
+    - "node_modules/**"
+    - "dist/**"
+    - "build/**"
+    - ".venv/**"
+    - "venv/**"
+    - "__pycache__/**"
+    - "*.log"
+  block_env_dump: true          # block `env`, `printenv`, `set` with no args, `echo $SECRET`-style
+
+checks:
+  test_command: "bundle exec rake"  # compile + spec (Rakefile default task) — run before completing a task
+  lint_command: ""              # e.g. "ruff check ."
+  format_on_edit: ""            # e.g. "ruff format {file}" — run after every Edit/Write ({file} = path)
+  format_extensions: []         # e.g. [".py"] — only run format_on_edit for these
+
+behavior:
+  ask_when_unclear: true        # agents must ask (AskUserQuestion) instead of guessing
+  execution_mode: main          # where /start-task runs the implementation:
+                                 #   main       — in your session, in your checkout
+                                 #   subagent   — executor agent in an isolated worktree; you wait for it
+                                 #   background — same, but you keep working (switch tasks, chat) meanwhile
+  review_required: true         # /complete-task runs the reviewer agent before marking done
+  progress_file: .harness/progress.md
+  rules_dir: .harness/rules
+  audits_dir: .harness/audits
+  plans_dir: .harness/plans
+
+models:
+  explorer: haiku
+  task_writer: sonnet
+  reviewer: sonnet
+  executor: inherit
+  auditor: sonnet
+  planner: sonnet
+
+# Semantic Versioning (semver.org). Source of truth = annotated git tags; version.py derives the
+# next version from Conventional Commits since the last tag (feat -> minor, fix/perf -> patch,
+# "type!:" or a BREAKING CHANGE footer -> major). Nothing is pushed automatically (git.allow_push).
+versioning:
+  scheme: semver
+  tag_pattern: "v{version}"     # placeholder: {version} -> 1.4.0
+  initial_version: "0.1.0"      # used for the first release if no tag exists yet
+  changelog_file: CHANGELOG.md  # Keep a Changelog (keepachangelog.com) format
+  manifest_file: ""             # optional: package.json / pyproject.toml / Cargo.toml / VERSION to
+                                 # keep in sync with the tag; leave empty if the project has none
+
+# Policy for adding third-party libraries: license compatibility first, then maintenance signals.
+# license_check.py resolves a package's SPDX license from its registry (PyPI/npm/crates.io) and
+# classifies it against the lists below. Default stance is permissive-only: anything not
+# recognisably permissive requires the user's explicit approval before it's added.
+dependencies:
+  license_policy: permissive    # permissive | permissive+weak-copyleft | any — documents the stance;
+                                 # the allow/review/disallow lists below are what's actually enforced
+  allowed_licenses:              # added without asking
+    - MIT
+    - Apache-2.0
+    - BSD-2-Clause
+    - BSD-3-Clause
+    - ISC
+    - 0BSD
+    - Unlicense
+    - Python-2.0
+    - Zlib
+  review_required_licenses:      # ask the user before adding; explain the obligation
+    - MPL-2.0
+    - LGPL-2.1
+    - LGPL-3.0
+    - EPL-2.0
+    - CC0-1.0
+  disallowed_licenses:            # never add without the user overriding this file first
+    - GPL-2.0
+    - GPL-3.0
+    - AGPL-3.0
+    - SSPL-1.0
+    - BUSL-1.1
+  vuln_scan_command: ""          # e.g. "npm audit --omit=dev", "pip-audit", "cargo audit" — run by /harness:audit if set
