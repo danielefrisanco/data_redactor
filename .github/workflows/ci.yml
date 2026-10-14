@@ -51,7 +51,7 @@ jobs:
 
       - name: Upload gem artifact
         if: matrix.ruby == '3.4'
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: data-redactor-gem
           path: pkg/
@@ -404,7 +404,7 @@ jobs:
           fi
           echo "OK: native gem contains compiled .so, no ext/ sources"
 
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: native-gem-x86_64-linux-smoke
           path: pkg/data_redactor-*-x86_64-linux.gem
