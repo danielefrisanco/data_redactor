@@ -85,17 +85,6 @@ public API by `NoMemoryError` in `scan`.
 lock and build the hashes after unlocking. Wrap the locked region in `rb_ensure` as
 a backstop. Spec: raise inside `_redact`, then check that a later `redact` returns.
 
-### 🔴 BUG — embedded NUL truncates the output
-**Reproduced 2026-09-18 against 0.18.0** (C audit finding 2).
-`redact("before\0after AKIAIOSFODNN7EXAMPLE tail")` returns `"before"`, which drops
-the key and everything after it. `redact_builtins` tracks the output length, but
-`rb_data_redactor_redact` builds the result with `rb_str_new_cstr`, and the custom
-stage uses `strlen`/`regexec`. `scan.c` has the same problem.
-
-**Fix:** `rb_str_new(working, work_len)`. For customs, use `REG_STARTEND`, which
-glibc, musl and macOS all support, or split on NUL and rejoin. Spec: NUL input
-round-trips with the same bytes outside the placeholders.
-
 ### 🔴 BUG — every second boundary-wrapped token leaks when one byte separates them
 **Reproduced 2026-09-24 against 0.18.0 and 0.18.1.** When two boundary-wrapped
 tokens share a single separator byte, the second one is not redacted:

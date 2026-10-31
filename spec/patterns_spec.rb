@@ -701,5 +701,10 @@ RSpec.describe DataRedactor do
       input = "PASSWORD=hunter2horse"
       expect(DataRedactor.redact(input, except: [:credentials])).to eq(input)
     end
+
+    it "keeps every byte around an embedded NUL" do
+      input = "before\0after AKIAIOSFODNN7EXAMPLE tail\0"
+      expect(DataRedactor.redact(input)).to eq("before\0after [REDACTED] tail\0")
+    end
   end
 end

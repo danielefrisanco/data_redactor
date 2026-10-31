@@ -72,6 +72,16 @@ pure-Ruby, ~11× over the old C, byte-for-byte equal to Ruby `gsub`**.
   the Ruby API can't produce. Mutation-tested: dropping the zero-length guard,
   going back to pattern-order processing, and an off-by-one in the overlap test
   each fail it.
+- **Embedded NUL round-trips (0.18.1, `fix/003-fix-embedded-nul-truncating-redact-and-s`; C audit finding 2).**
+  `redact_builtins` already tracked the output length, but the result was built
+  with `rb_str_new_cstr` and the custom stage used `strlen`/`regexec`, so the first
+  `\0` ended the string and dropped everything after it, secrets included.
+  Results are now built with explicit lengths. The audit suggested `REG_STARTEND`
+  for the customs, but musl's `regex.h` doesn't define it (checked on
+  `alpine:3.20`) and musl is a release target. So `replace_all_matches` and
+  `scan`'s collect loop now run `regexec` on each NUL-delimited segment and copy
+  the NULs through. A NUL is a non-alphanumeric byte to the built-in engine too,
+  so treating it as a boundary for customs is consistent.
 - **Ship hygiene.** 256-example rspec suite green against the new engine;
   `extconf.rb` builds with no new dependency on glibc + musl/Alpine; end-to-end
   bench: 1 MB log **0.87 → 7.27 i/s** (~8.4× throughput; from 4× slower than pure

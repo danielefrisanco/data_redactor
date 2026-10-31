@@ -116,5 +116,18 @@ RSpec.describe DataRedactor do
       expect(m[:value]).to eq("EMP-123456")
       DataRedactor.clear_custom_patterns!
     end
+
+    it "reports matches after an embedded NUL with original-frame offsets" do
+      DataRedactor.clear_custom_patterns!
+      DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{6}")
+      input = "a\0#{aws}\0\0EMP-123456 end"
+      result = DataRedactor.scan(input)
+      expect(result[:redacted]).to eq("a\0[REDACTED]\0\0[REDACTED] end")
+      result[:matches].each do |m|
+        expect(input.byteslice(m[:start], m[:length])).to eq(m[:value])
+      end
+      expect(result[:matches].map { |m| m[:name] }).to contain_exactly("aws_access_key_id", "emp_id")
+      DataRedactor.clear_custom_patterns!
+    end
   end
 end
