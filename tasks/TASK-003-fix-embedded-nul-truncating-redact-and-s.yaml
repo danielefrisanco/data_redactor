@@ -1,11 +1,11 @@
 id: TASK-003
 title: Fix embedded NUL truncating redact and scan output
 type: fix
-status: todo
+status: in_progress
 priority: high
 created: '2026-10-06'
-updated: '2026-10-06'
-branch: null
+updated: '2026-10-31'
+branch: fix/003-fix-embedded-nul-truncating-redact-and-s
 depends_on: []
 context: 'TODO.md → Engine & correctness → "🔴 BUG — embedded NUL truncates the output".
 
@@ -32,4 +32,6 @@ acceptance_criteria:
   and custom patterns'
 - CHANGELOG.md has a Fixed entry under [Unreleased], and the TODO.md item has moved to DONE.md
 plan: []
-notes: []
+notes:
+- at: 2026-10-31 05:28
+  text: started on fix/003-fix-embedded-nul-truncating-redact-and-s
