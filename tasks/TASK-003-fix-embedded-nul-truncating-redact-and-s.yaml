@@ -1,7 +1,7 @@
 id: TASK-003
 title: Fix embedded NUL truncating redact and scan output
 type: fix
-status: in_progress
+status: done
 priority: high
 created: '2026-10-06'
 updated: '2026-10-31'
@@ -35,3 +35,8 @@ plan: []
 notes:
 - at: 2026-10-31 05:28
   text: started on fix/003-fix-embedded-nul-truncating-redact-and-s
+- at: 2026-10-31 05:34
+  text: 'REVIEW: PASS — all 6 criteria met; split-on-NUL chosen since musl lacks REG_STARTEND'
+- at: 2026-10-31 05:34
+  text: 'done — repro now round-trips; specs in patterns_spec, custom_patterns_spec, scan_spec cover built-in,
+    custom, boundary and scan offsets; bundle exec rake 382/0. User: push branch and open PR.'
