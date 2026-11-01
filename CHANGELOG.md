@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{:password=>"[REDACTED]"}`. String keys (`{"password"=>"…"}`) are not matched.
 
 ### Fixed
+- **Embedded NUL bytes no longer truncate the output.** `redact` and `scan`
+  built their result as a C string, so everything after the first `\0` was
+  dropped, including any secret in it: `redact("before\0after AKIA… tail")`
+  returned `"before"`. Every byte now round-trips, and custom patterns also match
+  after a NUL. A custom pattern never matches across a NUL; it acts as a
+  boundary.
 - **Overlap resolution is linear, not quadratic.** Picking the final set of
   matches compared each candidate against every match already kept, so text dense
   with short tokens spent longer resolving than scanning (a 64 KB chunk of

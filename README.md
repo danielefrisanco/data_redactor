@@ -314,6 +314,8 @@ DataRedactor.clear_custom_patterns!               # mostly for test suites
 
 **`boundary: true`** — wraps the pattern with `(^|[^0-9A-Za-z])(PATTERN)([^0-9A-Za-z]|$)` so it only fires when the token is not embedded in a longer alphanumeric string. Incompatible with patterns that contain capture groups.
 
+**Embedded NUL bytes** — input may contain `\0`; every byte round-trips. A custom pattern is matched on each NUL-free stretch separately, so it never spans a NUL, and a NUL counts as a boundary for `boundary: true`.
+
 ### Name patterns
 
 Personal names can't ship as built-ins — every team has different ones — but the regex

@@ -13,11 +13,14 @@
 char *wrap_boundary(const char *core);
 
 /*
- * Replace all occurrences of a compiled pattern in `input` with the placeholder.
- * Returns a newly malloc'd string (caller must free), or NULL on allocation failure.
+ * Replace all occurrences of a compiled pattern in `input` (in_len bytes, may
+ * contain NULs) with the placeholder. Returns a newly malloc'd NUL-terminated
+ * buffer (caller must free) and writes its length to *out_len_p, or returns
+ * NULL on allocation failure.
  */
-char *replace_all_matches(regex_t *pattern, const char *input,
-                          int use_boundary, const placeholder_t *ph);
+char *replace_all_matches(regex_t *pattern, const char *input, size_t in_len,
+                          int use_boundary, const placeholder_t *ph,
+                          size_t *out_len_p);
 
 /*
  * DataRedactor._redact(text, ph_mode, ph_str, enable_bits) -> String

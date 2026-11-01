@@ -28,7 +28,8 @@ char *wrap_boundary(const char *core) {
 }
 
 /*
- * Replace all occurrences of a compiled pattern in `input` with PLACEHOLDER.
+ * Replace every match of `pattern` in one NUL-terminated segment, appending to
+ * `output` at *out_len.
  *
  * If `use_boundary` is non-zero the pattern was compiled as:
  *   (^|[^0-9A-Za-z])(CORE)([^0-9A-Za-z]|$)
@@ -37,24 +38,11 @@ char *wrap_boundary(const char *core) {
  * and matches[3].rm_so to locate the exact CORE span. The boundary characters
  * are copied back verbatim so they are not lost.
  */
-char *replace_all_matches(regex_t *pattern, const char *input,
-                          int use_boundary, const placeholder_t *ph) {
-    size_t ph_max   = max_placeholder_len(ph);
-    size_t in_len   = strlen(input);
-
-    /* Worst case per input byte: it is either copied verbatim (1 byte out) or
-     * it is one byte of a match replaced by the longest placeholder (ph_max
-     * bytes out). A single byte is never both, but bounding each byte by
-     * (1 + ph_max) is safe and sized once — no per-match strlen, no realloc. */
-    size_t out_cap  = in_len * (ph_max + 1) + 1;
-    char *output = (char *)malloc(out_cap);
-    if (!output) return NULL;
-
-    char *ph_buf = (char *)malloc(ph_max + 1);
-    if (!ph_buf) { free(output); return NULL; }
-
-    size_t out_len = 0;
-    const char *cursor = input;
+static void replace_in_segment(regex_t *pattern, const char *segment,
+                               int use_boundary, const placeholder_t *ph,
+                               char *ph_buf, char *output, size_t *out_len_p) {
+    size_t out_len = *out_len_p;
+    const char *cursor = segment;
     regmatch_t matches[4];
 
     while (regexec(pattern, cursor, 4, matches, 0) == 0) {
@@ -98,13 +86,52 @@ char *replace_all_matches(regex_t *pattern, const char *input,
             else break;
         }
     }
-    free(ph_buf);
 
     size_t tail_len = strlen(cursor);
     memcpy(output + out_len, cursor, tail_len);
     out_len += tail_len;
-    output[out_len] = '\0';
+    *out_len_p = out_len;
+}
 
+/*
+ * Replace all occurrences of a compiled pattern in `input` (in_len bytes) with
+ * the placeholder.
+ *
+ * regexec stops at the first NUL, and musl has no REG_STARTEND, so the input
+ * is matched one NUL-delimited segment at a time and each NUL is copied through
+ * verbatim. A NUL is a non-alphanumeric separator either way, so a match can
+ * never usefully span one.
+ */
+char *replace_all_matches(regex_t *pattern, const char *input, size_t in_len,
+                          int use_boundary, const placeholder_t *ph,
+                          size_t *out_len_p) {
+    size_t ph_max   = max_placeholder_len(ph);
+
+    /* Worst case per input byte: it is either copied verbatim (1 byte out) or
+     * it is one byte of a match replaced by the longest placeholder (ph_max
+     * bytes out). A single byte is never both, but bounding each byte by
+     * (1 + ph_max) is safe and sized once — no per-match strlen, no realloc. */
+    size_t out_cap  = in_len * (ph_max + 1) + 1;
+    char *output = (char *)malloc(out_cap);
+    if (!output) return NULL;
+
+    char *ph_buf = (char *)malloc(ph_max + 1);
+    if (!ph_buf) { free(output); return NULL; }
+
+    size_t out_len = 0;
+    const char *segment = input;
+    const char *end = input + in_len;
+    for (;;) {
+        replace_in_segment(pattern, segment, use_boundary, ph, ph_buf, output, &out_len);
+        segment += strlen(segment);
+        if (segment >= end) break;
+        output[out_len++] = '\0';
+        segment++;
+    }
+    free(ph_buf);
+
+    output[out_len] = '\0';
+    *out_len_p = out_len;
     return output;
 }
 
@@ -259,8 +286,8 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
         ph.str = (ph_mode == PLACEHOLDER_MODE_PLAIN)
                      ? ph_str_plain
                      : tag_name_for_bit(custom_patterns[i].tag);
-        char *result = replace_all_matches(&custom_patterns[i].compiled, working,
-                                           custom_patterns[i].boundary, &ph);
+        char *result = replace_all_matches(&custom_patterns[i].compiled, working, work_len,
+                                           custom_patterns[i].boundary, &ph, &work_len);
         free(working);
         if (!result) { working = NULL; oom = 1; break; }
         working = result;
@@ -268,7 +295,7 @@ VALUE rb_data_redactor_redact(VALUE self, VALUE rb_text,
     custom_patterns_unlock();
     if (oom) rb_raise(rb_eNoMemError, "replace_all_matches allocation failed (custom)");
 
-    VALUE rb_result = rb_str_new_cstr(working);
+    VALUE rb_result = rb_str_new(working, (long)work_len);
     free(working);
     /* Preserve the input's encoding. We go through Ruby's force_encoding rather
      * than the C rb_enc_* API because pulling in ruby/encoding.h drags in

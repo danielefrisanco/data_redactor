@@ -121,6 +121,7 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
     }
     if (cur < in_len) { memcpy(working + out_len, input + cur, in_len - cur); out_len += in_len - cur; }
     working[out_len] = '\0';
+    size_t work_len = out_len;
 
     /* ------------------------------------------------------------------ */
     /* Stage 2: custom patterns via glibc on the rewritten buffer.         */
@@ -131,39 +132,47 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
     for (int i = 0; i < custom_count; i++) {
         if (!scan_enable_bit(rb_enable_bits, NUM_PATTERNS + i)) continue;
 
-        const char *cur_ptr = working;
-        regmatch_t  m[4];
-        while (regexec(&custom_patterns[i].compiled, cur_ptr, 4, m, 0) == 0) {
-            regoff_t fso = m[0].rm_so, feo = m[0].rm_eo;
-            if (fso < 0 || feo < fso) break;
+        /* One NUL-delimited segment at a time, as in replace_all_matches. */
+        const char *seg = working;
+        const char *work_end = working + work_len;
+        for (;;) {
+            const char *cur_ptr = seg;
+            regmatch_t  m[4];
+            while (regexec(&custom_patterns[i].compiled, cur_ptr, 4, m, 0) == 0) {
+                regoff_t fso = m[0].rm_so, feo = m[0].rm_eo;
+                if (fso < 0 || feo < fso) break;
 
-            regoff_t cso = fso, ceo = feo;
-            if (custom_patterns[i].boundary) {
-                if (m[1].rm_so >= 0 && m[1].rm_eo > m[1].rm_so) cso = m[1].rm_eo;
-                if (m[3].rm_so >= 0 && m[3].rm_eo > m[3].rm_so) ceo = m[3].rm_so;
+                regoff_t cso = fso, ceo = feo;
+                if (custom_patterns[i].boundary) {
+                    if (m[1].rm_so >= 0 && m[1].rm_eo > m[1].rm_so) cso = m[1].rm_eo;
+                    if (m[3].rm_so >= 0 && m[3].rm_eo > m[3].rm_so) ceo = m[3].rm_so;
+                }
+
+                long wpos_core  = (long)(cur_ptr - working) + (long)cso;
+                long orig_start = working_to_orig(wpos_core, ev, n_ev, ph_len);
+                long core_len   = (long)(ceo - cso);
+
+                VALUE h = rb_hash_new();
+                rb_hash_aset(h, ID2SYM(rb_intern("tag")),
+                             ID2SYM(rb_intern(tag_name_for_bit(custom_patterns[i].tag))));
+                rb_hash_aset(h, ID2SYM(rb_intern("name")),
+                             rb_str_new_cstr(custom_patterns[i].name));
+                rb_hash_aset(h, ID2SYM(rb_intern("value")),
+                             rb_str_new(cur_ptr + cso, (size_t)core_len));
+                rb_hash_aset(h, ID2SYM(rb_intern("start")),  LONG2NUM(orig_start));
+                rb_hash_aset(h, ID2SYM(rb_intern("length")), LONG2NUM(core_len));
+                rb_ary_push(matches_arr, h);
+
+                if (feo == fso) { if (*cur_ptr) cur_ptr++; else break; }
+                else cur_ptr += feo;
             }
-
-            long wpos_core  = (long)(cur_ptr - working) + (long)cso;
-            long orig_start = working_to_orig(wpos_core, ev, n_ev, ph_len);
-            long core_len   = (long)(ceo - cso);
-
-            VALUE h = rb_hash_new();
-            rb_hash_aset(h, ID2SYM(rb_intern("tag")),
-                         ID2SYM(rb_intern(tag_name_for_bit(custom_patterns[i].tag))));
-            rb_hash_aset(h, ID2SYM(rb_intern("name")),
-                         rb_str_new_cstr(custom_patterns[i].name));
-            rb_hash_aset(h, ID2SYM(rb_intern("value")),
-                         rb_str_new(cur_ptr + cso, (size_t)core_len));
-            rb_hash_aset(h, ID2SYM(rb_intern("start")),  LONG2NUM(orig_start));
-            rb_hash_aset(h, ID2SYM(rb_intern("length")), LONG2NUM(core_len));
-            rb_ary_push(matches_arr, h);
-
-            if (feo == fso) { if (*cur_ptr) cur_ptr++; else break; }
-            else cur_ptr += feo;
+            seg += strlen(seg);
+            if (seg >= work_end) break;
+            seg++;
         }
 
-        char *next = replace_all_matches(&custom_patterns[i].compiled, working,
-                                         custom_patterns[i].boundary, &ph_plain);
+        char *next = replace_all_matches(&custom_patterns[i].compiled, working, work_len,
+                                         custom_patterns[i].boundary, &ph_plain, &work_len);
         free(working);
         if (!next) { working = NULL; oom = 1; break; }
         working = next;
@@ -174,7 +183,7 @@ VALUE rb_data_redactor_scan(VALUE self, VALUE rb_text, VALUE rb_enable_bits) {
     free(ev);
 
     VALUE result      = rb_hash_new();
-    VALUE rb_redacted = rb_str_new_cstr(working);
+    VALUE rb_redacted = rb_str_new(working, (long)work_len);
     free(working);
     rb_funcall(rb_redacted, rb_intern("force_encoding"), 1,
                rb_funcall(rb_text, rb_intern("encoding"), 0));

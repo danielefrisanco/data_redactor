@@ -37,6 +37,17 @@ RSpec.describe DataRedactor do
         expect(DataRedactor.redact("XEMP1234Y", only: [:custom])).to include("XEMP1234Y")
       end
 
+      it "matches custom patterns on both sides of an embedded NUL" do
+        DataRedactor.add_pattern(name: "emp_id", regex: "EMP-[0-9]{6}")
+        input = "a EMP-123456\0b EMP-654321\0\0AKIAIOSFODNN7EXAMPLE end"
+        expect(DataRedactor.redact(input)).to eq("a [REDACTED]\0b [REDACTED]\0\0[REDACTED] end")
+      end
+
+      it "treats an embedded NUL as a boundary for boundary: true" do
+        DataRedactor.add_pattern(name: "emp_code", regex: "EMP[0-9]{4}", boundary: true)
+        expect(DataRedactor.redact("x\0EMP1234\0y", only: [:custom])).to eq("x\0[REDACTED]\0y")
+      end
+
       it "supports a built-in tag other than :custom" do
         DataRedactor.add_pattern(name: "internal_key", regex: "INT-[A-Z]{3}", tag: :credentials)
         pattern = DataRedactor.custom_patterns.find { |p| p[:name] == "internal_key" }
