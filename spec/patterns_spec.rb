@@ -707,4 +707,58 @@ RSpec.describe DataRedactor do
       expect(DataRedactor.redact(input)).to eq("before\0after [REDACTED] tail\0")
     end
   end
+
+  describe "boundary-wrapped tokens sharing a one-byte separator" do
+    it "redacts both IDs in a comma-separated list" do
+      expect(DataRedactor.redact("ids: 123456789,987654321")).to eq("ids: [REDACTED],[REDACTED]")
+    end
+
+    it "redacts both SSNs separated by a space" do
+      expect(DataRedactor.redact("123-45-6789 123-45-6789")).to eq("[REDACTED] [REDACTED]")
+    end
+
+    it "redacts every line of newline-separated IDs" do
+      expect(DataRedactor.redact("1234567890\n1234567890\n1234567890"))
+        .to eq("[REDACTED]\n[REDACTED]\n[REDACTED]")
+    end
+
+    it "still needs a non-alphanumeric byte before the token" do
+      expect(DataRedactor.redact("x123456789,987654321")).to eq("x123456789,[REDACTED]")
+    end
+
+    # One token per distinct winning pattern. Shadowed slots (passport_9digits,
+    # dutch_bsn at 9 digits, us_itin, ...) lose to a lower index on the same span,
+    # so a 9-digit run must come out :national_id via czech_rodne_cislo, never
+    # :travel via passport_9digits.
+    [
+      ["korean_rrn",         "850101-1234567"],
+      ["swiss_ahv",          "756.1234.5678.90"],
+      ["finnish_hetu",       "010185-123A"],
+      ["czech_rodne_cislo",  "856121/1234"],
+      ["czech_rodne_cislo",  "123456789"],
+      ["us_ssn",             "123-45-6789"],
+      ["canadian_sin",       "123-456-789"],
+      ["indian_pan",         "ABCDE1234F"],
+      ["spanish_dni",        "12345678Z"],
+      ["french_nir",         "185126203450342"],
+      ["south_african_id",   "8501015800085"],
+      ["japanese_my_number", "123456789012"],
+      ["polish_pesel",       "85121612345"],
+      ["dutch_bsn",          "12345678"]
+    ].each do |name, token|
+      [" ", ",", "\n"].each do |sep|
+        it "redacts all three #{name} tokens (#{token}) joined by #{sep.inspect} with the right tag" do
+          alone = DataRedactor.scan(token)[:matches]
+          expect(alone.map { |m| m[:name] }).to eq([name])
+
+          input  = [token, token, token].join(sep)
+          result = DataRedactor.scan(input)
+          expect(result[:redacted]).to eq((["[REDACTED]"] * 3).join(sep))
+          expect(result[:matches].map { |m| [m[:name], m[:tag], m[:start]] })
+            .to eq((0..2).map { |i| [name, alone.first[:tag], i * (token.length + 1)] })
+          expect(DataRedactor.redact(input)).to eq(result[:redacted])
+        end
+      end
+    end
+  end
 end

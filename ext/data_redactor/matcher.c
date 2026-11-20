@@ -1020,6 +1020,7 @@ static size_t scan_one(int p, scan_state_t *state, const char *input, size_t len
         if (match_end != (size_t)-1) {
             size_t span = match_end - pos;
             size_t core_so = pos, core_eo = match_end;
+            size_t resume = match_end;
             if (eng->boundary_wrapped) {
                 /* The wrapper is (^|[^0-9A-Za-z])(CORE)([^0-9A-Za-z]|$). The gem
                  * redacts only CORE and preserves the boundary bytes. The CORE's
@@ -1031,6 +1032,10 @@ static size_t scan_one(int p, scan_state_t *state, const char *input, size_t len
                     !isalnum((unsigned char)input[core_so])) core_so++;
                 if (core_eo > core_so &&
                     !isalnum((unsigned char)input[core_eo-1])) core_eo--;
+                /* Resume AT the trailing boundary byte, not past it, so it can
+                 * also be the next token's leading boundary ("1,2" redacts both).
+                 * gsub would skip it; this only ever redacts more. */
+                resume = core_eo;
             } else if (eng->keyname_anchored) {
                 /* The match is KEY<sep>VALUE (e.g. PASSWORD="hunter2"). We redact
                  * only VALUE and keep KEY<sep> so logs stay greppable. The value
@@ -1056,7 +1061,7 @@ static size_t scan_one(int p, scan_state_t *state, const char *input, size_t len
             }
             if (count < max)
                 out[count++] = (mm_match_t){p, core_so, core_eo - core_so};
-            pos = (span == 0) ? pos + 1 : match_end;
+            pos = (span == 0) ? pos + 1 : resume;
         } else {
             pos++;
         }
@@ -1083,35 +1088,21 @@ static size_t scan_digit_group(scan_ctx_t *ctx, const char *input, size_t len,
         size_t re = i;
         size_t L  = re - rs;
 
-        size_t end;
-        if (re == len)                                   end = re;
-        else if (!isalnum((unsigned char)input[re]))     end = re + 1;
-        else                                             continue;
+        if (re < len && isalnum((unsigned char)input[re])) continue;
+        if (rs > 0 && isalnum((unsigned char)input[rs-1])) continue;
 
         for (int p = 0; p < g_eng_n && count < max; p++) {
             engine_t *eng = &g_eng[p];
             if (!eng->digit_member) continue;
             if ((size_t)p < n_bits && !enable_bits[p]) continue;
             if ((int)L < eng->digit_lo || (int)L > eng->digit_hi) continue;
+            if (rs < (size_t)ctx->digit_last_end[p]) continue;
 
-            size_t start;
-            if (rs > 0 && !isalnum((unsigned char)input[rs-1]) &&
-                rs - 1 >= (size_t)ctx->digit_last_end[p]) {
-                start = rs - 1;
-            } else if (rs == 0 || input[rs-1] == '\n') {
-                start = rs;
-            } else {
-                continue;
-            }
-
-            /* The boundary-wrapped span is [start, end); the gem redacts only the
-             * CORE token (the digit run [rs, re)) and copies the boundary bytes
-             * back verbatim. Emit CORE coordinates; keep the per-pattern gsub
-             * cursor (digit_last_end) on the FULL span so adjacent runs sharing a
-             * separator are resolved exactly as gsub would. */
-            (void)start;
+            /* Emit CORE coordinates (the digit run) and put the cursor at the
+             * CORE end, not past the trailing boundary byte, so that byte can
+             * also be the next run's leading boundary — same rule as scan_one. */
             out[count++] = (mm_match_t){p, rs, re - rs};
-            ctx->digit_last_end[p] = (int)end;
+            ctx->digit_last_end[p] = (int)re;
         }
         if (count >= max) break;
     }

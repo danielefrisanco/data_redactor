@@ -82,6 +82,22 @@ pure-Ruby, ~11× over the old C, byte-for-byte equal to Ruby `gsub`**.
   `scan`'s collect loop now run `regexec` on each NUL-delimited segment and copy
   the NULs through. A NUL is a non-alphanumeric byte to the built-in engine too,
   so treating it as a boundary for customs is consistent.
+- **One-byte separators serve both neighbours (0.18.1, `fix/004-fix-boundary-wrapped-token-leaking-after`).**
+  Every second boundary-wrapped token leaked when one byte separated them
+  (`"123456789,987654321"` → `"[REDACTED],987654321"`), which is exactly what CSV
+  columns and ID-per-line dumps look like. The wrapper
+  `(^|[^0-9A-Za-z])(CORE)([^0-9A-Za-z]|$)` consumes the trailing separator, and
+  the engine reproduced `gsub` on purpose. `scan_one` resumed at the full span end,
+  and `scan_digit_group` put its cursor there too, rescuing only `\n`-separated
+  digit runs. The 2026-09-18 audit had marked one-byte separators as fine, but it
+  only checked cards and emails, which aren't wrapped. Both cursors now stop at the
+  CORE end, so the boundary byte works like a lookahead. That makes the digit
+  group's `\n` special case redundant, and it is gone. This is a deliberate break
+  from `gsub` parity that only ever redacts more. Custom `boundary: true` patterns
+  were never affected: `regexec` restarts at the cursor, where `^` matches. The spec
+  joins three tokens of each of the 14 shapes that win resolution with `" "`, `","`
+  and `"\n"`, and checks name, tag and offset. 41 of its 46 examples fail on the
+  old engine.
 - **Ship hygiene.** 256-example rspec suite green against the new engine;
   `extconf.rb` builds with no new dependency on glibc + musl/Alpine; end-to-end
   bench: 1 MB log **0.87 → 7.27 i/s** (~8.4× throughput; from 4× slower than pure
