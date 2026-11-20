@@ -1,11 +1,11 @@
 id: TASK-004
 title: Fix boundary-wrapped token leaking after a one-byte separator
 type: fix
-status: todo
+status: in_progress
 priority: high
 created: '2026-10-06'
-updated: '2026-10-06'
-branch: null
+updated: '2026-11-20'
+branch: fix/004-fix-boundary-wrapped-token-leaking-after
 depends_on: []
 context: "TODO.md → Engine & correctness → \"\U0001F534 BUG — every second boundary-wrapped token leaks\
   \ when one byte\nseparates them\". Reproduced 2026-09-24 against 0.18.0 and 0.18.1.\n  \"ids: 123456789,987654321\"\
@@ -28,4 +28,6 @@ acceptance_criteria:
 - The matching "Known limitations" bullet is removed from README.md
 - CHANGELOG.md has a Fixed entry under [Unreleased], and the TODO.md item has moved to DONE.md
 plan: []
-notes: []
+notes:
+- at: 2026-11-20 14:55
+  text: started on fix/004-fix-boundary-wrapped-token-leaking-after
