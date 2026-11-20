@@ -1,7 +1,7 @@
 id: TASK-004
 title: Fix boundary-wrapped token leaking after a one-byte separator
 type: fix
-status: in_progress
+status: done
 priority: high
 created: '2026-10-06'
 updated: '2026-11-20'
@@ -31,3 +31,9 @@ plan: []
 notes:
 - at: 2026-11-20 14:55
   text: started on fix/004-fix-boundary-wrapped-token-leaking-after
+- at: 2026-11-20 15:03
+  text: 'REVIEW: PASS — all 5 criteria met; minor: digit_last_end check is now unreachable (harmless)'
+- at: 2026-11-20 15:03
+  text: 'done — scan_one/scan_digit_group resume at CORE end; 3 repro strings + 14 shapes x 3 separators
+    (name, tag, offset) in patterns_spec, 41/46 fail on old engine; bundle exec rake 428/0. README limitation
+    removed, CHANGELOG Fixed, TODO→DONE. User: push branch and open PR.'
