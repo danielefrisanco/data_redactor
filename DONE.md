@@ -13,7 +13,10 @@ shipped in a release.
 The whole research arc (prototypes v1–v19, `prototypes/multi_pattern_matcher/`,
 `docs/research_log.md`) converged on **v19**: a zero-dependency, pure-C engine
 (NFA → bytecode → per-pattern lazy DFA + two selective merges) that is **2.3× over
-pure-Ruby, ~11× over the old C, byte-for-byte equal to Ruby `gsub`**.
+pure-Ruby, ~11× over the old C, byte-for-byte equal to Ruby `gsub`**. 0.18.1 gave
+up that parity in one place on purpose. It also redacts boundary-wrapped tokens
+that share a single separator byte, which `gsub` skips (see "One-byte separators
+serve both neighbours" below).
 
 - **Prototype decision.** v7 (AC + BM + PCRE2 JIT) cleared the ≥2× bar but required
   `libpcre2-dev` with JIT — violates the zero-runtime-dependency rule. Abandoned in
