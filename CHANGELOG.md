@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned `"before"`. Every byte now round-trips, and custom patterns also match
   after a NUL. A custom pattern never matches across a NUL; it acts as a
   boundary.
+- **Every boundary-wrapped token in a one-byte-separated list is redacted.** When
+  two bare-digit national IDs or SSNs shared a single separator, the second one
+  leaked: `"ids: 123456789,987654321"` → `"ids: [REDACTED],987654321"`, and the
+  same for space- and newline-separated lists. The separator byte now counts as the
+  boundary for both neighbours, so CSV columns and ID-per-line dumps redact in
+  full, each token with the tag it gets on its own. This deliberately departs from
+  Ruby `gsub` semantics and only ever redacts more.
 - **Overlap resolution is linear, not quadratic.** Picking the final set of
   matches compared each candidate against every match already kept, so text dense
   with short tokens spent longer resolving than scanning (a 64 KB chunk of
